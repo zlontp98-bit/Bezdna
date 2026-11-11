@@ -15,7 +15,7 @@ export const W = {
   MEADOW: 205,  // где луг переходит в горы
   OUTER: 340,   // край мира
   EXT: 232,     // половина стороны квадрата, покрытого текстурами высот/теней
-  STREAMS: [2.2, 5.1], // углы, под которыми текут ручьи-каскады
+  STREAMS: [2.155, 4.25], // углы, под которыми текут ручьи (сразу за началом пандусов)
 };
 
 const angDiff = (a, b) => {
@@ -38,6 +38,40 @@ export function streamAt(x, z) {
   return c;
 }
 
+// то же, но шире: участок стены, который делаем отвесным под водопад
+function streamWide(x, z) {
+  const r = Math.hypot(x, z);
+  if (r > 110 || r < 60) return 0;
+  const th = Math.atan2(z, x);
+  let c = 0;
+  for (const tw of W.STREAMS) c = Math.max(c, smoothstep(6.5, 3.2, Math.abs(angDiff(th, tw)) * r));
+  return c;
+}
+
+// Чаши под водопадами: { x, z, level } — заполняются перед постройкой сетки
+export const POOLS = [];
+const warpR = (x, z) => Math.hypot(x, z) + fbm(x * 0.028 + 9, z * 0.028 - 4, 2) * 4.0;
+
+// 0..1 — тропинка: от лагеря к пандусу, по пандусам вниз и вокруг по кольцу
+export function pathAt(x, z) {
+  const r = Math.hypot(x, z);
+  if (r < 66 || r > 116) return 0;
+  const wr = warpR(x, z);
+  let th = Math.atan2(z, x);
+  if (th < 0) th += TAU;
+  const phi = (W.ARMS * th) / TAU, pf = phi - Math.floor(phi);
+  const lv = (W.R - wr) / W.PITCH;
+  const wob = fbm(x * 0.15, z * 0.15, 2) * 0.035;
+  let m = smoothstep(0.17, 0.09, Math.abs(lv - (pf + 0.31)) + wob) * smoothstep(0.97, 0.86, pf);
+  if (lv > pf + 1.0) m = Math.max(m, smoothstep(1.5, 0.8, Math.abs(wr - 74.5) + wob * 10));
+  // от лагеря до начала пандуса
+  const ax = 113, az = 4, bx = 93, bz = 1.2;
+  const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
+  const d = Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t));
+  m = Math.max(m, smoothstep(1.7, 0.9, d + wob * 10));
+  return m * (1 - streamAt(x, z));
+}
+
 // Аналитическая высота — источник правды, из неё строится сетка
 function rawHeight(x, z) {
   const r = Math.hypot(x, z);
@@ -52,11 +86,14 @@ function rawHeight(x, z) {
   m += mt * mt * (22 + ridge * ridge * 88) + smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
 
   // спираль уступов
-  const wr = r + fbm(x * 0.028 + 9, z * 0.028 - 4, 2) * 4.0;
+  const wr = warpR(x, z);
+  const st = streamAt(x, z);
   const phi = (W.ARMS * th) / TAU;
   const u = (W.R - wr) / W.PITCH - phi;
   const k = Math.floor(u), f = u - k;
-  const s = smoothstep(0.62, 0.95, f);
+  // у ручья стена отвесная — там падает водопад
+  const sw = streamWide(x, z);
+  const s = smoothstep(0.62 + 0.2 * sw, 0.95 - 0.04 * sw, f);
   // пока есть только первое кольцо: ниже него спираль не продолжается
   let sp = Math.max(-W.DROP * (k + s + phi), -W.DROP);
   sp += fbm(x * 0.07, z * 0.07, 2) * 0.4 - (1 - s) * f * 0.5;
@@ -66,7 +103,8 @@ function rawHeight(x, z) {
   const hh = clamp(0.5 + (0.5 * (m - sp)) / kk, 0, 1);
   let h = m + (sp - m) * hh - kk * hh * (1 - hh);
 
-  h -= streamAt(x, z) * 0.6;
+  h -= st * 0.6;
+  for (const p of POOLS) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
   // центральный колодец
   h -= smoothstep(W.HOLE + 2.5, W.HOLE - 2.5, wr) * 170;
   return h;
@@ -196,7 +234,7 @@ function bakeShadows(blobs) {
 // Текстура высот для травы: R — высота, G — «здесь растёт трава»
 function bakeHeightTexture() {
   const N = 1024;
-  const data = new Uint16Array(N * N * 2);
+  const data = new Uint16Array(N * N * 4);
   const cell = (2 * W.EXT) / N;
   const toHalf = THREE.DataUtils.toHalfFloat;
   const n = new THREE.Vector3();
@@ -211,11 +249,15 @@ function bakeHeightTexture() {
         normalAt(x, z, n, 0.6);
         m = smoothstep(0.84, 0.94, n.y) * (1 - streamAt(x, z)) * smoothstep(236, 222, r);
       }
-      data[(j * N + i) * 2] = toHalf(h);
-      data[(j * N + i) * 2 + 1] = toHalf(m);
+      const pth = pathAt(x, z);
+      for (const p of POOLS) m *= smoothstep(4.6, 5.6, Math.hypot(x - p.x, z - p.z));
+      const o = (j * N + i) * 4;
+      data[o] = toHalf(h);
+      data[o + 1] = toHalf(m * (1 - pth));
+      data[o + 2] = toHalf(pth);
     }
   }
-  const tex = new THREE.DataTexture(data, N, N, THREE.RGFormat, THREE.HalfFloatType);
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.HalfFloatType);
   tex.magFilter = tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
   U.uHmap.value = tex;
@@ -229,6 +271,7 @@ const terrainMat = () => mat({
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
+    uniform sampler2D uHmap;
     varying vec3 vW; varying vec3 vN;
     void main(){
       vec3 n = normalize(vN);
@@ -256,6 +299,11 @@ const terrainMat = () => mat({
       float gm = smoothstep(0.70, 0.86, n.y + (vnoise(vW.xz*0.9)-0.5)*0.08);
       gm *= 1.0 - smoothstep(40.0, 70.0, vW.y)*0.9;
       vec3 alb = mix(rock, grass, gm);
+      // утоптанная тропинка
+      float pth = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5).b;
+      pth = smoothstep(0.35, 0.65, pth + (vnoise(vW.xz*1.3)-0.5)*0.3);
+      vec3 dirt = mix(vec3(0.74,0.63,0.46), vec3(0.62,0.52,0.38), vnoise(vW.xz*0.8));
+      alb = mix(alb, dirt, pth * gm);
       alb = mix(alb, vec3(0.94,0.96,1.0), snow);
 
       vec3 c = shade(alb, n, shadowAt(vW.xz));
@@ -264,12 +312,30 @@ const terrainMat = () => mat({
 });
 
 export function buildTerrain(scene) {
+  // место чаш: идём вдоль ручья от края внутрь до подножия стены
+  for (const th of W.STREAMS) {
+    const cx = Math.cos(th), cz = Math.sin(th);
+    let r = W.R + 2;
+    while (r > W.HOLE + 8 && rawHeight(cx * r, cz * r) > -11.5) r -= 0.25;
+    const pr = r - 3.4;
+    POOLS.push({ x: cx * pr, z: cz * pr, level: 0, dx: -cx, dz: -cz, rTop: r + 5.5 });
+  }
   for (let ri = 0; ri < ROWS; ri++) {
     const r = radii[ri];
     for (let c = 0; c < COLS; c++) {
       const th = (c / COLS) * TAU;
       HG[ri * COLS + c] = rawHeight(Math.cos(th) * r, Math.sin(th) * r);
     }
+  }
+
+  // уровень воды в чаше — чуть ниже самого низкого берега
+  for (const p of POOLS) {
+    let lo = 1e9;
+    for (let a = 0; a < 16; a++) {
+      const x = p.x + Math.cos(a * 0.3927) * 5.3, z = p.z + Math.sin(a * 0.3927) * 5.3;
+      if (streamAt(x, z) < 0.2 && Math.hypot(x, z) < Math.hypot(p.x, p.z) + 2) lo = Math.min(lo, heightAt(x, z));
+    }
+    p.level = lo - 0.12;
   }
 
   const material = terrainMat();

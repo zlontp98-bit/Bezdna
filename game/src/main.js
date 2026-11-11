@@ -4,7 +4,8 @@ setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
-import { buildSky, buildClouds, buildMist, buildMotes, buildStreams } from './atmosphere.js';
+import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools } from './atmosphere.js';
+import { buildRuins } from './ruins.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 
@@ -16,7 +17,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds;
+let renderer, scene, camera, player, input, grass, motes, clouds, spray;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -29,7 +30,7 @@ const Q = {
 function applyRes() {
   renderer.setPixelRatio(Q.maxPR * Q.scale);
   renderer.setSize(innerWidth, innerHeight, false);
-  if (motes) motes.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
+  if (motes) motes.uniforms.uPx.value = spray.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
 }
 function setQuality(mode) {
   Q.mode = mode; store.set('bezdna.q', mode);
@@ -68,10 +69,12 @@ function build() {
   buildTerrain(scene);
   const flora = buildFlora(scene);
   const camp = buildCamp(scene, flora.spawn);
-  bakeShadows(flora.blobs.concat(camp.blobs));
+  const ruins = buildRuins(scene);
+  bakeShadows(flora.blobs.concat(camp.blobs, ruins));
   buildSky(scene);
   clouds = buildClouds(scene);
   buildStreams(scene);
+  spray = buildPools(scene);
   buildMist(scene);
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
   motes = buildMotes(scene, 220);

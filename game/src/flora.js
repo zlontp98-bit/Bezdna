@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, heightAt, normalAt, streamAt } from './terrain.js';
+import { W, heightAt, normalAt, streamAt, pathAt, POOLS } from './terrain.js';
 
 const TAU = Math.PI * 2;
 
@@ -144,6 +144,19 @@ function giantShroom() {
     ...spots,
   ]);
 }
+function bushGeo() {
+  const b = new THREE.IcosahedronGeometry(1, 0);
+  const o = (c) => ({ sway: 0.6, round: new THREE.Vector3(c[0], -0.2, c[1]) });
+  return merge([
+    part(b, 0xffffff, { ...o([0, 0]), m: T(0, 0.5, 0, 0.85, 0.7, 0.85, 0.3) }),
+    part(b, 0xe6f4d6, { ...o([0.6, 0.1]), m: T(0.62, 0.38, 0.12, 0.6, 0.5, 0.6, 1.2) }),
+    part(b, 0xdcefd0, { ...o([-0.5, -0.2]), m: T(-0.55, 0.36, -0.2, 0.62, 0.5, 0.62, 2.1) }),
+    // ягоды/цветы
+    part(new THREE.OctahedronGeometry(0.07, 0), 0xfff3c4, { glow: 0.5, m: T(0.3, 0.95, 0.45) }),
+    part(new THREE.OctahedronGeometry(0.07, 0), 0xfff3c4, { glow: 0.5, m: T(-0.5, 0.7, 0.4) }),
+    part(new THREE.OctahedronGeometry(0.07, 0), 0xfff3c4, { glow: 0.5, m: T(0.75, 0.6, -0.3) }),
+  ]);
+}
 function rockGeo() {
   const g = new THREE.IcosahedronGeometry(1, 1);
   const P = g.attributes.position;
@@ -179,7 +192,7 @@ export function buildFlora(scene) {
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
 
-  const lists = { leaf: [], pine: [], shroom: [], rock: [], crystal: [], small: [] };
+  const lists = { leaf: [], pine: [], shroom: [], rock: [], crystal: [], small: [], bush: [] };
   const spawn = { x: W.R + 10, z: 8 };
   const taken = [];
   const free = (x, z, rad) => {
@@ -195,13 +208,40 @@ export function buildFlora(scene) {
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
       const y = heightAt(x, z);
       normalAt(x, z, n, 0.8);
-      if (streamAt(x, z) > 0.01) continue;
+      if (streamAt(x, z) > 0.01 || pathAt(x, z) > 0.05) continue;
+      if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < 7)) continue;
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
       if (fn(x, y, z, n.y, r)) placed++;
     }
   }
   const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) =>
     list.push({ x, y, z, s, color, rot, tilt });
+
+  // валуны вокруг чаш под водопадами и по бокам от уступа, с которого падает вода
+  for (const p of POOLS) {
+    for (let i = 0; i < 13; i++) {
+      const a = (i / 13) * TAU + rnd() * 0.25, rr = 5.2 + rnd() * 0.9;
+      const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
+      if (streamAt(x, z) > 0.35) continue; // не перекрываем сток и сам водопад
+      if (heightAt(x, z) > p.level + 1.0) continue; // и не вешаем камни на стену
+      const s = 0.75 + rnd() * 0.85, g = 0.5 + rnd() * 0.12;
+      add(lists.rock, x, heightAt(x, z) - 0.1, z, s, col.setRGB(g * 1.08, g * 1.02, g * 0.95).getHex(), rnd() * TAU, rnd() * 0.4);
+      taken.push({ x, z, r: s }); colliders.push({ x, z, r: s * 0.8 });
+    }
+    for (const side of [-1, 1]) {
+      const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;
+      add(lists.rock, x, heightAt(x, z) - 0.2, z, 1.7, 0x8f8a82, rnd() * TAU, 0.2);
+      taken.push({ x, z, r: 1.7 }); colliders.push({ x, z, r: 1.4 });
+    }
+  }
+  // кусты: много, по лугу и кольцу
+  scatter(230, W.HOLE + 3, W.MEADOW - 10, (x, y, z, ny) => {
+    if (ny < 0.9 || !free(x, z, 1.2)) return false;
+    const deep = y < -9;
+    col.setHSL(deep ? 0.44 + rnd() * 0.05 : 0.26 + rnd() * 0.09, 0.5, 0.36 + rnd() * 0.1);
+    add(lists.bush, x, y - 0.05, z, 0.7 + rnd() * 0.9, col.getHex());
+    return true;
+  });
 
   // лиственные деревья: луг и верхние уступы, растут рощами
   scatter(300, W.HOLE + 4, W.MEADOW + 8, (x, y, z, ny) => {
@@ -271,7 +311,7 @@ export function buildFlora(scene) {
 
   const geos = {
     leaf: leafTree(), pine: pineTree(), shroom: giantShroom(),
-    rock: rockGeo(), crystal: crystalGeo(), small: smallShroom(),
+    rock: rockGeo(), crystal: crystalGeo(), small: smallShroom(), bush: bushGeo(),
   };
   for (const key in lists) {
     const L = lists[key];
@@ -371,7 +411,7 @@ export function buildGrass(scene, count) {
   }
   // цветы: стебель + головка-ромбик
   {
-    const fc = Math.floor(count / 26);
+    const fc = Math.floor(count / 15);
     const g = new THREE.InstancedBufferGeometry();
     const s = 0.012, r = 0.085;
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([

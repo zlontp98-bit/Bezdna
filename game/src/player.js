@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { heightAt, normalAt, shadowAtCPU } from './terrain.js';
+import { groundAt, hitSolid, ceiling } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat } from './shaders.js';
 
@@ -174,13 +175,23 @@ export class Player {
     }
   }
 
+  // опора под точкой (земля или твёрдый объект) и её наклон
+  G(x, z) { return groundAt(x, z, this.pos.y); }
+  N(x, z, out, e) {
+    normalAt(x, z, out, e);
+    groundAt(x, z, this.pos.y);
+    if (hitSolid) out.set(0, 1, 0);
+    return out;
+  }
+
   tryMove(dx, dz) {
     const p = this.pos;
     const step = Math.hypot(dx, dz);
     if (step < 1e-6) return;
     const ok = (x, z) => {
-      const h = heightAt(x, z);
-      return this.grounded ? h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.015 : h <= p.y + 0.3;
+      const h = this.G(x, z);
+      if (this.grounded) return h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.015 || (hitSolid && h - p.y <= 0.36);
+      return h <= p.y + 0.3;
     };
     let nx = p.x + dx, nz = p.z + dz;
     if (!ok(nx, nz)) {
@@ -188,7 +199,7 @@ export class Player {
     }
     p.x = nx; p.z = nz;
     if (this.grounded) {
-      const h = heightAt(nx, nz);
+      const h = this.G(nx, nz);
       if (h < p.y - Math.max(0.3, step * 1.6)) this.grounded = false; // шагнули с обрыва
       else p.y = h;
     }
@@ -198,15 +209,15 @@ export class Player {
   findWall() {
     const p = this.pos, n = this.n;
     const dirs = [[Math.sin(this.facing), Math.cos(this.facing)]];
-    normalAt(p.x, p.z, n, 0.35);
+    this.N(p.x, p.z, n, 0.35);
     const hl = Math.hypot(n.x, n.z);
     if (hl > 0.08) dirs.push([-n.x / hl, -n.z / hl]); // в сторону подъёма
     for (const [dx, dz] of dirs) {
       for (let d = 0; d <= 1.25; d += 0.25) {
         const x = p.x + dx * d, z = p.z + dz * d;
-        normalAt(x, z, n, 0.35);
+        this.N(x, z, n, 0.35);
         if (n.y >= STEEP) continue;
-        const dh = heightAt(x, z) - p.y;
+        const dh = this.G(x, z) - p.y;
         if (dh > -0.6 && dh < 1.9) return { x, z };
       }
     }
@@ -216,7 +227,7 @@ export class Player {
   grab() {
     const w = this.findWall();
     if (!w) return false;
-    this.pos.set(w.x, heightAt(w.x, w.z), w.z);
+    this.pos.set(w.x, this.G(w.x, w.z), w.z);
     this.climbing = true; this.grounded = false;
     this.vel.set(0, 0, 0);
     return true;
@@ -225,9 +236,9 @@ export class Player {
   // Лазание: стик вверх/вниз — по стене, влево/вправо — вбок. Выносливости пока нет.
   climbStep(dt, inp) {
     const p = this.pos, v = this.vel;
-    const n = normalAt(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
+    const n = this.N(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
     if (n.y > 0.8 || hl < 1e-3) { // вылезли на ровное
-      this.climbing = false; this.grounded = true; p.y = heightAt(p.x, p.z);
+      this.climbing = false; this.grounded = true; p.y = this.G(p.x, p.z);
       return;
     }
     const ux = -n.x / hl, uz = -n.z / hl; // вверх по склону (в плане)
@@ -235,7 +246,7 @@ export class Player {
     const amt = Math.min(1, Math.hypot(inp.mx, inp.my));
     p.x += mvx * CLIMB * dt; p.z += mvz * CLIMB * dt;
     this.collide();
-    p.y = heightAt(p.x, p.z);
+    p.y = this.G(p.x, p.z);
     this.facing = Math.atan2(ux, uz);
     this.climbLean = Math.asin(Math.min(1, n.y));
     this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
@@ -272,13 +283,16 @@ export class Player {
     if (this.climbing) this.climbStep(dt, inp);
     else if (inp.grab && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
     const top = inp.sprint ? RUN : WALK;
-    const k = Math.min(1, dt * (this.grounded ? 11 : 2.5));
-    v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
-
-    // на крутом склоне съезжаем вниз
-    if (this.grounded) {
-      normalAt(p.x, p.z, this.n, 0.35);
-      if (this.n.y < 0.74) { v.x += this.n.x * 22 * dt; v.z += this.n.z * 22 * dt; }
+    // на крутом склоне стоять и ходить нельзя: герой съезжает вниз, пока не схватится
+    if (this.grounded) this.N(p.x, p.z, this.n, 0.35);
+    const steep = this.grounded && this.n.y < 0.74;
+    if (steep) {
+      v.x += this.n.x * 34 * dt; v.z += this.n.z * 34 * dt;
+      const sl = Math.hypot(v.x, v.z);
+      if (sl > 13) { v.x *= 13 / sl; v.z *= 13 / sl; }
+    } else {
+      const k = Math.min(1, dt * (this.grounded ? 11 : 2.5));
+      v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
     }
     // прыгать можно только с ровного: по крутой стене прыжками не забраться
     if (this.grounded) this.walkable = this.n.y >= 0.74;
@@ -294,20 +308,21 @@ export class Player {
       this.airT += dt;
       v.y -= GRAV * dt;
       p.y += v.y * dt;
-      const h = heightAt(p.x, p.z);
+      const h = this.G(p.x, p.z);
+      if (v.y > 0 && p.y + 1.3 > ceiling) { p.y = ceiling - 1.3; v.y = 0; } // стукнулись головой
       if (p.y <= h) {
         p.y = h; this.grounded = true; this.airT = 0;
         this.landT = Math.min(1, -v.y / 22); v.y = 0;
       }
     } else {
       this.airT = 0; v.y = 0;
-      const h = heightAt(p.x, p.z);
+      const h = this.G(p.x, p.z);
       if (p.y - h > 0.4) this.grounded = false; else p.y = h;
     }
     }
 
     this.canGrab = !this.climbing && this.climbCd <= 0 && !!this.findWall();
-    normalAt(p.x, p.z, this.n, 0.35);
+    this.N(p.x, p.z, this.n, 0.35);
 
     // запоминаем безопасное место для возврата после падения в колодец
     if (this.grounded && this.n.y > 0.9 && p.y > -20) {
@@ -409,8 +424,8 @@ export class Player {
     m.pupils.scale.setScalar(panic ? 0.6 : 1);
 
     // тень-пятно под ногами
-    const gh = heightAt(p.x, p.z), above = p.y - gh;
-    normalAt(p.x, p.z, this.n, 0.4);
+    const gh = this.G(p.x, p.z), above = p.y - gh;
+    this.N(p.x, p.z, this.n, 0.4);
     this.shadow.position.set(p.x, gh + 0.04, p.z);
     this.shadow.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, this.n);
     const ss = 0.5 + Math.min(1.2, above * 0.12);

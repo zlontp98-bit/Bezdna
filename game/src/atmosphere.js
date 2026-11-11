@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, heightAt, normalAt } from './terrain.js';
+import { W, heightAt, normalAt, POOLS } from './terrain.js';
 import { part, merge, T } from './flora.js';
 
 const TAU = Math.PI * 2;
@@ -193,11 +193,11 @@ export function buildStreams(scene) {
         float n1 = vnoise(vec2(u*2.5, v*mix(0.55,0.22,steep)));
         float n2 = vnoise(vec2(u*7.0 + 3.0, v*mix(1.3,0.4,steep)));
         vec3 c = mix(vec3(0.16,0.56,0.70), vec3(0.42,0.80,0.88), n1);
-        float foam = smoothstep(0.62, 0.82, n2) * 0.7 + steep * (0.45 + 0.4*n1);
+        float foam = smoothstep(0.62, 0.82, n2) * 0.7 + steep * (0.55 + 0.45*n1);
         foam += smoothstep(0.72, 1.0, abs(u)) * 0.5;
         c = mix(c, vec3(0.96,1.0,1.0), clamp(foam, 0.0, 1.0));
         c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*shadowAt(vW.xz)) ;
-        float a = mix(0.78, 0.95, steep) * smoothstep(1.0, 0.86, abs(u));
+        float a = mix(0.93, 1.0, steep) * smoothstep(1.0, 0.9, abs(u));
         gl_FragColor = vec4(applyFog(c, vW), a);
       }`,
   });
@@ -213,7 +213,9 @@ export function buildStreams(scene) {
         const x = cx * r + tx * half * side, z = cz * r + tz * half * side;
         normalAt(x, z, n, 0.5);
         const y = heightAt(x, z);
-        row.push(x + n.x * 0.3, y + n.y * 0.3 + 0.05, z + n.z * 0.3);
+        let wy = y + n.y * 0.45 + 0.05;
+        for (const p of POOLS) if (Math.hypot(x - p.x, z - p.z) < 5.4) wy = Math.max(wy, p.level + 0.03);
+        row.push(x + n.x * 0.45, wy, z + n.z * 0.45);
       }
       normalAt(cx * r, cz * r, n, 0.5);
       const steep = 1 - Math.min(1, Math.max(0, (n.y - 0.35) / 0.5));
@@ -232,4 +234,78 @@ export function buildStreams(scene) {
     mesh.renderOrder = 2;
     scene.add(mesh);
   }
+}
+
+// ---------- чаши под водопадами: гладь воды, пена и брызги ----------
+export function buildPools(scene) {
+  const water = mat({
+    transparent: true, depthWrite: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vW; varying vec2 vP;
+      void main(){ vP = position.xz; vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp; }`,
+    fragmentShader: /* glsl */ `
+      uniform vec2 uHit;
+      varying vec3 vW; varying vec2 vP;
+      void main(){
+        float r = length(vP);
+        float dh = length(vP - uHit);
+        // круги от падающей воды
+        float ring = sin(dh*22.0 - uTime*6.0) * 0.5 + 0.5;
+        float n = vnoise(vW.xz*1.6 + uTime*0.25);
+        vec3 c = mix(vec3(0.10,0.46,0.62), vec3(0.34,0.76,0.86), n*0.6 + ring*0.25*smoothstep(0.75,0.1,dh));
+        float foam = smoothstep(0.42, 0.05, dh) + smoothstep(0.6, 0.85, vnoise(vW.xz*3.0 - uTime*0.4)) * 0.35
+                   + smoothstep(0.86, 1.0, r) * 0.6;
+        c = mix(c, vec3(0.97,1.0,1.0), clamp(foam, 0.0, 1.0));
+        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*shadowAt(vW.xz));
+        gl_FragColor = vec4(applyFog(c, vW), 0.95 * smoothstep(1.0, 0.94, r));
+      }`,
+    uniforms: { uHit: { value: new THREE.Vector2() } },
+  });
+  const spray = mat({
+    transparent: true, depthWrite: false,
+    uniforms: { uPx: { value: 1 } },
+    vertexShader: /* glsl */ `
+      uniform float uPx; attribute vec4 aS; varying float vA;
+      void main(){
+        float t = fract(uTime*(0.35 + aS.w*0.3) + aS.z);
+        vec3 p = position + vec3(aS.x, 0.0, aS.y) * (0.4 + t*1.6);
+        p.y += t*(2.6 + aS.w*1.5) - t*t*2.2;
+        vA = (1.0 - t) * 0.5 * smoothstep(0.0, 0.12, t);
+        vec4 mv = viewMatrix * vec4(p, 1.0);
+        gl_PointSize = uPx * (70.0 + 80.0*t) / max(-mv.z, 1.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      varying float vA;
+      void main(){ float d = length(gl_PointCoord - 0.5);
+        gl_FragColor = vec4(grade(mix(uFogCol, vec3(1.0), 0.75)), vA * smoothstep(0.5, 0.1, d)); }`,
+  });
+  const disc = new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2);
+  for (const p of POOLS) {
+    const m = water.clone();
+    m.uniforms = { ...water.uniforms, uHit: { value: new THREE.Vector2(-p.dx * 0.55, -p.dz * 0.55) } };
+    const mesh = new THREE.Mesh(disc, m);
+    mesh.position.set(p.x, p.level, p.z);
+    mesh.scale.set(5.4, 1, 5.4);
+    mesh.renderOrder = 3;
+    scene.add(mesh);
+    // брызги у подножия
+    const N = 26, pos = new Float32Array(N * 3), aS = new Float32Array(N * 4);
+    const hx = p.x - p.dx * 3.0, hz = p.z - p.dz * 3.0;
+    for (let i = 0; i < N; i++) {
+      pos[i * 3] = hx + (Math.random() - 0.5) * 3.2 * Math.abs(p.dz) + (Math.random() - 0.5) * 0.6;
+      pos[i * 3 + 1] = p.level + 0.1;
+      pos[i * 3 + 2] = hz + (Math.random() - 0.5) * 3.2 * Math.abs(p.dx) + (Math.random() - 0.5) * 0.6;
+      aS[i * 4] = Math.random() - 0.5 + p.dx * 0.6; aS[i * 4 + 1] = Math.random() - 0.5 + p.dz * 0.6;
+      aS[i * 4 + 2] = Math.random(); aS[i * 4 + 3] = Math.random();
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('aS', new THREE.BufferAttribute(aS, 4));
+    const pts = new THREE.Points(g, spray);
+    pts.frustumCulled = false; pts.renderOrder = 7;
+    scene.add(pts);
+  }
+  return spray;
 }
