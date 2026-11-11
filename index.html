@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Бездна — первый шаг</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<style>
+  :root { --ink: #fff; --glass: rgba(18, 30, 44, .42); --line: rgba(255,255,255,.22); --accent: #ffc247; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cfe2ee; color: var(--ink);
+    font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none; touch-action: none; overscroll-behavior: none; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; }
+
+  /* заставка */
+  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
+    padding: max(28px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(34px, env(safe-area-inset-bottom)) max(34px, env(safe-area-inset-left));
+    background: linear-gradient(180deg, rgba(10,24,44,0) 30%, rgba(10,24,44,.62) 100%);
+    transition: opacity .6s; }
+  #menu.hide { opacity: 0; pointer-events: none; }
+  h1 { margin: 0; font-size: clamp(44px, 9vw, 92px); letter-spacing: .14em; font-weight: 800; line-height: 1;
+    text-shadow: 0 4px 30px rgba(10,30,60,.45); }
+  .sub { margin: 8px 0 22px; font-size: clamp(15px, 2.2vw, 20px); opacity: .92; max-width: 34em; text-wrap: balance; }
+  #play { align-self: flex-start; padding: 14px 44px; font-size: 20px; font-weight: 800; border-radius: 999px; color: #3a2500;
+    background: linear-gradient(180deg, #ffd978, #ffb02e); box-shadow: 0 6px 0 #c97d10, 0 14px 30px rgba(0,0,0,.28); }
+  #play:active { transform: translateY(4px); box-shadow: 0 2px 0 #c97d10; }
+  #play:disabled { filter: grayscale(.7); opacity: .8; }
+  .hint { margin-top: 16px; font-size: 13px; opacity: .75; }
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #cfe2ee; color: #2c4a66;
+    font-size: 18px; font-weight: 700; text-align: center; padding: 24px; transition: opacity .5s; }
+  #loading.hide { opacity: 0; pointer-events: none; }
+
+  /* игровой интерфейс */
+  #hud { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity .5s; }
+  #hud.show { opacity: 1; }
+  #hud > * { pointer-events: auto; }
+  .glass { background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #depthBox { position: absolute; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left));
+    display: flex; gap: 10px; align-items: stretch; padding: 9px 14px 9px 10px; border-radius: 16px; pointer-events: none; }
+  #gauge { width: 6px; border-radius: 3px; background: rgba(255,255,255,.25); position: relative; overflow: hidden; }
+  #bar { position: absolute; top: 0; left: 0; right: 0; height: 0; background: linear-gradient(180deg, #9be37a, #5fd6c8 55%, #a58bff); }
+  #depth { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  #zone { font-size: 12px; opacity: .85; }
+  #gear { position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right));
+    width: 44px; height: 44px; border-radius: 50%; font-size: 20px; }
+  #fps { position: absolute; top: max(66px, calc(env(safe-area-inset-top) + 52px)); right: max(14px, env(safe-area-inset-right));
+    font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+  #fps.hide { display: none; }
+  #panel { position: absolute; top: max(66px, calc(env(safe-area-inset-top) + 52px)); right: max(14px, env(safe-area-inset-right));
+    padding: 14px; border-radius: 16px; display: none; width: 250px; }
+  #panel.show { display: block; }
+  #panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
+  .seg { display: flex; gap: 4px; margin-bottom: 12px; }
+  .seg button, .row { flex: 1; padding: 9px 4px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 700; }
+  .seg button.on { background: var(--accent); color: #3a2500; }
+  .row { display: block; width: 100%; margin-top: 6px; }
+  #zoneBig { position: absolute; top: 13%; left: 0; right: 0; text-align: center; font-size: clamp(18px, 3.4vw, 30px); font-weight: 800;
+    letter-spacing: .12em; text-shadow: 0 2px 18px rgba(10,30,60,.55); opacity: 0; transform: translateY(8px);
+    transition: opacity .8s, transform .8s; pointer-events: none; }
+  #zoneBig.show { opacity: 1; transform: none; }
+  #msg { position: absolute; bottom: 24%; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 14px;
+    font-size: 15px; font-weight: 700; opacity: 0; transition: opacity .5s; pointer-events: none; text-align: center; width: max-content; max-width: 86vw; }
+  #msg.show { opacity: 1; }
+  #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
+
+  /* сенсорное управление */
+  #stick { position: absolute; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; opacity: 0;
+    transition: opacity .15s; pointer-events: none; background: rgba(255,255,255,.1); border: 2px solid rgba(255,255,255,.35); }
+  #stick.on { opacity: 1; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px; border-radius: 50%;
+    background: rgba(255,255,255,.75); box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  .pad { position: absolute; display: none; border-radius: 50%; place-items: center; font-weight: 800; }
+  .touch .pad { display: grid; }
+  #jump { right: max(22px, env(safe-area-inset-right)); bottom: max(26px, env(safe-area-inset-bottom)); width: 86px; height: 86px; }
+  #run { right: max(118px, calc(env(safe-area-inset-right) + 96px)); bottom: max(20px, env(safe-area-inset-bottom)); width: 64px; height: 64px; }
+  #run.on { background: var(--accent); color: #3a2500; }
+  .pad svg { width: 46%; height: 46%; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+  .pad:active { transform: scale(.93); }
+  @media (pointer: coarse) { .pad { display: grid; } .desk { display: none; } }
+  @media (pointer: fine) { .mob { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="depthBox" class="glass">
+    <div id="gauge"><div id="bar"></div></div>
+    <div><div id="depth">0 м</div><div id="zone">Луг у края</div></div>
+  </div>
+  <button id="gear" class="glass" aria-label="Настройки">⚙</button>
+  <div id="fps"></div>
+  <div id="panel" class="glass">
+    <h3>Графика</h3>
+    <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
+    <button id="view" class="row">Вид: от третьего лица</button>
+    <button id="showfps" class="row">Счётчик FPS</button>
+  </div>
+  <div id="zoneBig"></div>
+  <div id="msg" class="glass">Глубже пока не пройти — этот слой ещё не открыт</div>
+  <div id="stick"><div id="knob"></div></div>
+  <button id="run" class="pad glass" aria-label="Бег"><svg viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg></button>
+  <button id="jump" class="pad glass" aria-label="Прыжок"><svg viewBox="0 0 24 24"><path d="M5 13l7-7 7 7M5 19l7-7 7 7"/></svg></button>
+</div>
+<div id="fade"></div>
+
+<div id="menu">
+  <h1>БЕЗДНА</h1>
+  <p class="sub">Первый шаг: луг на краю провала и спиральные уступы вниз. Спустись как можно глубже.</p>
+  <button id="play" disabled>Загрузка…</button>
+  <div class="hint mob">Левая половина экрана — идти (сильно отклони — бег) · правая — осматриваться</div>
+  <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · мышь — обзор · V — вид от первого лица</div>
+</div>
+<div id="loading">Строим мир…</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
