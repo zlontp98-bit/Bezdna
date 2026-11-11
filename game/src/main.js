@@ -5,7 +5,7 @@ import { buildCamp } from './camp.js';
 import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildStreams } from './atmosphere.js';
-import { Player } from './player.js';
+import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 
 const $ = (id) => document.getElementById(id);
@@ -78,6 +78,22 @@ function build() {
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
+  // облик героя: цвет и пробная броня, выбор запоминается
+  const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]), armor: store.get('bezdna.armor', '0') === '1' };
+  const applyLook = () => {
+    player.setLook(look);
+    store.set('bezdna.color', look.color); store.set('bezdna.armor', look.armor ? '1' : '0');
+    document.querySelectorAll('#colors button').forEach((b) => b.classList.toggle('on', +b.dataset.c === look.color));
+    $('armor').textContent = look.armor ? 'Броня: надета' : 'Броня: снята';
+  };
+  SKIN_COLORS.forEach((c) => {
+    const b = document.createElement('button');
+    b.dataset.c = c; b.style.background = '#' + c.toString(16).padStart(6, '0');
+    b.addEventListener('click', () => { look.color = c; applyLook(); });
+    $('colors').appendChild(b);
+  });
+  $('armor').addEventListener('click', () => { look.armor = !look.armor; applyLook(); });
+  applyLook();
   setQuality(Q.mode);
   addEventListener('resize', onResize);
   onResize();
@@ -112,7 +128,7 @@ function updateCamera(dt, inp) {
   yaw -= inp.lookX; pitch += inp.lookY;
   pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(1.45, pitch));
   const p = player.pos;
-  target.set(p.x, p.y + (firstPerson ? 1.42 : 1.55), p.z);
+  target.set(p.x, p.y + (firstPerson ? 1.28 : 1.5), p.z);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
   // направление взгляда
   const fx = -Math.sin(yaw) * cp, fy = -sp, fz = -Math.cos(yaw) * cp;

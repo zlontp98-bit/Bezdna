@@ -58,6 +58,9 @@
   .seg { display: flex; gap: 4px; margin-bottom: 12px; }
   .seg button, .row { flex: 1; padding: 9px 4px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 700; }
   .seg button.on { background: var(--accent); color: #3a2500; }
+  #colors { display: flex; gap: 6px; margin-bottom: 4px; }
+  #colors button { flex: 1; aspect-ratio: 1; border-radius: 50%; border: 3px solid transparent; }
+  #colors button.on { border-color: #fff; }
   .row { display: block; width: 100%; margin-top: 6px; }
   #zoneBig { position: absolute; top: 13%; left: 0; right: 0; text-align: center; font-size: clamp(18px, 3.4vw, 30px); font-weight: 800;
     letter-spacing: .12em; text-shadow: 0 2px 18px rgba(10,30,60,.55); opacity: 0; transform: translateY(8px);
@@ -98,6 +101,10 @@
   <div id="panel" class="glass">
     <h3>Качество</h3>
     <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
+    <h3>Герой</h3>
+    <div id="colors"></div>
+    <button id="armor" class="row">Броня: снята</button>
+    <h3 style="margin-top:12px">Прочее</h3>
     <button id="view" class="row">Вид: от третьего лица</button>
     <button id="showfps" class="row">Счётчик FPS</button>
   </div>
