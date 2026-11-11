@@ -191,6 +191,27 @@ document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click',
 addEventListener('keydown', (e) => { if (e.code === 'KeyV') $('view').click(); });
 addEventListener('wheel', (e) => { camDist = Math.max(3, Math.min(14, camDist + e.deltaY * 0.01)); }, { passive: true });
 
+// ---- обновления внутри приложения (кнопка-коробка) ----
+// В APK есть мост BezdnaApp: он скачивает свежую версию игры из репозитория.
+const App = window.BezdnaApp;
+if (App) {
+  const btn = $('upd'), txt = $('updText');
+  btn.hidden = false;
+  $('ver').hidden = false;
+  $('ver').textContent = 'версия ' + (App.version() || '?').slice(0, 7);
+  window.onBezdnaUpdate = (state, text) => {
+    btn.classList.toggle('busy', state === 'checking' || state === 'downloading');
+    btn.classList.toggle('new', state === 'available');
+    if (state === 'available') txt.textContent = 'Есть обновление';
+    else if (state === 'offline') txt.textContent = 'Обновить';
+    else if (state === 'uptodate' && !text) txt.textContent = 'Обновить';
+    else txt.textContent = text;
+    if (state === 'uptodate' && text) setTimeout(() => { txt.textContent = 'Обновить'; }, 2500);
+  };
+  btn.addEventListener('click', () => App.update());
+  App.check();
+}
+
 // сначала показываем экран загрузки, потом строим мир
 requestAnimationFrame(() => setTimeout(() => {
   try {

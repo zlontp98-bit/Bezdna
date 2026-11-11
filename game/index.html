@@ -22,6 +22,10 @@
   h1 { margin: 0; font-size: clamp(44px, 9vw, 92px); letter-spacing: .14em; font-weight: 800; line-height: 1;
     text-shadow: 0 4px 30px rgba(10,30,60,.45); }
   .sub { margin: 8px 0 20px; font-size: clamp(15px, 2.2vw, 20px); opacity: .92; max-width: 34em; text-wrap: balance; }
+  .btns { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  #upd { padding: 12px 22px; font-size: 17px; font-weight: 800; border-radius: 999px; position: relative; }
+  #upd.new { background: rgba(255,194,71,.9); color: #3a2500; }
+  #upd.busy { opacity: .75; }
   #play { align-self: flex-start; padding: 14px 44px; font-size: 20px; font-weight: 800; border-radius: 999px; color: #3a2500;
     background: linear-gradient(180deg, #ffd978, #ffb02e); box-shadow: 0 6px 0 #c97d10, 0 14px 30px rgba(0,0,0,.28); }
   #play:active { transform: translateY(4px); box-shadow: 0 2px 0 #c97d10; }
@@ -108,7 +112,9 @@
 <div id="menu">
   <h1>БЕЗДНА</h1>
   <p class="sub">Начальная локация: лагерь на лугу и первое кольцо спуска. Ниже — только туман.</p>
-  <button id="play" disabled>Загрузка…</button>
+  <div class="btns"><button id="play" disabled>Загрузка…</button>
+  <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button></div>
+  <div id="ver" class="hint" hidden></div>
   <div class="hint mob">Левая половина экрана — идти (сильно отклони — бег) · правая — осматриваться</div>
   <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · мышь — обзор · V — вид от первого лица</div>
 </div>
