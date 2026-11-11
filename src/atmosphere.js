@@ -22,16 +22,15 @@ export function buildSky(scene) {
       void main(){
         vec3 d = normalize(vD);
         float t = max(d.y, 0.0);
-        vec3 zen = vec3(0.22, 0.47, 0.86);
-        vec3 c = mix(uFogCol, zen, pow(t, 0.55));
+        vec3 c = mix(uFogCol, uZenith, pow(t, 0.55));
         // тёплое сияние вокруг солнца
         float s = max(dot(d, uSun), 0.0);
-        c += vec3(1.0, 0.72, 0.42) * (pow(s, 6.0)*0.22 + pow(s, 60.0)*0.35);
+        c += (uSunCol*1.3 + 0.15) * (pow(s, 6.0)*0.22 + pow(s, 60.0)*0.35);
         c += vec3(1.0, 0.95, 0.85) * smoothstep(0.9990, 0.9996, s);
         // под горизонтом — туман провала
         float below = smoothstep(0.0, -0.35, d.y);
         c = mix(c, mix(uAbyssA, uAbyssB, smoothstep(-0.3, -0.9, d.y)), below);
-        gl_FragColor = vec4(c, 1.0);
+        gl_FragColor = vec4(grade(c), 1.0);
       }`,
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), m);
@@ -64,9 +63,9 @@ export function buildClouds(scene) {
       void main(){
         vec3 n = normalize(vN);
         float l = smoothstep(-0.5, 0.7, dot(n, uSun));
-        vec3 c = mix(vec3(0.70,0.78,0.92), vec3(1.0,0.98,0.94), l);
-        c = mix(c, uFogCol, 0.22);
-        gl_FragColor = vec4(c, 1.0);
+        vec3 c = min(uAmbHi*1.5 + uSunCol*l*0.75, vec3(1.0));
+        c = mix(c, uFogCol, 0.25);
+        gl_FragColor = vec4(grade(c), 1.0);
       }`,
   });
   const N = 16;
@@ -117,7 +116,7 @@ export function buildMist(scene) {
           vec3 c = mix(uAbyssA, uAbyssB, smoothstep(-60.0, -125.0, vW.y)) * 1.12;
           // свечение из глубины
           c += vec3(0.25,0.5,0.6) * smoothstep(0.6, 0.0, r) * step(0.99, uA);
-          gl_FragColor = vec4(c, clamp(a, 0.0, 1.0));
+          gl_FragColor = vec4(grade(c), clamp(a, 0.0, 1.0));
         }`,
     });
     const mesh = new THREE.Mesh(geo, m);

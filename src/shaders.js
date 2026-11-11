@@ -15,6 +15,8 @@ export const U = {
   uAbyssB: { value: new THREE.Color(0.36, 0.42, 0.74) },
   uFogDen: { value: 0.0021 },
   uTime: { value: 0 },
+  uSat: { value: 1 },
+  uZenith: { value: new THREE.Color(0.22, 0.47, 0.86) },
   uShadow: { value: null },
   uHmap: { value: null },
   uExt: { value: 232 },
@@ -24,9 +26,12 @@ export const U = {
 
 export const COMMON = /* glsl */ `
 uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
-uniform float uFogDen, uTime, uExt;
+uniform float uFogDen, uTime, uExt, uSat;
+uniform vec3 uZenith;
 uniform sampler2D uShadow;
 
+// общая цветокоррекция стиля
+vec3 grade(vec3 c){ return mix(vec3(dot(c, vec3(0.3,0.59,0.11))), c, uSat); }
 float hash12(vec2 p){
   vec3 p3 = fract(vec3(p.xyx) * .1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -57,7 +62,7 @@ vec3 applyFog(vec3 c, vec3 w){
   float f = 1.0 - exp(-d * (uFogDen + deep*0.0042));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-75.0, -150.0, w.y));
-  return mix(c, fc, clamp(f, 0.0, 1.0));
+  return grade(mix(c, fc, clamp(f, 0.0, 1.0)));
 }
 // Цвет травы: наверху сочная зелень, глубже — бирюза, ещё глубже — сиреневый мох
 vec3 grassCol(vec3 w){
@@ -78,4 +83,20 @@ export function mat(opts) {
     fragmentShader: COMMON + fragmentShader,
     ...rest,
   });
+}
+
+// ---- стили графики: один и тот же мир, разное настроение ----
+export const STYLES = {
+  day: { name: 'Яркий день', sun: [0.64, 0.55, 0.40], hi: [0.40, 0.48, 0.62], lo: [0.25, 0.24, 0.31],
+    fog: [0.80, 0.88, 0.93], zen: [0.22, 0.47, 0.86], den: 0.0021, sat: 1.0 },
+  mist: { name: 'Туманное утро', sun: [0.40, 0.39, 0.35], hi: [0.50, 0.54, 0.57], lo: [0.31, 0.32, 0.34],
+    fog: [0.75, 0.79, 0.80], zen: [0.60, 0.68, 0.76], den: 0.0085, sat: 0.74 },
+  dusk: { name: 'Тёплый вечер', sun: [0.86, 0.50, 0.26], hi: [0.36, 0.36, 0.58], lo: [0.25, 0.20, 0.31],
+    fog: [0.99, 0.76, 0.60], zen: [0.27, 0.33, 0.70], den: 0.0034, sat: 1.06 },
+};
+export function setStyle(key) {
+  const s = STYLES[key] || STYLES.day;
+  U.uSunCol.value.fromArray(s.sun); U.uAmbHi.value.fromArray(s.hi); U.uAmbLo.value.fromArray(s.lo);
+  U.uFogCol.value.fromArray(s.fog); U.uZenith.value.fromArray(s.zen);
+  U.uFogDen.value = s.den; U.uSat.value = s.sat;
 }

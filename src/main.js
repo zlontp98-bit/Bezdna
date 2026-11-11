@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
-import { U } from './shaders.js';
+import { U, setStyle } from './shaders.js';
+import { buildCamp } from './camp.js';
 import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildStreams } from './atmosphere.js';
@@ -65,7 +66,8 @@ function build() {
 
   buildTerrain(scene);
   const flora = buildFlora(scene);
-  bakeShadows(flora.blobs);
+  const camp = buildCamp(scene, flora.spawn);
+  bakeShadows(flora.blobs.concat(camp.blobs));
   buildSky(scene);
   clouds = buildClouds(scene);
   buildStreams(scene);
@@ -74,7 +76,7 @@ function build() {
   motes = buildMotes(scene, 220);
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run') });
-  player = new Player(scene, flora.spawn, flora.colliders);
+  player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
   setQuality(Q.mode);
   addEventListener('resize', onResize);
   onResize();
@@ -174,6 +176,12 @@ function frame(now) {
 }
 
 // ---- интерфейс ----
+function pickStyle(key) {
+  setStyle(key); store.set('bezdna.style', key);
+  document.querySelectorAll('[data-s]').forEach((b) => b.classList.toggle('on', b.dataset.s === key));
+}
+document.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => pickStyle(b.dataset.s)));
+pickStyle(store.get('bezdna.style', 'day'));
 function start() {
   $('menu').classList.add('hide');
   $('hud').classList.add('show');
@@ -196,14 +204,14 @@ requestAnimationFrame(() => setTimeout(() => {
     build();
     // камера на заставке: смотрим через луг на провал
     const s = player.pos;
-    camera.position.set(s.x + 9, s.y + 5, s.z + 7);
-    camera.lookAt(0, -30, 0);
+    camera.position.set(s.x + 12, s.y + 4.2, s.z - 4);
+    camera.lookAt(s.x - 30, s.y - 4, s.z + 22);
     player.update(0.016, { mx: 0, my: 0, jump: false, sprint: false }, yaw);
     $('play').disabled = false;
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, pickStyle, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
