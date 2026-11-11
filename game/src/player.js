@@ -7,7 +7,7 @@ import { mat } from './shaders.js';
 // Большая голова, выпученные глаза разного размера, один зуб, фонарик-удочка на макушке,
 // тонкие руки и крошечные ноги. Отдельные голова / туловище / руки / ступни —
 // это будущие слоты брони и скинов. Цвет тела — параметр.
-export const SKIN_COLORS = [0xff7a52, 0x58d3ae, 0x6fb1ff, 0xb48bff, 0xffc93a, 0xa3dc4c];
+export const SKIN_COLORS = [0xff7a52, 0xffc93a, 0xa3dc4c, 0x58d3ae, 0x6fb1ff, 0xb48bff, 0xff8fc0, 0xf1ece0];
 
 function buildModel(look) {
   const M = propMaterial();
@@ -157,10 +157,10 @@ export class Player {
     this.safe = this.pos.clone();
     this.safeT = 0; this.airT = 0; this.phase = 0; this.speed = 0; this.landT = 0;
     this.scene = scene;
-    this.look = { color: SKIN_COLORS[0], armor: false };
+    this.look = { color: SKIN_COLORS[0], armor: false }; // броня появится вместе с крафтом
     this.m = buildModel(this.look);
     scene.add(this.m.root);
-    this.climbing = false; this.stamina = 100; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.wantClimb = false;
+    this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
     this.shadow = blobShadow();
@@ -180,11 +180,10 @@ export class Player {
     if (step < 1e-6) return;
     const ok = (x, z) => {
       const h = heightAt(x, z);
-      return this.grounded ? h - p.y <= Math.max(0.1, Math.hypot(x - p.x, z - p.z) * MAX_SLOPE) : h <= p.y + 0.3;
+      return this.grounded ? h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.015 : h <= p.y + 0.3;
     };
     let nx = p.x + dx, nz = p.z + dz;
     if (!ok(nx, nz)) {
-      if (this.wantClimb && this.tryGrab(nx, nz, dx / step, dz / step)) return;
       if (ok(nx, p.z)) nz = p.z; else if (ok(p.x, nz)) nx = p.x; else { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
     }
     p.x = nx; p.z = nz;
@@ -195,20 +194,35 @@ export class Player {
     }
   }
 
-  // Упёрлись в крутую стену и жмём в её сторону — хватаемся
-  tryGrab(x, z, dx, dz) {
-    const n = normalAt(x, z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
-    if (n.y >= STEEP || hl < 1e-3) return false;
-    if ((-n.x * dx - n.z * dz) / hl < 0.45) return false; // идём вдоль стены, а не в неё
-    const h = heightAt(x, z);
-    if (h - this.pos.y > 1.8) return false;
-    this.pos.set(x, Math.max(h, this.pos.y), z);
+  // Ищем рядом крутую стену, за которую можно схватиться (по кнопке «Хват»)
+  findWall() {
+    const p = this.pos, n = this.n;
+    const dirs = [[Math.sin(this.facing), Math.cos(this.facing)]];
+    normalAt(p.x, p.z, n, 0.35);
+    const hl = Math.hypot(n.x, n.z);
+    if (hl > 0.08) dirs.push([-n.x / hl, -n.z / hl]); // в сторону подъёма
+    for (const [dx, dz] of dirs) {
+      for (let d = 0; d <= 1.25; d += 0.25) {
+        const x = p.x + dx * d, z = p.z + dz * d;
+        normalAt(x, z, n, 0.35);
+        if (n.y >= STEEP) continue;
+        const dh = heightAt(x, z) - p.y;
+        if (dh > -0.6 && dh < 1.9) return { x, z };
+      }
+    }
+    return null;
+  }
+
+  grab() {
+    const w = this.findWall();
+    if (!w) return false;
+    this.pos.set(w.x, heightAt(w.x, w.z), w.z);
     this.climbing = true; this.grounded = false;
     this.vel.set(0, 0, 0);
     return true;
   }
 
-  // Лазание: стик вверх/вниз — по стене, влево/вправо — вбок. Тратит выносливость.
+  // Лазание: стик вверх/вниз — по стене, влево/вправо — вбок. Выносливости пока нет.
   climbStep(dt, inp) {
     const p = this.pos, v = this.vel;
     const n = normalAt(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
@@ -226,14 +240,13 @@ export class Player {
     this.climbLean = Math.asin(Math.min(1, n.y));
     this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
     this.climbAmt = amt;
-    this.stamina -= dt * (3 + 8 * amt);
     v.set(0, 0, 0);
     if (inp.jump) { // оттолкнуться от стены
       this.climbing = false; this.climbCd = 0.35; this.airT = 1;
       v.set(n.x / hl * 4.5, 7.5, n.z / hl * 4.5);
-    } else if (this.stamina <= 0) { // силы кончились — срываемся
-      this.stamina = 0; this.climbing = false; this.climbCd = 1.2; this.airT = 1;
-      v.set(n.x / hl * 2, 0, n.z / hl * 2);
+    } else if (inp.grab) { // отпустить стену
+      this.climbing = false; this.climbCd = 0.3; this.airT = 1;
+      v.set(n.x / hl * 1.5, 0, n.z / hl * 1.5);
     }
   }
 
@@ -256,8 +269,8 @@ export class Player {
     const mx = inp.mx * c - inp.my * s, mz = -inp.mx * s - inp.my * c;
     const ml = this.climbing ? 0 : Math.min(1, Math.hypot(mx, mz));
     this.climbCd = Math.max(0, this.climbCd - dt);
-    this.wantClimb = ml > 0.4 && this.stamina > 15 && this.climbCd <= 0;
-    if (this.climbing) this.climbStep(dt, inp); else {
+    if (this.climbing) this.climbStep(dt, inp);
+    else if (inp.grab && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
     const top = inp.sprint ? RUN : WALK;
     const k = Math.min(1, dt * (this.grounded ? 11 : 2.5));
     v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
@@ -267,7 +280,9 @@ export class Player {
       normalAt(p.x, p.z, this.n, 0.35);
       if (this.n.y < 0.74) { v.x += this.n.x * 22 * dt; v.z += this.n.z * 22 * dt; }
     }
-    if (inp.jump && (this.grounded || this.airT < 0.12) && v.y <= 0.01) {
+    // прыгать можно только с ровного: по крутой стене прыжками не забраться
+    if (this.grounded) this.walkable = this.n.y >= 0.74;
+    if (inp.jump && this.walkable && (this.grounded || this.airT < 0.12) && v.y <= 0.01) {
       v.y = JUMP; this.grounded = false; this.airT = 1;
     }
 
@@ -288,9 +303,11 @@ export class Player {
       this.airT = 0; v.y = 0;
       const h = heightAt(p.x, p.z);
       if (p.y - h > 0.4) this.grounded = false; else p.y = h;
-      if (this.n.y > 0.74) this.stamina = Math.min(100, this.stamina + 30 * dt);
     }
     }
+
+    this.canGrab = !this.climbing && this.climbCd <= 0 && !!this.findWall();
+    normalAt(p.x, p.z, this.n, 0.35);
 
     // запоминаем безопасное место для возврата после падения в колодец
     if (this.grounded && this.n.y > 0.9 && p.y > -20) {
@@ -415,6 +432,6 @@ export class Player {
   respawn() {
     this.pos.copy(this.safe);
     this.vel.set(0, 0, 0);
-    this.grounded = true; this.climbing = false; this.stamina = 100;
+    this.grounded = true; this.climbing = false;
   }
 }

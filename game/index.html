@@ -13,24 +13,34 @@
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   button { font: inherit; color: inherit; border: 0; cursor: pointer; }
 
-  /* заставка */
-  #menu { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
-    padding: max(28px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(34px, env(safe-area-inset-bottom)) max(34px, env(safe-area-inset-left));
-    background: linear-gradient(180deg, rgba(10,24,44,0) 30%, rgba(10,24,44,.62) 100%);
-    transition: opacity .6s; }
+  /* главное меню */
+  #menu { position: fixed; inset: 0; display: flex; align-items: center; overflow-y: auto;
+    padding: max(20px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(30px, env(safe-area-inset-left));
+    background: linear-gradient(90deg, rgba(10,24,44,.72) 0%, rgba(10,24,44,.35) 42%, rgba(10,24,44,0) 68%);
+    transition: opacity .5s; touch-action: pan-y; }
   #menu.hide { opacity: 0; pointer-events: none; }
-  h1 { margin: 0; font-size: clamp(44px, 9vw, 92px); letter-spacing: .14em; font-weight: 800; line-height: 1;
-    text-shadow: 0 4px 30px rgba(10,30,60,.45); }
-  .sub { margin: 8px 0 20px; font-size: clamp(15px, 2.2vw, 20px); opacity: .92; max-width: 34em; text-wrap: balance; }
-  .btns { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  #upd { padding: 12px 22px; font-size: 17px; font-weight: 800; border-radius: 999px; position: relative; }
-  #upd.new { background: rgba(255,194,71,.9); color: #3a2500; }
-  #upd.busy { opacity: .75; }
-  #play { align-self: flex-start; padding: 14px 44px; font-size: 20px; font-weight: 800; border-radius: 999px; color: #3a2500;
+  .mcol { width: min(360px, 100%); display: flex; flex-direction: column; gap: 12px; margin: auto 0; }
+  h1 { margin: 0; font-size: clamp(40px, 8vw, 76px); letter-spacing: .12em; font-weight: 800; line-height: 1;
+    text-shadow: 0 4px 30px rgba(10,30,60,.5); }
+  .sub { margin: -4px 0 6px; font-size: 15px; opacity: .9; letter-spacing: .04em; }
+  #play { padding: 15px 20px; font-size: 21px; font-weight: 800; border-radius: 18px; color: #3a2500;
     background: linear-gradient(180deg, #ffd978, #ffb02e); box-shadow: 0 6px 0 #c97d10, 0 14px 30px rgba(0,0,0,.28); }
   #play:active { transform: translateY(4px); box-shadow: 0 2px 0 #c97d10; }
   #play:disabled { filter: grayscale(.7); opacity: .8; }
-  .hint { margin-top: 16px; font-size: 13px; opacity: .75; }
+  .card { padding: 14px; border-radius: 18px; margin-top: 4px; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .8; font-weight: 700; }
+  .card .seg { margin: 0; }
+  .card #colors { margin-bottom: 14px; }
+  #upd { padding: 12px 18px; font-size: 16px; font-weight: 800; border-radius: 16px; text-align: center; }
+  #upd.new { background: rgba(255,194,71,.92); color: #3a2500; }
+  #upd.busy { opacity: .75; }
+  .hint { font-size: 12.5px; opacity: .8; line-height: 1.35; }
+  @media (max-height: 470px) { h1 { font-size: 40px; } .sub { display: none; } .mcol { gap: 9px; } #play { padding: 11px 20px; } .card { padding: 11px 14px; } .card #colors { margin-bottom: 10px; } }
+  @media (max-aspect-ratio: 1/1) {
+    #menu { align-items: flex-end; background: linear-gradient(180deg, rgba(10,24,44,0) 30%, rgba(10,24,44,.5) 52%, rgba(10,24,44,.82) 100%); }
+    .mcol { margin: 0 auto; }
+    h1 { text-align: center; } .sub { text-align: center; }
+  }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #cfe2ee; color: #2c4a66;
     font-size: 18px; font-weight: 700; text-align: center; padding: 24px; transition: opacity .5s; }
   #loading.hide { opacity: 0; pointer-events: none; }
@@ -58,10 +68,11 @@
   .seg { display: flex; gap: 4px; margin-bottom: 12px; }
   .seg button, .row { flex: 1; padding: 9px 4px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 700; }
   .seg button.on { background: var(--accent); color: #3a2500; }
-  #colors { display: flex; gap: 6px; margin-bottom: 4px; }
+  #colors { display: flex; gap: 7px; margin-bottom: 4px; }
   #colors button { flex: 1; aspect-ratio: 1; border-radius: 50%; border: 3px solid transparent; }
   #colors button.on { border-color: #fff; }
   .row { display: block; width: 100%; margin-top: 6px; }
+  .row.main { background: var(--accent); color: #3a2500; margin-top: 0; }
   #zoneBig { position: absolute; top: 13%; left: 0; right: 0; text-align: center; font-size: clamp(18px, 3.4vw, 30px); font-weight: 800;
     letter-spacing: .12em; text-shadow: 0 2px 18px rgba(10,30,60,.55); opacity: 0; transform: translateY(8px);
     transition: opacity .8s, transform .8s; pointer-events: none; }
@@ -86,7 +97,10 @@
   .touch .pad { display: grid; }
   #jump { right: max(22px, env(safe-area-inset-right)); bottom: max(26px, env(safe-area-inset-bottom)); width: 86px; height: 86px; }
   #run { right: max(118px, calc(env(safe-area-inset-right) + 96px)); bottom: max(20px, env(safe-area-inset-bottom)); width: 64px; height: 64px; }
-  #run.on { background: var(--accent); color: #3a2500; }
+  #run.on, #grab.on { background: var(--accent); color: #3a2500; }
+  #grab { right: max(26px, env(safe-area-inset-right)); bottom: max(126px, calc(env(safe-area-inset-bottom) + 108px)); width: 74px; height: 74px; opacity: .55; }
+  #grab.ready, #grab.on { opacity: 1; }
+  #grab.ready { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,194,71,.45); }
   .pad svg { width: 46%; height: 46%; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
   .pad:active { transform: scale(.93); }
   @media (pointer: coarse) { .pad { display: grid; } .desk { display: none; } }
@@ -101,36 +115,40 @@
     <div id="gauge"><div id="bar"></div></div>
     <div><div id="depth">0 м</div><div id="zone">Луг у края</div></div>
   </div>
-  <button id="gear" class="glass" aria-label="Настройки">⚙</button>
+  <button id="gear" class="glass" aria-label="Меню">☰</button>
   <div id="fps"></div>
   <div id="panel" class="glass">
-    <h3>Качество</h3>
+    <button id="tomenu" class="row main">☰ Главное меню</button>
+    <h3 style="margin-top:12px">Качество</h3>
     <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
-    <h3>Герой</h3>
-    <div id="colors"></div>
-    <button id="armor" class="row">Броня: снята</button>
-    <h3 style="margin-top:12px">Прочее</h3>
     <button id="view" class="row">Вид: от третьего лица</button>
     <button id="showfps" class="row">Счётчик FPS</button>
-    <button id="tomenu" class="row">В главное меню</button>
   </div>
-  <div id="stam" class="glass"><div id="stamFill"></div></div>
   <div id="zoneBig"></div>
   <div id="msg" class="glass">Глубже пока не пройти — этот слой ещё не открыт</div>
   <div id="stick"><div id="knob"></div></div>
   <button id="run" class="pad glass" aria-label="Бег"><svg viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg></button>
+  <button id="grab" class="pad glass" aria-label="Хват"><svg viewBox="0 0 24 24"><path d="M8 13V6a1.5 1.5 0 013 0v5m0-1V4.5a1.5 1.5 0 013 0V11m0-4.5a1.5 1.5 0 013 0V14c0 4-2.5 7-6.5 7S5 18.5 4.5 16l-1-3.5a1.4 1.4 0 012.6-1L8 14"/></svg></button>
   <button id="jump" class="pad glass" aria-label="Прыжок"><svg viewBox="0 0 24 24"><path d="M5 13l7-7 7 7M5 19l7-7 7 7"/></svg></button>
 </div>
 <div id="fade"></div>
 
 <div id="menu">
-  <h1>БЕЗДНА</h1>
-  <p class="sub">Начальная локация: лагерь на лугу и первое кольцо спуска. Ниже — только туман.</p>
-  <div class="btns"><button id="play" disabled>Загрузка…</button>
-  <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button></div>
-  <div id="ver" class="hint" hidden></div>
-  <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · иди в стену, чтобы карабкаться</div>
-  <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · иди в стену, чтобы карабкаться · мышь — обзор · V — вид</div>
+  <div class="mcol">
+    <h1>БЕЗДНА</h1>
+    <p class="sub">Лагерь на краю провала</p>
+    <button id="play" disabled>Загрузка…</button>
+    <div class="card glass">
+      <h3>Цвет героя</h3>
+      <div id="colors"></div>
+      <h3>Графика</h3>
+      <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
+    </div>
+    <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button>
+    <div id="ver" class="hint" hidden></div>
+    <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · кнопка с рукой — схватиться за стену и лезть</div>
+    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · мышь — обзор · V — вид</div>
+  </div>
 </div>
 <div id="loading">Строим мир…</div>
 

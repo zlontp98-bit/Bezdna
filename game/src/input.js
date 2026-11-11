@@ -2,7 +2,7 @@
 export class Input {
   constructor(canvas, ui) {
     this.mx = 0; this.my = 0; this.lookX = 0; this.lookY = 0;
-    this.jump = false; this.sprint = false; this.sprintLock = false;
+    this.jump = false; this.grab = false; this.sprint = false; this.sprintLock = false;
     this.keys = new Set();
     this.touch = false;
     this.stick = null; this.look = null;
@@ -64,12 +64,14 @@ export class Input {
     addEventListener('keydown', (e) => {
       this.keys.add(e.code);
       if (e.code === 'Space') { this.jump = true; e.preventDefault(); }
+      if (e.code === 'KeyE' && !e.repeat) this.grab = true;
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
 
     const btn = (el, fn) => el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
     btn(ui.jumpEl, () => { this.jump = true; });
+    btn(ui.grabEl, () => { this.grab = true; });
     btn(ui.runEl, () => {
       this.sprintLock = !this.sprintLock; this.sprint = this.sprintLock;
       ui.runEl.classList.toggle('on', this.sprintLock);
@@ -88,8 +90,8 @@ export class Input {
     if (l > 1) { x /= l; y /= l; }
     this.mx = x; this.my = y;
     const sprint = this.sprint || k.has('ShiftLeft') || k.has('ShiftRight');
-    const out = { mx: x, my: y, jump: this.jump, sprint, lookX: this.lookX, lookY: this.lookY };
-    this.jump = false; this.lookX = 0; this.lookY = 0;
+    const out = { mx: x, my: y, jump: this.jump, grab: this.grab, sprint, lookX: this.lookX, lookY: this.lookY };
+    this.jump = false; this.grab = false; this.lookX = 0; this.lookY = 0;
     return out;
   }
 }

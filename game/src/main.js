@@ -76,15 +76,15 @@ function build() {
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
   motes = buildMotes(scene, 220);
 
-  input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run') });
+  input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
   // облик героя: цвет и пробная броня, выбор запоминается
-  const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]), armor: store.get('bezdna.armor', '0') === '1' };
+  const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]) };
+  if (!SKIN_COLORS.includes(look.color)) look.color = SKIN_COLORS[0];
   const applyLook = () => {
     player.setLook(look);
-    store.set('bezdna.color', look.color); store.set('bezdna.armor', look.armor ? '1' : '0');
+    store.set('bezdna.color', look.color);
     document.querySelectorAll('#colors button').forEach((b) => b.classList.toggle('on', +b.dataset.c === look.color));
-    $('armor').textContent = look.armor ? 'Броня: надета' : 'Броня: снята';
   };
   SKIN_COLORS.forEach((c) => {
     const b = document.createElement('button');
@@ -92,7 +92,6 @@ function build() {
     b.addEventListener('click', () => { look.color = c; applyLook(); });
     $('colors').appendChild(b);
   });
-  $('armor').addEventListener('click', () => { look.armor = !look.armor; applyLook(); });
   applyLook();
   setQuality(Q.mode);
   addEventListener('resize', onResize);
@@ -112,9 +111,8 @@ const ZONES = [[-3, 'Луг у края'], [-1e9, 'Первое кольцо']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
-  $('stam').classList.toggle('show', player.stamina < 99.5);
-  $('stamFill').style.width = player.stamina + '%';
-  $('stamFill').classList.toggle('low', player.stamina < 25);
+  $('grab').classList.toggle('on', player.climbing);
+  $('grab').classList.toggle('ready', player.canGrab);
   const d = Math.max(0, Math.round(-y));
   $('depth').textContent = d > 0 ? `−${d} м` : '0 м';
   $('bar').style.height = Math.min(100, (-y / 13) * 100) + '%';
@@ -154,13 +152,36 @@ function updateCamera(dt, inp) {
   camera.lookAt(target);
 }
 
+// Главное меню: герой стоит перед камерой, она медленно ходит вокруг него
+const IDLE = { mx: 0, my: 0, jump: false, grab: false, sprint: false };
+function menuFrame(dt, t) {
+  player.update(dt, IDLE, yaw);
+  player.m.root.visible = true;
+  const p = player.pos, wide = camera.aspect > 1;
+  const a = player.facing + 0.45 + Math.sin(t * 0.25) * 0.3;
+  const dist = wide ? 3.4 : 4.6;
+  camPos.set(p.x + Math.sin(a) * dist, p.y + 1.25, p.z + Math.cos(a) * dist);
+  camPos.y = Math.max(camPos.y, heightAt(camPos.x, camPos.z) + 0.5);
+  camera.position.lerp(camPos, Math.min(1, dt * 4));
+  // на широком экране герой справа от кнопок, на вертикальном — над ними
+  const rx = Math.cos(a), rz = -Math.sin(a);
+  if (wide) target.set(p.x - rx * 1.25, p.y + 0.85, p.z - rz * 1.25);
+  else target.set(p.x, p.y - 0.35, p.z);
+  camera.lookAt(target);
+  U.uCenter.value.copy(p); U.uPlayer.value.copy(p);
+  clouds.rotation.y += dt * 0.003;
+  renderer.render(scene, camera);
+}
+
 let last = 0, frames = 0, fpsT = 0, debugCam = null;
 function frame(now) {
   requestAnimationFrame(frame);
   const dtMs = Math.min(100, now - last);
   last = now;
   const dt = dtMs / 1000;
-  if (!running) { if (renderer) renderer.render(scene, camera); return; }
+  if (!renderer) return;
+  U.uTime.value = now / 1000;
+  if (!running) { menuFrame(dt, now / 1000); return; }
   adaptQuality(dtMs);
 
   const inp = input.poll();
@@ -177,7 +198,6 @@ function frame(now) {
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   player.m.root.visible = !firstPerson;
 
-  U.uTime.value = now / 1000;
   U.uCenter.value.copy(player.pos);
   U.uPlayer.value.copy(player.pos);
   clouds.rotation.y += dt * 0.003;
@@ -198,6 +218,7 @@ function start() {
   $('menu').classList.add('hide');
   $('hud').classList.add('show');
   running = true;
+  yaw = player.facing + Math.PI; // камера встаёт за спину героя
 }
 $('play').addEventListener('click', start);
 $('tomenu').addEventListener('click', () => {
@@ -245,9 +266,8 @@ requestAnimationFrame(() => setTimeout(() => {
     build();
     // камера на заставке: смотрим через луг на провал
     const s = player.pos;
-    camera.position.set(s.x + 12, s.y + 4.2, s.z - 4);
-    camera.lookAt(s.x - 30, s.y - 4, s.z + 22);
-    player.update(0.016, { mx: 0, my: 0, jump: false, sprint: false }, yaw);
+    camera.position.set(s.x + 6, s.y + 3, s.z - 3);
+    player.facing = 1.9; // на заставке герой стоит лицом к лагерю и зрителю
     $('play').disabled = false;
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
