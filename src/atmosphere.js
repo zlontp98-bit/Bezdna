@@ -88,8 +88,8 @@ export function buildClouds(scene) {
 // ---------- слои тумана в провале ----------
 export function buildMist(scene) {
   const layers = [
-    { y: -24, r: 84, a: 0.14 }, { y: -50, r: 66, a: 0.2 }, { y: -76, r: 48, a: 0.28 },
-    { y: -101, r: 34, a: 0.5 }, { y: -122, r: 27, a: 1.0 },
+    // море тумана под первым кольцом
+    { y: -23, r: 110, a: 0.3 }, { y: -29, r: 110, a: 0.6 }, { y: -36, r: 110, a: 1.0 },
   ];
   const geo = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
   for (const L of layers) {
@@ -110,12 +110,12 @@ export function buildMist(scene) {
         void main(){
           float r = length(vP);
           float n = vnoise(vW.xz*0.045 + uTime*0.03) * 0.6 + vnoise(vW.xz*0.13 - uTime*0.05) * 0.4;
-          float a = uA * smoothstep(1.0, 0.45, r) * (0.55 + 0.6*n);
+          float a = uA * smoothstep(1.0, 0.8, r) * (0.55 + 0.6*n);
           // растворяемся, когда камера проходит сквозь слой
           a *= smoothstep(1.5, 9.0, abs(cameraPosition.y - vW.y));
-          vec3 c = mix(uAbyssA, uAbyssB, smoothstep(-60.0, -125.0, vW.y)) * 1.12;
+          vec3 c = uAbyssA * 1.1;
           // свечение из глубины
-          c += vec3(0.25,0.5,0.6) * smoothstep(0.6, 0.0, r) * step(0.99, uA);
+          c += vec3(0.16,0.22,0.24) * smoothstep(0.45, 0.0, r) * step(0.99, uA);
           gl_FragColor = vec4(grade(c), clamp(a, 0.0, 1.0));
         }`,
     });
@@ -207,7 +207,7 @@ export function buildStreams(scene) {
     const pos = [], uvs = [], idx = [];
     let len = 0, prev = null, i = 0;
     const half = 1.9;
-    for (let r = 229; r > 6; r -= 0.5, i++) {
+    for (let r = 229; r > W.HOLE - 6; r -= 0.5, i++) {
       const row = [];
       for (const side of [-1, 1]) {
         const x = cx * r + tx * half * side, z = cz * r + tz * half * side;

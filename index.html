@@ -21,14 +21,11 @@
   #menu.hide { opacity: 0; pointer-events: none; }
   h1 { margin: 0; font-size: clamp(44px, 9vw, 92px); letter-spacing: .14em; font-weight: 800; line-height: 1;
     text-shadow: 0 4px 30px rgba(10,30,60,.45); }
-  .sub { margin: 8px 0 22px; font-size: clamp(15px, 2.2vw, 20px); opacity: .92; max-width: 34em; text-wrap: balance; }
+  .sub { margin: 8px 0 20px; font-size: clamp(15px, 2.2vw, 20px); opacity: .92; max-width: 34em; text-wrap: balance; }
   #play { align-self: flex-start; padding: 14px 44px; font-size: 20px; font-weight: 800; border-radius: 999px; color: #3a2500;
     background: linear-gradient(180deg, #ffd978, #ffb02e); box-shadow: 0 6px 0 #c97d10, 0 14px 30px rgba(0,0,0,.28); }
   #play:active { transform: translateY(4px); box-shadow: 0 2px 0 #c97d10; }
   #play:disabled { filter: grayscale(.7); opacity: .8; }
-  .pick { margin: 0 0 18px; max-width: 340px; }
-  .pick span { display: block; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .8; font-weight: 700; margin-bottom: 6px; }
-  .pick .seg { margin: 0; padding: 4px; border-radius: 14px; background: rgba(18,30,44,.42); }
   .hint { margin-top: 16px; font-size: 13px; opacity: .75; }
   #loading { position: fixed; inset: 0; display: grid; place-items: center; background: #cfe2ee; color: #2c4a66;
     font-size: 18px; font-weight: 700; text-align: center; padding: 24px; transition: opacity .5s; }
@@ -95,8 +92,6 @@
   <button id="gear" class="glass" aria-label="Настройки">⚙</button>
   <div id="fps"></div>
   <div id="panel" class="glass">
-    <h3>Стиль</h3>
-    <div class="seg"><button data-s="day">День</button><button data-s="mist">Туман</button><button data-s="dusk">Вечер</button></div>
     <h3>Качество</h3>
     <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
     <button id="view" class="row">Вид: от третьего лица</button>
@@ -112,8 +107,7 @@
 
 <div id="menu">
   <h1>БЕЗДНА</h1>
-  <p class="sub">Начальная локация: лагерь на лугу у края провала. Выбери стиль графики и осмотрись.</p>
-  <div class="pick"><span>Стиль графики</span><div class="seg"><button data-s="day">День</button><button data-s="mist">Туман</button><button data-s="dusk">Вечер</button></div></div>
+  <p class="sub">Начальная локация: лагерь на лугу и первое кольцо спуска. Ниже — только туман.</p>
   <button id="play" disabled>Загрузка…</button>
   <div class="hint mob">Левая половина экрана — идти (сильно отклони — бег) · правая — осматриваться</div>
   <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · мышь — обзор · V — вид от первого лица</div>

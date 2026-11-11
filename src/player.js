@@ -166,7 +166,7 @@ export class Player {
     }
 
     // запоминаем безопасное место для возврата после падения в колодец
-    if (this.grounded && this.n.y > 0.9 && p.y > -118) {
+    if (this.grounded && this.n.y > 0.9 && p.y > -20) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
     }

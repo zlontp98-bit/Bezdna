@@ -204,12 +204,12 @@ export function buildFlora(scene) {
     list.push({ x, y, z, s, color, rot, tilt });
 
   // лиственные деревья: луг и верхние уступы, растут рощами
-  scatter(300, W.HOLE + 20, W.MEADOW + 8, (x, y, z, ny) => {
+  scatter(300, W.HOLE + 4, W.MEADOW + 8, (x, y, z, ny) => {
     if (ny < 0.93 || y < -34) return false;
     if (fbm(x * 0.02 + 3, z * 0.02, 2) < -0.08 && y > -2) return false;
     if (!free(x, z, 2.6)) return false;
     const s = (y < -2 ? 0.75 : 0.95) + rnd() * 0.6;
-    const hue = 0.24 + rnd() * 0.1, deep = y < -18;
+    const hue = 0.24 + rnd() * 0.1, deep = y < -9;
     col.setHSL(deep ? 0.42 + rnd() * 0.05 : hue, 0.55, 0.36 + rnd() * 0.08);
     // осенние деревья для пятен цвета
     if (!deep && rnd() < 0.09) col.setHSL(0.07 + rnd() * 0.05, 0.75, 0.5);
@@ -231,8 +231,8 @@ export function buildFlora(scene) {
     return true;
   });
   // гигантские светящиеся грибы на глубоких уступах
-  scatter(95, W.HOLE + 3, W.R - 22, (x, y, z, ny) => {
-    if (ny < 0.93 || y > -30 || !free(x, z, 2.8)) return false;
+  scatter(12, W.HOLE + 3, W.R - 6, (x, y, z, ny) => {
+    if (ny < 0.93 || y > -11.5 || !free(x, z, 2.8)) return false;
     const s = 0.7 + rnd() * 0.9;
     col.setHSL(y < -66 ? 0.74 + rnd() * 0.08 : 0.47 + rnd() * 0.07, 0.6, 0.55);
     add(lists.shroom, x, y - 0.1, z, s, col.getHex());
@@ -255,15 +255,15 @@ export function buildFlora(scene) {
     return true;
   });
   // кристаллы: глубина
-  scatter(120, W.HOLE + 1, W.R - 30, (x, y, z, ny) => {
-    if (y > -38 || ny < 0.5 || !free(x, z, 1)) return false;
+  scatter(40, W.HOLE + 1, W.R - 4, (x, y, z, ny) => {
+    if (y > -10 || ny < 0.5 || !free(x, z, 1)) return false;
     col.setHSL(y < -70 ? 0.83 + rnd() * 0.06 : 0.5 + rnd() * 0.05, 0.75, 0.66);
     add(lists.crystal, x, y - 0.05, z, 0.6 + rnd() * 1.1, col.getHex(), rnd() * TAU, (rnd() - 0.5) * 0.5);
     return true;
   });
   // мелкие светящиеся грибочки
-  scatter(260, W.HOLE + 1, W.R - 12, (x, y, z, ny) => {
-    if (y > -20 || ny < 0.9) return false;
+  scatter(110, W.HOLE + 1, W.R - 4, (x, y, z, ny) => {
+    if (y > -9 || ny < 0.9) return false;
     col.setHSL(y < -66 ? 0.8 : 0.48 + rnd() * 0.08, 0.7, 0.68);
     add(lists.small, x, y, z, 0.7 + rnd() * 1.4, col.getHex());
     return true;

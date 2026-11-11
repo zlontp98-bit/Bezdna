@@ -1,5 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { U, setStyle } from './shaders.js';
+setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
@@ -91,16 +92,13 @@ function onResize() {
   applyRes();
 }
 
-const ZONES = [
-  [-2, 'Луг у края'], [-34, 'Верхние уступы'], [-66, 'Грибные террасы'],
-  [-112, 'Сиреневая глубина'], [-1e9, 'Туманный колодец'],
-];
+const ZONES = [[-3, 'Луг у края'], [-1e9, 'Первое кольцо']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
   const d = Math.max(0, Math.round(-y));
   $('depth').textContent = d > 0 ? `−${d} м` : '0 м';
-  $('bar').style.height = Math.min(100, (-y / 112) * 100) + '%';
+  $('bar').style.height = Math.min(100, (-y / 13) * 100) + '%';
   const z = ZONES.find((q) => y > q[0])[1];
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
@@ -149,7 +147,7 @@ function frame(now) {
   const inp = input.poll();
   if (!falling) player.update(dt, inp, yaw);
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
-  if (player.pos.y < -150 && !falling) { falling = true; $('msg').classList.add('show'); }
+  if (player.pos.y < -44 && !falling) { falling = true; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }
@@ -176,12 +174,7 @@ function frame(now) {
 }
 
 // ---- интерфейс ----
-function pickStyle(key) {
-  setStyle(key); store.set('bezdna.style', key);
-  document.querySelectorAll('[data-s]').forEach((b) => b.classList.toggle('on', b.dataset.s === key));
-}
-document.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => pickStyle(b.dataset.s)));
-pickStyle(store.get('bezdna.style', 'day'));
+
 function start() {
   $('menu').classList.add('hide');
   $('hud').classList.add('show');
@@ -211,7 +204,7 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, pickStyle, Q, renderer };
+    window.__game = { player, camera, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

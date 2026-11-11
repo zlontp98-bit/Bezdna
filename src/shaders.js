@@ -11,7 +11,7 @@ export const U = {
   uAmbHi: { value: new THREE.Color(0.40, 0.48, 0.62) },
   uAmbLo: { value: new THREE.Color(0.25, 0.24, 0.31) },
   uFogCol: { value: new THREE.Color(0.80, 0.88, 0.93) },
-  uAbyssA: { value: new THREE.Color(0.62, 0.84, 0.86) },
+  uAbyssA: { value: new THREE.Color(0.70, 0.85, 0.87) },
   uAbyssB: { value: new THREE.Color(0.36, 0.42, 0.74) },
   uFogDen: { value: 0.0021 },
   uTime: { value: 0 },
@@ -58,8 +58,8 @@ vec3 shade(vec3 alb, vec3 n, float sh){
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);
-  float deep = smoothstep(6.0, -70.0, w.y);
-  float f = 1.0 - exp(-d * (uFogDen + deep*0.0042));
+  float deep = smoothstep(-9.0, -42.0, w.y);
+  float f = 1.0 - exp(-d * (uFogDen + deep*0.03));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-75.0, -150.0, w.y));
   return grade(mix(c, fc, clamp(f, 0.0, 1.0)));
@@ -69,7 +69,7 @@ vec3 grassCol(vec3 w){
   float t = vnoise(w.xz*0.06)*0.65 + vnoise(w.xz*0.27)*0.35;
   vec3 g = mix(vec3(0.24,0.55,0.22), vec3(0.50,0.74,0.27), t);
   float d = -w.y;
-  g = mix(g, mix(vec3(0.13,0.52,0.44), vec3(0.32,0.76,0.62), t), smoothstep(20.0, 46.0, d));
+  g = mix(g, mix(vec3(0.13,0.52,0.44), vec3(0.32,0.76,0.62), t), smoothstep(5.0, 30.0, d));
   g = mix(g, mix(vec3(0.34,0.33,0.70), vec3(0.58,0.52,0.90), t), smoothstep(62.0, 92.0, d));
   return g;
 }
@@ -87,12 +87,9 @@ export function mat(opts) {
 
 // ---- стили графики: один и тот же мир, разное настроение ----
 export const STYLES = {
-  day: { name: 'Яркий день', sun: [0.64, 0.55, 0.40], hi: [0.40, 0.48, 0.62], lo: [0.25, 0.24, 0.31],
-    fog: [0.80, 0.88, 0.93], zen: [0.22, 0.47, 0.86], den: 0.0021, sat: 1.0 },
-  mist: { name: 'Туманное утро', sun: [0.40, 0.39, 0.35], hi: [0.50, 0.54, 0.57], lo: [0.31, 0.32, 0.34],
-    fog: [0.75, 0.79, 0.80], zen: [0.60, 0.68, 0.76], den: 0.0085, sat: 0.74 },
-  dusk: { name: 'Тёплый вечер', sun: [0.86, 0.50, 0.26], hi: [0.36, 0.36, 0.58], lo: [0.25, 0.20, 0.31],
-    fog: [0.99, 0.76, 0.60], zen: [0.27, 0.33, 0.70], den: 0.0034, sat: 1.06 },
+  // выбранный стиль: цвета ясного дня + мягкая дымка туманного утра
+  day: { name: 'День с дымкой', sun: [0.62, 0.54, 0.40], hi: [0.41, 0.49, 0.61], lo: [0.26, 0.25, 0.31],
+    fog: [0.80, 0.86, 0.90], zen: [0.30, 0.52, 0.84], den: 0.0058, sat: 0.95 },
 };
 export function setStyle(key) {
   const s = STYLES[key] || STYLES.day;
