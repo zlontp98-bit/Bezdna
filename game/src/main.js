@@ -112,6 +112,9 @@ const ZONES = [[-3, 'Луг у края'], [-1e9, 'Первое кольцо']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
+  $('stam').classList.toggle('show', player.stamina < 99.5);
+  $('stamFill').style.width = player.stamina + '%';
+  $('stamFill').classList.toggle('low', player.stamina < 25);
   const d = Math.max(0, Math.round(-y));
   $('depth').textContent = d > 0 ? `−${d} м` : '0 м';
   $('bar').style.height = Math.min(100, (-y / 13) * 100) + '%';
@@ -197,6 +200,14 @@ function start() {
   running = true;
 }
 $('play').addEventListener('click', start);
+$('tomenu').addEventListener('click', () => {
+  running = false;
+  $('panel').classList.remove('show');
+  $('hud').classList.remove('show');
+  $('menu').classList.remove('hide');
+  $('play').textContent = 'Продолжить';
+  if (document.exitPointerLock) document.exitPointerLock();
+});
 $('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
 $('view').addEventListener('click', () => {
   firstPerson = !firstPerson;

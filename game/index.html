@@ -69,6 +69,11 @@
   #msg { position: absolute; bottom: 24%; left: 50%; transform: translateX(-50%); padding: 10px 18px; border-radius: 14px;
     font-size: 15px; font-weight: 700; opacity: 0; transition: opacity .5s; pointer-events: none; text-align: center; width: max-content; max-width: 86vw; }
   #msg.show { opacity: 1; }
+  #stam { position: absolute; left: 50%; bottom: max(18%, 90px); width: 170px; height: 12px; margin-left: -85px; border-radius: 6px;
+    overflow: hidden; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #stam.show { opacity: 1; }
+  #stamFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ffd24a, #b6e84a); border-radius: 6px; }
+  #stamFill.low { background: #ff6a4a; }
   #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
 
   /* сенсорное управление */
@@ -107,7 +112,9 @@
     <h3 style="margin-top:12px">Прочее</h3>
     <button id="view" class="row">Вид: от третьего лица</button>
     <button id="showfps" class="row">Счётчик FPS</button>
+    <button id="tomenu" class="row">В главное меню</button>
   </div>
+  <div id="stam" class="glass"><div id="stamFill"></div></div>
   <div id="zoneBig"></div>
   <div id="msg" class="glass">Глубже пока не пройти — этот слой ещё не открыт</div>
   <div id="stick"><div id="knob"></div></div>
@@ -122,8 +129,8 @@
   <div class="btns"><button id="play" disabled>Загрузка…</button>
   <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button></div>
   <div id="ver" class="hint" hidden></div>
-  <div class="hint mob">Левая половина экрана — идти (сильно отклони — бег) · правая — осматриваться</div>
-  <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · мышь — обзор · V — вид от первого лица</div>
+  <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · иди в стену, чтобы карабкаться</div>
+  <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · иди в стену, чтобы карабкаться · мышь — обзор · V — вид</div>
 </div>
 <div id="loading">Строим мир…</div>
 
