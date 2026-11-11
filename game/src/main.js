@@ -8,6 +8,7 @@ import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools 
 import { buildRuins } from './ruins.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
+import { Inventory, bindInventoryUI } from './inventory.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -17,7 +18,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, spray;
+let renderer, scene, camera, player, input, grass, motes, clouds, spray, inv;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -81,6 +82,8 @@ function build() {
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
+  inv = new Inventory(store);
+  bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
   // облик героя: цвет и пробная броня, выбор запоминается
   const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]) };
   if (!SKIN_COLORS.includes(look.color)) look.color = SKIN_COLORS[0];
@@ -239,7 +242,11 @@ $('view').addEventListener('click', () => {
 });
 $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
-addEventListener('keydown', (e) => { if (e.code === 'KeyV') $('view').click(); });
+addEventListener('keydown', (e) => {
+  if (e.code === 'KeyV') $('view').click();
+  if (e.code === 'KeyI' || e.code === 'Tab') { e.preventDefault(); $('bagBtn').click(); }
+  if (e.code >= 'Digit1' && e.code <= 'Digit3' && inv) inv.tap(+e.code.slice(5) - 1);
+});
 addEventListener('wheel', (e) => { camDist = Math.max(3, Math.min(14, camDist + e.deltaY * 0.01)); }, { passive: true });
 
 // ---- обновления внутри приложения (кнопка-коробка) ----
@@ -275,7 +282,7 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

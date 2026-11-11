@@ -85,6 +85,32 @@
   #stam.show { opacity: 1; }
   #stamFill { height: 100%; width: 100%; background: linear-gradient(90deg, #ffd24a, #b6e84a); border-radius: 6px; }
   #stamFill.low { background: #ff6a4a; }
+  /* инвентарь */
+  #hotbar { position: absolute; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  #held { font-size: 13px; font-weight: 700; text-shadow: 0 1px 4px rgba(0,0,0,.6); min-height: 16px; }
+  #hot { display: flex; gap: 6px; padding: 6px; border-radius: 16px; }
+  .cell { position: relative; width: 52px; height: 52px; border-radius: 12px; background: rgba(255,255,255,.1);
+    border: 2px solid rgba(255,255,255,.18); display: grid; place-items: center; }
+  .cell .ic { font-size: 26px; line-height: 1; filter: drop-shadow(0 2px 2px rgba(0,0,0,.35)); }
+  .cell .n { position: absolute; right: 4px; bottom: 2px; font-size: 12px; font-weight: 800; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  .cell.active { border-color: var(--accent); background: rgba(255,194,71,.22); }
+  .cell.pick { transform: scale(1.1); border-color: #fff; background: rgba(255,255,255,.3); }
+  #hot .cell:not(.active)::after { content: ''; }
+  #bagBtn { position: absolute; left: max(14px, env(safe-area-inset-left)); bottom: max(14px, env(safe-area-inset-bottom));
+    width: 60px; height: 60px; border-radius: 16px; display: grid; place-items: center; gap: 0; padding: 2px; }
+  #bagBtn .ico { font-size: 26px; line-height: 1; }
+  #bagBtn .cnt { font-size: 10px; font-weight: 700; opacity: .85; }
+  #bagBtn.on { background: var(--accent); color: #3a2500; }
+  #bag { position: absolute; left: max(14px, env(safe-area-inset-left)); bottom: max(82px, calc(env(safe-area-inset-bottom) + 68px));
+    padding: 12px; border-radius: 18px; display: none; }
+  #bag.show { display: block; }
+  #bag h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
+  #bagCells { display: grid; grid-template-columns: repeat(4, 52px); gap: 6px; }
+  #bag .tip { margin-top: 8px; font-size: 11px; opacity: .7; max-width: 230px; }
+  @media (max-height: 470px) { .cell { width: 44px; height: 44px; } .cell .ic { font-size: 22px; } #bagCells { grid-template-columns: repeat(6, 44px); } }
+  .touch #bagBtn { left: max(14px, env(safe-area-inset-left)); bottom: auto; top: max(70px, calc(env(safe-area-inset-top) + 56px)); }
+  .touch #bag { bottom: auto; top: max(138px, calc(env(safe-area-inset-top) + 124px)); }
   #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
 
   /* сенсорное управление */
@@ -125,6 +151,16 @@
     <button id="showfps" class="row">Счётчик FPS</button>
   </div>
   <div id="zoneBig"></div>
+  <div id="hotbar">
+    <div id="held"></div>
+    <div id="hot" class="glass"></div>
+  </div>
+  <button id="bagBtn" class="glass" aria-label="Рюкзак"><span class="ico">🎒</span><span class="cnt">0/12</span></button>
+  <div id="bag" class="glass">
+    <h3>Рюкзак</h3>
+    <div id="bagCells"></div>
+    <div class="tip">Коснись предмета, потом ячейки — чтобы переложить</div>
+  </div>
   <div id="msg" class="glass">Глубже пока не пройти — этот слой ещё не открыт</div>
   <div id="stick"><div id="knob"></div></div>
   <button id="run" class="pad glass" aria-label="Бег"><svg viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg></button>
