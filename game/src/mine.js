@@ -9,7 +9,7 @@ import { objId, RULES } from './world.js';
 // всё остальное — ответ ('mined'), поэтому так же заработает и с сервером.
 // Валун — экземпляр в общей сетке камней: двигаем только его матрицу, а пока его нет,
 // выключаем его твёрдое тело.
-const CELL = 8, BREAK = 0.35, GROW = 1.4, FLY = 0.7, CHIPS = 4;
+const CELL = 8, BREAK = 0.35, GROW = 1.4, FLY = 0.7, CHIPS = 3;
 
 export class Miner {
   constructor(scene, boulders, rockGeo, player, inv, world, toast) {
@@ -17,7 +17,7 @@ export class Miner {
     this.target = null; this.cd = 0; this.busy = []; this.flying = []; this.pending = null;
     this.cells = new Map(); this.byId = new Map();
     for (const b of boulders) {
-      b.id = objId('rock', b.x, b.z); b.hp = RULES.boulder.hits; b.state = 'idle'; b.t = 0;
+      b.id = objId('rock', b.x, b.z); b.hp = RULES.boulder.hits(b.s); b.state = 'idle'; b.t = 0;
       this.byId.set(b.id, b);
       const k = Math.floor(b.x / CELL) + ',' + Math.floor(b.z / CELL);
       (this.cells.get(k) || this.cells.set(k, []).get(k)).push(b);
@@ -74,7 +74,7 @@ export class Miner {
       if (b.state === 'idle' || b.state === 'shake') {
         b.state = 'shake'; b.t = 0;
         if (!this.busy.includes(b)) this.busy.push(b);
-        if (--b.hp <= 0) { b.hp = RULES.boulder.hits; this.world.send({ type: 'mine', id: b.id }); }
+        if (--b.hp <= 0) { b.hp = RULES.boulder.hits(b.s); this.world.send({ type: 'mine', id: b.id, s: b.s }); }
       }
     }
     if (want && this.target && this.cd <= 0) {
@@ -101,7 +101,7 @@ export class Miner {
       } else if (b.state === 'grow') {
         const k = Math.min(1, b.t / GROW), e = 1 - (1 - k) ** 3;
         this.place(b, e);
-        if (k === 1) { b.state = 'idle'; b.hp = RULES.boulder.hits; b.solid.off = false; this.place(b, 1); this.busy.splice(n, 1); }
+        if (k === 1) { b.state = 'idle'; b.hp = RULES.boulder.hits(b.s); b.solid.off = false; this.place(b, 1); this.busy.splice(n, 1); }
       }
     }
     if (this.flying.length || this.shown) {
@@ -126,7 +126,7 @@ export class Miner {
     if (!r) return; // разбивал не я
     const n = r.stone || 0, left = this.inv.add('stone', n);
     this.toast(left === 0 ? `+${n} 🪨 Камень` : left < n ? `+${n - left} 🪨 — инвентарь полон` : 'Инвентарь полон');
-    for (let i = 0; i < Math.min(n, CHIPS); i++) {
+    for (let i = 0; i < Math.min(n, CHIPS * 2); i++) {
       const a = i * 1.7 + b.x;
       this.flying.push({ t: -i * 0.06, x: b.x, y: b.y + b.s * 0.4, z: b.z, vx: Math.cos(a) * 1.2, vz: Math.sin(a) * 1.2, rot: a });
     }

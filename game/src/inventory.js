@@ -111,6 +111,7 @@ export function bindInventoryUI(inv, ui) {
     const b = document.createElement('button');
     b.className = 'cell';
     b.innerHTML = '<span class="ic"></span><span class="n"></span>';
+    b._ic = b.querySelector('.ic'); b._nn = b.querySelector('.n');
     b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
     b.addEventListener('click', () => inv.tap(i));
     parent.appendChild(b);
@@ -120,13 +121,15 @@ export function bindInventoryUI(inv, ui) {
   for (let i = HOT; i < HOT + BAG; i++) mk(i, bagEl);
 
   const render = () => {
+    // меняем в ячейке только то, что поменялось: иначе каждое бревно заново разбирало
+    // все картинки и заставляло телефон перерисовывать весь интерфейс
     inv.slots.forEach((s, i) => {
-      const c = cells[i];
-      c.querySelector('.ic').innerHTML = s ? iconHtml(s.id) : '';
-      c.querySelector('.n').textContent = s && s.n > 1 ? s.n : '';
-      c.title = s ? ITEMS[s.id].name : '';
-      c.classList.toggle('active', i === inv.active);
-      c.classList.toggle('pick', i === inv.pick);
+      const c = cells[i], id = s ? s.id : '', n = s && s.n > 1 ? String(s.n) : '';
+      if (c._id !== id) { c._id = id; c._ic.innerHTML = s ? iconHtml(id) : ''; c.title = s ? ITEMS[id].name : ''; }
+      if (c._n !== n) { c._n = n; c._nn.textContent = n; }
+      const act = i === inv.active, pk = i === inv.pick;
+      if (c._a !== act) { c._a = act; c.classList.toggle('active', act); }
+      if (c._p !== pk) { c._p = pk; c.classList.toggle('pick', pk); }
     });
     const h = inv.held;
     nameEl.textContent = h ? ITEMS[h.id].name : '';

@@ -22,10 +22,23 @@ import { Miner } from './mine.js';
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
 const isMobile = matchMedia('(pointer: coarse)').matches;
+const pending = new Map();
+let saveT = 0;
+function flushStore() {
+  clearTimeout(saveT); saveT = 0;
+  for (const [k, v] of pending) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } }
+  pending.clear();
+}
+addEventListener('visibilitychange', () => { if (document.hidden) flushStore(); });
+addEventListener('pagehide', flushStore);
 const store = {
-  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
-  del(k) { try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
+  get(k, d) { if (pending.has(k)) return pending.get(k); try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } },
+  // Запись откладываем и объединяем: на Android запись в память — синхронная запись на диск,
+  // и делать её на каждое бревно значило ловить рывки посреди игры. Пишем раз в ~1.5 с
+  // и сразу — когда приложение сворачивают.
+  set(k, v) { pending.set(k, v); if (!saveT) saveT = setTimeout(flushStore, 1500); },
+  flush: () => flushStore(),
+  del(k) { pending.delete(k); try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, craft, mine;
@@ -60,22 +73,28 @@ function setQuality(mode) {
 // только после 6 с запаса, а уровень, который уже «не потянул», запоминаем и больше не трогаем.
 function adaptQuality(dtMs) {
   Q.t += dtMs; Q.n++; Q.clock += dtMs;
+  (Q.fr || (Q.fr = [])).push(dtMs);
   if (Q.t < 1000) return;
-  const avg = Q.t / Q.n;
-  Q.t = 0; Q.n = 0;
+  // медиана, а не среднее: одиночная заминка (сохранение, сборка мусора) не должна снижать
+  // качество — смена разрешения сама по себе даёт рывок
+  const f = Q.fr.sort((a, b) => a - b), avg = f[f.length >> 1];
+  Q.t = 0; Q.n = 0; Q.fr.length = 0;
   if (Q.mode !== 'auto') return;
   if (avg > 19) {
-    Q.good = 0;
+    // снижаем, только если тяжело две секунды подряд
+    if (!Q.bad) { Q.bad = true; return; }
+    Q.bad = false; Q.good = 0;
     if (Q.clock - Q.upT < 6000) Q.ceil = Math.max(0.55, Q.scale - 0.05); // только что подняли — зря
     if (Q.scale > 0.56) { Q.scale = Math.max(0.55, Q.scale - 0.1); applyRes(); }
     else if (Q.density > 0.35) { Q.density -= 0.15; grass.setDensity(Q.density); }
   } else if (avg < 17.4) {
+    Q.bad = false;
     Q.good += 1000;
     if (Q.good < 6000) return;
     Q.good = 0;
     if (Q.density < 1) { Q.density = Math.min(1, Q.density + 0.15); grass.setDensity(Q.density); }
     else if (Q.scale < Q.ceil - 0.01) { Q.scale = Math.min(Q.ceil, Q.scale + 0.05); Q.upT = Q.clock; applyRes(); }
-  } else Q.good = 0;
+  } else { Q.good = 0; Q.bad = false; }
 }
 
 // экран загрузки: подпись, полоса и проценты
@@ -226,7 +245,7 @@ $('talkNo').addEventListener('click', closeTalk);
 // окно крафта: перерисовывается при изменении инвентаря и рецептов
 let craftOpen = false;
 function renderCraft() {
-  if (!craft) return;
+  if (!craft || !craftOpen) return;
   const box = $('craftList'), rows = craft.list();
   box.textContent = '';
   if (!rows.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'Крафты пока не изучены. Чертежи продаёт строитель в лагере.'; box.appendChild(d); return; }
@@ -407,6 +426,7 @@ function showSave() {
 $('newgame').addEventListener('click', () => $('confirm').classList.add('show'));
 $('wipeNo').addEventListener('click', () => $('confirm').classList.remove('show'));
 $('wipe').addEventListener('click', () => {
+  store.flush();
   for (const k of ['bezdna.inv', 'bezdna.world', 'bezdna.axe', 'bezdna.me']) store.del(k);
   location.reload();
 });

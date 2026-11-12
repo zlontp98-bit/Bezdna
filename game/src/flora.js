@@ -378,7 +378,7 @@ export function buildFlora(scene) {
     const g = 0.5 + rnd() * 0.16;
     if (y < -30) col.setRGB(g * 0.7, g * 0.74, g * 0.9); else col.setRGB(g * 1.0, g * 0.92, g * 0.82);
     add(lists.rock, x, y, z, s, col.getHex(), rnd() * TAU, rnd() * 0.5);
-    if (big) lists.rock[lists.rock.length - 1].mine = true;
+    if (s >= 0.6) lists.rock[lists.rock.length - 1].mine = true; // от полуметра — можно разбить киркой
     if (s > 0.8) { taken.push({ x, z, r: s }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
     return true;
   });

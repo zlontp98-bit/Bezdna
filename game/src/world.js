@@ -32,7 +32,13 @@ export function idRand(id) {
 export const RULES = {
   tree: { logs: 3, regrowMs: (id) => 100000 + idRand(id) * 50000 },
   // большие валуны: кирка разбивает их на камни, через 3–4 минуты валун на месте
-  boulder: { hits: 5, stones: 4, respawnMs: (id) => 180000 + idRand(id) * 60000 },
+  // камни по размеру s (0.6…2.8 м): маленький — 2 камня за 3 удара, самый большой — 6 за 6
+  boulder: {
+    size: (s) => Math.min(1, Math.max(0, (s - 0.6) / 2.2)),
+    hits: (s) => 3 + Math.round(3 * RULES.boulder.size(s)),
+    stones: (s) => 2 + Math.round(4 * RULES.boulder.size(s)),
+    respawnMs: (id) => 180000 + idRand(id) * 60000,
+  },
   // камушки на лугу: подобрал — через пару минут на том же месте лежит новый
   pebble: { stones: 1, respawnMs: (id) => 120000 + idRand(id) * 60000 },
   // чертежи у строителя (цена в искрах) и рецепты: что нужно, чтобы сделать вещь
@@ -99,7 +105,7 @@ class LocalAuthority {
       if (at !== undefined && now - at < RULES.boulder.respawnMs(ev.id)) return; // уже разбит
       this.mined[ev.id] = now;
       this.save();
-      emit({ type: 'mined', id: ev.id, at: now, by: this.me, reward: { stone: RULES.boulder.stones } });
+      emit({ type: 'mined', id: ev.id, at: now, by: this.me, reward: { stone: RULES.boulder.stones(ev.s) } }); // размер сервер возьмёт из своей копии мира
     }
     if (ev.type === 'pick') {
       const at = this.picked[ev.id];
