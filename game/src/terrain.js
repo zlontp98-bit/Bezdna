@@ -960,6 +960,19 @@ export function buildTerrain(scene) {
   bakeHeightTexture();
 }
 
+// Убрать траву под постройкой: прямоугольник (hx×hz, повёрнут на rot) в текстуре высот
+export function clearGrass(x, z, hx, hz, rot) {
+  const tex = U.uHmap.value, d = tex.image.data, N = tex.image.width, cell = (2 * W.EXT) / N;
+  const c = Math.cos(rot), s = Math.sin(rot), R = Math.hypot(hx, hz) + cell;
+  for (let j = Math.floor((z - R + W.EXT) / cell); j <= Math.ceil((z + R + W.EXT) / cell); j++)
+    for (let i = Math.floor((x - R + W.EXT) / cell); i <= Math.ceil((x + R + W.EXT) / cell); i++) {
+      if (i < 0 || j < 0 || i >= N || j >= N) continue;
+      const dx = (i + 0.5) * cell - W.EXT - x, dz = (j + 0.5) * cell - W.EXT - z;
+      if (Math.abs(dx * c - dz * s) <= hx + cell && Math.abs(dx * s + dz * c) <= hz + cell) d[(j * N + i) * 4 + 1] = 0;
+    }
+  tex.needsUpdate = true;
+}
+
 export { bakeShadows };
 // материал скал — им же покрыты островки-столпы
 export let rockMat;

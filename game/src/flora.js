@@ -237,6 +237,7 @@ export function buildFlora(scene) {
       if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < p.rad + (p.src ? 5 : 1.6))) continue;
       if (waterAt(x, z) > -1e8) continue;
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
+      if (Math.hypot(x - spawn.x - 9.5, z - spawn.z + 3) < 8) continue; // место под дом в лагере
       if (fn(x, y, z, n.y, r)) placed++;
     }
   }

@@ -11,7 +11,7 @@ const _lp = new THREE.Vector3();
 // это будущие слоты брони и скинов. Цвет тела — параметр.
 export const SKIN_COLORS = [0xff7a52, 0xffc93a, 0xa3dc4c, 0x58d3ae, 0x6fb1ff, 0xb48bff, 0xff8fc0, 0xf1ece0];
 
-function buildModel(look) {
+export function buildModel(look) {
   const M = propMaterial();
   const skin = new THREE.Color(look.color);
   const dark = skin.clone().multiplyScalar(0.72).getHex();
@@ -73,6 +73,19 @@ function buildModel(look) {
       part(new THREE.TorusGeometry(0.44, 0.035, 5, 16), gold, { m: rotX(Math.PI / 2, 0, 0.43, -0.01, 1, 0.88, 1) }),
       part(new THREE.ConeGeometry(0.06, 0.2, 6), 0xfff1d6, { m: T(-0.36, 0.62, -0.01, 1, 1, 1, 0, 0.7) }),
       part(new THREE.ConeGeometry(0.06, 0.2, 6), 0xfff1d6, { m: T(0.36, 0.62, -0.01, 1, 1, 1, 0, -0.7) }),
+    );
+  }
+  if (look.beard) {
+    // борода лопатой и усы — так выглядит строитель из лагеря
+    const bc = 0xf1ece0, bd = 0xd9d2c2;
+    hp.push(
+      part(sph(1, 9, 7), bc, { m: T(0, 0.05, 0.27, 0.27, 0.24, 0.13), round: R(0, 0.1, 0.2) }),
+      part(sph(1, 7, 5), bd, { m: T(-0.2, 0.13, 0.25, 0.13, 0.15, 0.1), round: R(-0.2, 0.15, 0.2) }),
+      part(sph(1, 7, 5), bd, { m: T(0.2, 0.13, 0.25, 0.13, 0.15, 0.1), round: R(0.2, 0.15, 0.2) }),
+      part(sph(1, 7, 5), bc, { m: T(-0.09, 0.2, 0.35, 0.1, 0.045, 0.05), round: R(-0.09, 0.2, 0.3) }),
+      part(sph(1, 7, 5), bc, { m: T(0.09, 0.2, 0.35, 0.1, 0.045, 0.05), round: R(0.09, 0.2, 0.3) }),
+      part(sph(1, 7, 5), bc, { m: T(-0.16, 0.52, 0.3, 0.1, 0.03, 0.04), round: R(-0.16, 0.5, 0.25) }), // брови
+      part(sph(1, 7, 5), bc, { m: T(0.16, 0.5, 0.3, 0.09, 0.03, 0.04), round: R(0.16, 0.48, 0.25) }),
     );
   }
   head.add(mesh(hp));
@@ -228,6 +241,12 @@ export class Player {
     groundAt(x, z, this.pos.y);
     if (hitSolid) out.set(0, 1, 0);
     return out;
+  }
+
+  // новое препятствие-круг (житель, постройка), появившееся после старта
+  addCollider(c) {
+    const k = ((c.x / 8) | 0) + ',' + ((c.z / 8) | 0);
+    (this.cells.get(k) || this.cells.set(k, []).get(k)).push(c);
   }
 
   tryMove(dx, dz) {

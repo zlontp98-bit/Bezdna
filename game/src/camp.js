@@ -16,6 +16,8 @@ export function buildCamp(scene, spawn) {
     parts.push(part(geo, color, { ...opt, m: T(dx, heightAt(x, z) + dy, dz, sx, sy, sz, ry, rz) }));
   };
 
+  const tentCol = { x: cx + 3.2, z: cz + 1.5, r: 1.5 };
+  const before = parts.length;
   // палатка: двускатная, с тёмным входом
   {
     const s = new THREE.Shape();
@@ -28,9 +30,11 @@ export function buildCamp(scene, spawn) {
     put(new THREE.ShapeGeometry(door), 0x3b3340, 3.2 + fx, 1.5 + fz, -0.02, {}, 1, 1, 1, a);
     put(cyl(0.05, 0.05, 2.2, 5), woodD, 3.2 + fx * 1.02, 1.5 + fz * 1.02, 1.05);
     put(box(3.2, 0.1, 0.35), canvasD, 3.2, 1.5, 1.86, {}, 1, 1, 1, a + Math.PI / 2);
-    colliders.push({ x: cx + 3.2, z: cz + 1.5, r: 1.5 });
+    colliders.push(tentCol);
     blobs.push({ x: cx + 3.2, z: cz + 1.5, r: 3.2, h: 1.2 });
   }
+  // палатка — отдельной моделью: когда построят дом, она исчезнет
+  const tentParts = parts.splice(before);
   // костёр: камни кругом, поленья, пламя
   {
     for (let i = 0; i < 8; i++) {
@@ -74,5 +78,12 @@ export function buildCamp(scene, spawn) {
   mesh.matrixAutoUpdate = false;
   mesh.frustumCulled = false;
   scene.add(mesh);
-  return { colliders, blobs };
+  const tent = new THREE.Mesh(merge(tentParts), propMaterial());
+  tent.position.set(cx, 0, cz);
+  tent.updateMatrix();
+  tent.matrixAutoUpdate = false;
+  tent.frustumCulled = false;
+  scene.add(tent);
+  // место под дом: там же, где палатка, входом к костру (угол a — как у палатки)
+  return { colliders, blobs, tent, tentCol, site: { x: cx + 3.2, z: cz + 1.5, a: -2.2 }, fire: { x: cx, z: cz } };
 }

@@ -31,6 +31,8 @@ export function idRand(id) {
 // Правила, одинаковые для игры и (потом) сервера
 export const RULES = {
   tree: { logs: 3, regrowMs: (id) => 100000 + idRand(id) * 50000 },
+  // постройки: цена и время стройки
+  build: { house: { cost: { log: 40 }, ms: 30000 } },
 };
 
 // Пока сервера нет: решает сама игра и хранит состояние в памяти телефона
@@ -38,17 +40,19 @@ class LocalAuthority {
   constructor(store, me) {
     this.store = store; this.me = me;
     this.cut = {}; // id дерева → когда срублено (мс, общие часы)
+    this.built = {}; // постройка → когда начали строить
     try {
       const d = JSON.parse(store.get('bezdna.world', 'null'));
       if (d && d.cut) this.cut = d.cut;
+      if (d && d.built) this.built = d.built;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
     this.save();
-    return { cut: { ...this.cut } };
+    return { cut: { ...this.cut }, built: { ...this.built } };
   }
   handle(ev, now, emit) {
     if (ev.type === 'chop') {
@@ -57,6 +61,12 @@ class LocalAuthority {
       this.cut[ev.id] = now;
       this.save();
       emit({ type: 'chopped', id: ev.id, at: now, by: this.me, reward: { log: RULES.tree.logs } });
+    }
+    // стройка: плату пока снимает сама игра (инвентарь у неё); сервер будет проверять её сам
+    if (ev.type === 'build' && RULES.build[ev.what] && this.built[ev.what] === undefined) {
+      this.built[ev.what] = now;
+      this.save();
+      emit({ type: 'built', what: ev.what, at: now, by: this.me });
     }
   }
 }

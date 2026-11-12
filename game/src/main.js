@@ -14,6 +14,7 @@ import { Inventory, bindInventoryUI } from './inventory.js';
 import { groundAt } from './solids.js';
 import { Woodcutter } from './chop.js';
 import { World } from './world.js';
+import { Settlement } from './npc.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -23,7 +24,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -73,7 +74,17 @@ function adaptQuality(dtMs) {
   } else Q.good = 0;
 }
 
-function build() {
+// экран загрузки: подпись, полоса и проценты
+function loadStep(pct, text) {
+  if (text) $('loadText').textContent = text;
+  $('loadFill').style.width = pct + '%';
+  $('loadPct').textContent = Math.round(pct) + '%';
+  // даём браузеру нарисовать полосу, прежде чем считать дальше
+  return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+}
+
+// Мир строится по шагам, между ними обновляется полоса загрузки
+async function build() {
   const t0 = performance.now();
   renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance', stencil: false });
   renderer.setClearColor(0x8c96aa);
@@ -81,19 +92,27 @@ function build() {
   scene.matrixWorldAutoUpdate = true;
   camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.2, 1400);
 
+  await loadStep(6, 'Поднимаем горы…');
   buildTerrain(scene);
+  await loadStep(42, 'Ставим островки над бездной…');
   buildStacks(scene);
+  await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
+  await loadStep(60, 'Разбиваем лагерь…');
   const camp = buildCamp(scene, flora.spawn);
   const ruins = buildRuins(scene);
+  await loadStep(66, 'Раскладываем тени…');
   bakeShadows(flora.blobs.concat(camp.blobs, ruins));
+  await loadStep(84, 'Пускаем воду…');
   buildSky(scene);
   clouds = buildClouds(scene);
   falls = buildWaterfalls(scene, buildStreams(scene));
   buildMist(scene);
   buildShafts(scene);
+  await loadStep(92, 'Растим траву…');
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
   motes = buildMotes(scene, 220);
+  await loadStep(97, 'Будим героя…');
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
@@ -117,6 +136,8 @@ function build() {
     $('colors').appendChild(b);
   });
   applyLook();
+  // житель лагеря и дом, который он строит
+  town = new Settlement(scene, camp, player, inv, world, toast);
   setQuality(Q.mode);
   addEventListener('resize', onResize);
   onResize();
@@ -144,7 +165,11 @@ function updateHud(dt) {
   const y = player.pos.y;
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
-  setCls('chop', 'show', !!wood.target);
+  // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
+  act = town.near ? 'talk' : town.nearBoard ? 'board' : wood.target ? 'chop' : '';
+  setCls('chop', 'show', !!act);
+  if (act) setText('actIcon', act === 'talk' ? '💬' : act === 'board' ? '📜' : '🪓');
+  if (talkOpen) { if (!town.near) closeTalk(); else showTalk(); }
   const d = Math.round(-y);
   setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
@@ -159,6 +184,22 @@ function updateHud(dt) {
   }
   if (zoneT > 0 && (zoneT -= dt) <= 0) setCls('zoneBig', 'show', false);
 }
+
+// разговор с жителем: текст и кнопка зависят от того, что сейчас с домом
+let act = '', actHeld = false, talkOpen = false;
+function showTalk() {
+  const d = town.dialog();
+  talkOpen = true;
+  setCls('talk', 'show', true);
+  setText('talkName', d.name); setText('talkText', d.text);
+  const yes = $('talkYes');
+  if (yes.hidden !== !d.yes) yes.hidden = !d.yes;
+  if (d.yes) { setText('talkYes', d.yes); if (yes.disabled !== !d.can) yes.disabled = !d.can; }
+}
+function closeTalk() { talkOpen = false; setCls('talk', 'show', false); }
+for (const id of ['talkYes', 'talkNo']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
+$('talkYes').addEventListener('click', () => { town.accept(); showTalk(); });
+$('talkNo').addEventListener('click', closeTalk);
 
 // короткая подпись над слотами: «+3 бревна» и т.п.
 let toastT = 0;
@@ -243,6 +284,7 @@ function menuFrame(dt, t) {
   renderer.render(scene, camera);
 }
 
+let ready = false; // мир построен
 let last = 0, frames = 0, fpsT = 0, debugCam = null;
 function frame(now) {
   requestAnimationFrame(frame);
@@ -256,7 +298,17 @@ function frame(now) {
 
   const inp = input.poll();
   player.holdAxe = !!inv.held && inv.held.id === 'axe';
-  if (!falling) { player.update(dt, inp, yaw); wood.update(dt, inp.chop); }
+  if (!falling) {
+    player.update(dt, inp, yaw);
+    wood.update(dt, act === 'chop' && inp.chop);
+    town.update(dt);
+    // нажатие (не удержание) кнопки действия рядом с жителем или доской
+    if (inp.chop && !actHeld) {
+      if (act === 'talk') { if (talkOpen) closeTalk(); else showTalk(); }
+      else if (act === 'board') toast('📜 Заданий пока нет — скоро появятся');
+    }
+    actHeld = inp.chop;
+  }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
   if (player.pos.y < -80 && !falling) { falling = true; $('msg').classList.add('show'); }
   if (falling) {
@@ -325,6 +377,13 @@ if (App) {
   $('ver').hidden = false;
   $('ver').textContent = 'версия ' + (App.version() || '?').slice(0, 7);
   window.onBezdnaUpdate = (state, text) => {
+    // пока идёт проверка и скачивание — тот же экран загрузки, с бегущей полосой
+    const busy = state === 'checking' || state === 'downloading';
+    if (busy) {
+      $('loadText').textContent = state === 'checking' ? 'Проверяем обновление…' : 'Обновление игры…';
+      $('loadPct').textContent = state === 'downloading' ? text.replace('Скачиваем… ', '') : '';
+    }
+    if (ready || busy) { $('loading').classList.toggle('busy', busy); $('loading').classList.toggle('hide', !busy); }
     btn.classList.toggle('busy', state === 'checking' || state === 'downloading');
     btn.classList.toggle('new', state === 'available');
     if (state === 'available') txt.textContent = 'Есть обновление';
@@ -338,9 +397,13 @@ if (App) {
 }
 
 // сначала показываем экран загрузки, потом строим мир
-requestAnimationFrame(() => setTimeout(() => {
+requestAnimationFrame(() => setTimeout(async () => {
   try {
-    build();
+    // картинке заставки даём секунду на загрузку, чтобы не строить мир при пустом экране
+    await Promise.race([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/loading.jpg'; }), new Promise((r) => setTimeout(r, 1200))]);
+    await build();
+    await loadStep(100, 'Готово!');
+    ready = true;
     // камера на заставке: смотрим через луг на провал
     const s = player.pos;
     camera.position.set(s.x + 6, s.y + 3, s.z - 3);
@@ -349,10 +412,10 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, wood, world, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, wood, world, town, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
-    $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
+    $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
   }
   requestAnimationFrame(frame);
 }, 30));
