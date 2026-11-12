@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm } from './noise.js';
 import { rockMat } from './terrain.js';
-import { addCyl } from './solids.js';
+import { addMeshTop } from './solids.js';
 
 // Скальные островки, торчащие из шахты. Плоская вершина с травой,
 // отвесные рёбристые бока, книзу сужаются и тонут в тумане.
@@ -59,8 +59,12 @@ function stackGeo(s, pos, idx) {
 export function buildStacks(scene) {
   const pos = [], idx = [];
   for (const s of STACKS) {
+    const i0 = idx.length;
     stackGeo(s, pos, idx);
-    addCyl(s.x, s.z, s.w * 0.75, s.top + 0.25);
+    // верх островка (веер и три верхних кольца) — в физику, точно по треугольникам
+    const top = idx.slice(i0, i0 + 30 * 3 + 30 * 6 * 3), tris = new Float32Array(top.length * 3);
+    top.forEach((v, k) => { tris[k * 3] = pos[v * 3]; tris[k * 3 + 1] = pos[v * 3 + 1]; tris[k * 3 + 2] = pos[v * 3 + 2]; });
+    addMeshTop(tris, 0.35);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

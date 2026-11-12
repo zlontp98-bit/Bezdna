@@ -3,6 +3,7 @@ import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, heightAt, normalAt, streamAt, pathAt, POOLS } from './terrain.js';
 import { STACKS } from './stacks.js';
+import { addMeshTop } from './solids.js';
 
 const TAU = Math.PI * 2;
 
@@ -238,12 +239,12 @@ export function buildFlora(scene) {
       if (heightAt(x, z) > p.level + 1.0) continue; // и не вешаем камни на стену
       const s = 0.75 + rnd() * 0.85, g = 0.5 + rnd() * 0.12;
       add(lists.rock, x, heightAt(x, z) - 0.1, z, s, col.setRGB(g * 1.08, g * 1.02, g * 0.95).getHex(), rnd() * TAU, rnd() * 0.4);
-      taken.push({ x, z, r: s }); colliders.push({ x, z, r: s * 0.8 });
+      taken.push({ x, z, r: s });
     }
     for (const side of [-1, 1]) {
       const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;
       add(lists.rock, x, heightAt(x, z) - 0.2, z, 1.7, 0x8f8a82, rnd() * TAU, 0.2);
-      taken.push({ x, z, r: 1.7 }); colliders.push({ x, z, r: 1.4 });
+      taken.push({ x, z, r: 1.7 });
     }
   }
   // кусты: много, по лугу и кольцу
@@ -303,7 +304,7 @@ export function buildFlora(scene) {
     const g = 0.5 + rnd() * 0.16;
     if (y < -30) col.setRGB(g * 0.7, g * 0.74, g * 0.9); else col.setRGB(g * 1.0, g * 0.92, g * 0.82);
     add(lists.rock, x, y, z, s, col.getHex(), rnd() * TAU, rnd() * 0.5);
-    if (s > 0.8) { taken.push({ x, z, r: s }); colliders.push({ x, z, r: s * 0.85 }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
+    if (s > 0.8) { taken.push({ x, z, r: s }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
     return true;
   });
   // одинокие деревья на островках
@@ -352,6 +353,7 @@ export function buildFlora(scene) {
       dummy.scale.setScalar(t.s);
       if (key === 'rock') dummy.scale.set(t.s, t.s * (0.7 + (i % 5) * 0.1), t.s * (0.8 + (i % 3) * 0.15));
       dummy.updateMatrix();
+      if (key === 'rock') rockSolid(geos.rock, dummy.matrix, t);
       im.setMatrixAt(i, dummy.matrix);
       im.setColorAt(i, col.setHex(t.color));
     });
@@ -361,6 +363,18 @@ export function buildFlora(scene) {
     scene.add(im);
   }
   return { colliders, blobs, spawn };
+}
+
+// Валун становится твёрдым: верх его настоящей модели запекается в карту высот
+const _v = new THREE.Vector3();
+function rockSolid(geo, m, t) {
+  if (t.s < 0.3) return;
+  const P = geo.attributes.position, tris = new Float32Array(P.count * 3);
+  for (let i = 0; i < P.count; i++) {
+    _v.fromBufferAttribute(P, i).applyMatrix4(m);
+    tris[i * 3] = _v.x; tris[i * 3 + 1] = _v.y; tris[i * 3 + 2] = _v.z;
+  }
+  addMeshTop(tris, Math.min(0.3, t.s * 0.15));
 }
 
 // ---------- трава и цветы: «ковёр», который ездит за игроком ----------

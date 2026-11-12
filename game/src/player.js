@@ -292,6 +292,22 @@ export class Player {
     }
   }
 
+  // Падаем вдоль отвесной стены: «приземлиться» на её грань нельзя — отодвигаемся
+  // от стены и летим дальше, а не сползаем внутри камня
+  slipOffWall() {
+    const p = this.pos, n = this.N(p.x, p.z, this.n, 0.35);
+    if (n.y >= 0.5 || hitSolid) return false;
+    const hl = Math.hypot(n.x, n.z) || 1, ox = n.x / hl, oz = n.z / hl;
+    for (let d = 0.1; d <= 1.6; d += 0.1) {
+      if (this.G(p.x + ox * d, p.z + oz * d) < p.y - 0.05) {
+        p.x += ox * d; p.z += oz * d;
+        this.vel.x = ox * 1.2; this.vel.z = oz * 1.2;
+        return true;
+      }
+    }
+    return false;
+  }
+
   collide() {
     const p = this.pos, cx = (p.x / 8) | 0, cz = (p.z / 8) | 0;
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
@@ -347,7 +363,7 @@ export class Player {
       p.y += v.y * dt;
       const h = this.G(p.x, p.z);
       if (v.y > 0 && p.y + 1.3 > ceiling) { p.y = ceiling - 1.3; v.y = 0; } // стукнулись головой
-      if (p.y <= h) {
+      if (p.y <= h && !this.slipOffWall()) {
         p.y = h; this.grounded = true; this.airT = 0;
         this.landT = Math.min(1, -v.y / 22); v.y = 0;
       }

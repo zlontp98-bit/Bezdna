@@ -10,6 +10,7 @@ import { buildStacks } from './stacks.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
+import { groundAt } from './solids.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -150,13 +151,15 @@ function updateCamera(dt, inp) {
   }
   // камера не проваливается в скалы: укорачиваем дистанцию
   let d = camDist;
-  for (let i = 1; i <= 10; i++) {
-    const t = (i / 10) * camDist;
+  // и в камни/островки/руины тоже не заезжает
+  const solidH = (x, y, z) => Math.max(heightAt(x, z), groundAt(x, z, y));
+  for (let i = 1; i <= 14; i++) {
+    const t = (i / 14) * camDist;
     const x = target.x - fx * t, y = target.y - fy * t, z = target.z - fz * t;
-    if (y < heightAt(x, z) + 0.45) { d = Math.max(0.8, t - camDist / 10); break; }
+    if (y < solidH(x, y, z) + 0.45) { d = Math.max(0.8, t - camDist / 14); break; }
   }
   camPos.set(target.x - fx * d, target.y - fy * d, target.z - fz * d);
-  const gh = heightAt(camPos.x, camPos.z) + 0.4;
+  const gh = solidH(camPos.x, camPos.y, camPos.z) + 0.4;
   if (camPos.y < gh) camPos.y = gh;
   camera.position.lerp(camPos, Math.min(1, dt * 14));
   camera.lookAt(target);
@@ -286,7 +289,7 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

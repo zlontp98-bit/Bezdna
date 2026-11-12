@@ -209,6 +209,8 @@ const rowLUT = new Float32Array(Math.ceil(W.OUTER / LUT_STEP) + 2);
   }
 }
 const HG = new Float32Array(ROWS * COLS);
+const COSC = new Float64Array(COLS), SINC = new Float64Array(COLS);
+for (let c = 0; c < COLS; c++) { COSC[c] = Math.cos((c / COLS) * TAU); SINC[c] = Math.sin((c / COLS) * TAU); }
 // вокруг русла ручья: уровень воды, уровень берега и «пологость» (0 — водопад по стене)
 const WG = new Float32Array(ROWS * COLS).fill(-1e9);
 const LG = new Float32Array(ROWS * COLS).fill(-1e9);
@@ -264,7 +266,23 @@ function sampleGrid(G, x, z) {
   const r0 = fr | 0, r1 = r0 + 1 >= ROWS ? r0 : r0 + 1, tr = fr - r0;
   const a = G[r0 * COLS + c0], b = G[r0 * COLS + c1];
   const c = G[r1 * COLS + c0], d = G[r1 * COLS + c1];
-  return (a + (b - a) * tc) * (1 - tr) + (c + (d - c) * tc) * tr;
+  // те же два треугольника, что и в отрисованной сетке (диагональ b–c), и в тех же
+  // мировых координатах — иначе на отвесных стенах физика расходится с картинкой на метры
+  if (r1 === r0) return a + (b - a) * tc;
+  const ra = radii[r0], rb = radii[r1];
+  const ax = COSC[c0] * ra, az = SINC[c0] * ra, bx = COSC[c1] * ra, bz = SINC[c1] * ra;
+  const cx = COSC[c0] * rb, cz = SINC[c0] * rb, dx = COSC[c1] * rb, dz = SINC[c1] * rb;
+  // по какую сторону диагонали b–c лежит точка (a — по одну, d — по другую)
+  const side = (px, pz) => (cx - bx) * (pz - bz) - (cz - bz) * (px - bx);
+  const inA = side(x, z) * side(ax, az) >= 0;
+  const [p0x, p0z, h0] = inA ? [ax, az, a] : [dx, dz, d];
+  // барицентрика в треугольнике (p0, b, c)
+  const e1x = bx - p0x, e1z = bz - p0z, e2x = cx - p0x, e2z = cz - p0z;
+  const det = e1x * e2z - e2x * e1z;
+  if (Math.abs(det) < 1e-9) return a;
+  const qx = x - p0x, qz = z - p0z;
+  const u = (qx * e2z - e2x * qz) / det, v = (e1x * qz - qx * e1z) / det;
+  return h0 + (b - h0) * u + (c - h0) * v;
 }
 
 const _n = new THREE.Vector3();
@@ -462,24 +480,29 @@ function buildCragPatch(scene, material) {
 // Лента русла: узкая полоса рельефа вдоль ручья, построенная по точной высоте heightAt.
 // По краям она лежит на сетке, в середине — повторяет врезанное русло.
 function buildChannelStrips(scene, material) {
-  const offs = [-BAND, -7.5, -4.6, -4.0, -3.5, -3.1, -2.7, -2.2, -1.4, 0, 1.4, 2.2, 2.7, 3.1, 3.5, 4.0, 4.6, 7.5, BAND];
+  // только само русло и узкая кромка; на водопадах (где русла нет) ленты нет
+  const offs = [-5.4, -4.6, -4.0, -3.5, -3.1, -2.7, -2.2, -1.4, 0, 1.4, 2.2, 2.7, 3.1, 3.5, 4.0, 4.6, 5.4];
   const K = offs.length, n = new THREE.Vector3();
   for (const th of W.STREAMS) {
     const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
     const pos = [], nor = [], idx = [];
-    let row = 0;
-    for (let r = 229; r > W.PIT - 7; r -= 0.8, row++) {
+    let row = 0, prevOk = false;
+    for (let r = 229; r > W.PIT - 7; r -= 0.8) {
+      const ok = sampleGrid(FG, cx * r, cz * r) > 0.001
+        || sampleGrid(FG, cx * (r + 0.8), cz * (r + 0.8)) > 0.001
+        || sampleGrid(FG, cx * (r - 0.8), cz * (r - 0.8)) > 0.001;
+      if (!ok) { prevOk = false; continue; }
       for (let k = 0; k < K; k++) {
         const o = offs[k], x = cx * r + px * o, z = cz * r + pz * o;
-        const lift = Math.abs(o) > 4.3 ? 0.03 : 0.0;
-        pos.push(x, heightAt(x, z) + lift, z);
-        normalAt(x, z, n, Math.abs(o) > 4.3 ? 1.0 : 0.3);
+        pos.push(x, heightAt(x, z) + (Math.abs(o) > 5 ? 0.02 : 0), z);
+        normalAt(x, z, n, Math.abs(o) > 4.3 ? 0.8 : 0.3);
         nor.push(n.x, n.y, n.z);
       }
-      if (row > 0) {
+      if (prevOk) {
         const a = (row - 1) * K, b = row * K;
         for (let k = 0; k < K - 1; k++) idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
       }
+      row++; prevOk = true;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
