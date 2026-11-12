@@ -150,6 +150,7 @@ function updateHud(dt) {
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
   let z = ZONES.find((q) => y > q[0])[1];
   if (y > 14 && Math.hypot(player.pos.x - W.CRAG.x, player.pos.z - W.CRAG.z) > 14) z = 'Склоны гор';
+  if (Math.hypot(player.pos.x, player.pos.z) < 47 && y > -45 && player.grounded) z = Math.hypot(player.pos.x, player.pos.z) < 16 ? 'Остров в центре бездны' : 'Островки над бездной';
   if (SOURCES.some((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < 30 && y > s.base - 4)) z = 'Исток ручья';
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
