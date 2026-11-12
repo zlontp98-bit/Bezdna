@@ -83,6 +83,8 @@ export function groundAt(x, z, y) {
       if (Math.abs(dx * s.c - dz * s.s) > s.hx || Math.abs(dx * s.s + dz * s.c) > s.hz) continue;
     } else if (dx * dx + dz * dz > s.r * s.r) continue;
     if (y + 1.3 < s.bottom) { if (s.bottom < ceiling) ceiling = s.bottom; continue; } // проходим под ним
+    // на уровне тела висящая плита — стена: отдаём её верх, и шаг/прыжок внутрь не пройдёт,
+    // пока ноги не окажутся почти у верха (см. Player.tryMove)
     if (top > h) { h = top; hitSolid = true; }
   }
   return h;

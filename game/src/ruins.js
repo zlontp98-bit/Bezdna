@@ -68,6 +68,8 @@ export function buildRuins(scene) {
     // ступени сбоку: 1.2 → 2.4 → на столб → на перемычку
     g.block(ax + 0.5, az + 5.3, 1.5, 1.25, 1.5, 0.5, by);
     g.block(ax + 0.45, az + 3.95, 1.4, 2.5, 1.3, 0.2, by);
+    // третья ступень сбоку: с неё уже допрыгнуть до верха перемычки
+    g.block(ax - 1.25, az + 4.15, 1.1, 3.65, 1.1, -0.15, by);
     blobs.push({ x: ax, z: az, r: 4.6, h: 3.5 });
     g.done(scene);
   }
@@ -130,7 +132,7 @@ export function buildRuins(scene) {
     for (const s of [-0.75, 0.75]) {
       g.add(new THREE.CylinderGeometry(0.11, 0.11, 7.2, 6, 1), WOODD, bx - tz * s, top - 0.2, bz + tx * s, {}, [1, 1, 1], ang - Math.PI / 2, Math.PI / 2);
     }
-    addBox(bx, bz, 0.85, 3.6, ang, top);
+    addBox(bx, bz, 0.85, 3.6, ang, top, top - 0.3); // под мостком можно проплыть
     g.done(scene);
   }
   buildOldWorld(scene, rnd, blobs);
@@ -223,9 +225,9 @@ function buildOldWorld(scene, rnd, blobs) {
       const o = -1.2 + i * 0.85;
       if (i === 4) continue; // одна доска выпала
       const x = ex + ox * o, z = ez + oz * o;
-      g.block(x, z, 2.8, 0.14, 0.75, ry, y0 + 0.25, { color: i % 2 ? WOOD : WOODG, stone: 0, solid: false, rz: (rnd() - 0.5) * 0.05 });
+      g.block(x, z, 2.8, 0.14, 0.75, ry, y0 + 0.18, { color: i % 2 ? WOOD : WOODG, stone: 0, solid: false, rz: (rnd() - 0.5) * 0.05 });
     }
-    addBox(ex + ox * 0.6, ez + oz * 0.6, 1.4, 2.7, ry, y0 + 0.39);
+    addBox(ex + ox * 0.6, ez + oz * 0.6, 1.4, 2.7, ry, y0 + 0.32, y0 + 0.18); // настил висит над обрывом
     for (const s of [-1.2, 1.2]) {
       g.add(box(0.22, 0.22, 5.4), WOODD, ex + sx * s + ox * 0.9, y0 + 0.14, ez + sz * s + oz * 0.9, {}, [1, 1, 1], ry);
     }
@@ -320,7 +322,7 @@ function buildOldWorld(scene, rnd, blobs) {
       const [x, z] = at(r);
       const sag = nearA ? (gapA + 2.2 - r) * 0.12 : nearB ? (r - gapB + 2.2) * 0.1 : 0;
       g.block(x, z, 3.2 - (nearA || nearB ? 0.8 : 0), 0.6, 1.62, ry + (rnd() - 0.5) * 0.03, deckY - 0.6 - sag,
-        { rz: nearA || nearB ? (rnd() - 0.5) * 0.12 : 0 });
+        { rz: nearA || nearB ? (rnd() - 0.5) * 0.12 : 0, hang: true });
       // парапет: блоки по краям, местами выпали
       for (const s of [-1.45, 1.45]) {
         if (rnd() < 0.3 || nearA || nearB) continue;

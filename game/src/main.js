@@ -21,14 +21,15 @@ const store = {
 };
 
 let renderer, scene, camera, player, input, grass, motes, clouds, spray, inv;
-let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, firstPerson = false;
+let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
 
 // ---- качество: держим плавность, а не разрешение ----
 const Q = {
   mode: store.get('bezdna.q', 'auto'), // auto | low | high
-  maxPR: 1, scale: 1, ema: 16.7, t: 0, density: 1,
+  maxPR: 1, scale: 1, t: 0, n: 0, density: 1,
+  ceil: 1, good: 0, upT: -1e9, clock: 0,
 };
 function applyRes() {
   renderer.setPixelRatio(Q.maxPR * Q.scale);
@@ -39,26 +40,34 @@ function setQuality(mode) {
   Q.mode = mode; store.set('bezdna.q', mode);
   const dpr = Math.min(devicePixelRatio || 1, 3);
   Q.maxPR = mode === 'low' ? Math.min(dpr, 1) : mode === 'high' ? Math.min(dpr, 2) : Math.min(dpr, 1.5);
-  Q.scale = 1;
+  Q.scale = 1; Q.ceil = 1; Q.good = 0;
   Q.density = mode === 'low' ? 0.45 : 1;
   if (grass) grass.setDensity(Q.density);
   applyRes();
   document.querySelectorAll('[data-q]').forEach((b) => b.classList.toggle('on', b.dataset.q === mode));
 }
+// Цель — ровные 60 кадров. Судим по среднему за секунду, а не по отдельным кадрам:
+// одна заминка (сборка мусора, подгрузка) не должна срезать качество.
+// Не тянем стабильно — снижаем разрешение, потом густоту травы. Поднимаем осторожно:
+// только после 6 с запаса, а уровень, который уже «не потянул», запоминаем и больше не трогаем.
 function adaptQuality(dtMs) {
-  Q.ema += (dtMs - Q.ema) * 0.05;
-  Q.t += dtMs;
-  if (Q.mode !== 'auto' || Q.t < 1200) return;
-  Q.t = 0;
-  // медленно — снижаем разрешение, потом густоту травы; есть запас — возвращаем
-  if (Q.ema > 21) {
-    if (Q.scale > 0.6) Q.scale = Math.max(0.6, Q.scale - 0.1);
+  Q.t += dtMs; Q.n++; Q.clock += dtMs;
+  if (Q.t < 1000) return;
+  const avg = Q.t / Q.n;
+  Q.t = 0; Q.n = 0;
+  if (Q.mode !== 'auto') return;
+  if (avg > 19) {
+    Q.good = 0;
+    if (Q.clock - Q.upT < 6000) Q.ceil = Math.max(0.55, Q.scale - 0.05); // только что подняли — зря
+    if (Q.scale > 0.56) { Q.scale = Math.max(0.55, Q.scale - 0.1); applyRes(); }
     else if (Q.density > 0.35) { Q.density -= 0.15; grass.setDensity(Q.density); }
-    applyRes();
-  } else if (Q.ema < 17.2) {
-    if (Q.density < 1) { Q.density = Math.min(1, Q.density + 0.1); grass.setDensity(Q.density); }
-    else if (Q.scale < 1) { Q.scale = Math.min(1, Q.scale + 0.05); applyRes(); }
-  }
+  } else if (avg < 17.4) {
+    Q.good += 1000;
+    if (Q.good < 6000) return;
+    Q.good = 0;
+    if (Q.density < 1) { Q.density = Math.min(1, Q.density + 0.15); grass.setDensity(Q.density); }
+    else if (Q.scale < Q.ceil - 0.01) { Q.scale = Math.min(Q.ceil, Q.scale + 0.05); Q.upT = Q.clock; applyRes(); }
+  } else Q.good = 0;
 }
 
 function build() {
@@ -67,7 +76,7 @@ function build() {
   renderer.setClearColor(0x8c96aa);
   scene = new THREE.Scene();
   scene.matrixWorldAutoUpdate = true;
-  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.25, 1400);
+  camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.2, 1400);
 
   buildTerrain(scene);
   buildStacks(scene);
@@ -117,29 +126,36 @@ function onResize() {
   applyRes();
 }
 
+// интерфейс трогаем только когда значение изменилось: каждая запись в DOM — пересчёт стилей
+const ui = {};
+const el = (id) => ui['#' + id] || (ui['#' + id] = $(id));
+function setText(id, v) { if (ui[id] !== v) { ui[id] = v; el(id).textContent = v; } }
+function setCls(id, c, on) { const k = id + '.' + c; if (ui[k] !== on) { ui[k] = on; el(id).classList.toggle(c, on); } }
+function setCss(id, prop, v) { const k = id + ':' + prop; if (ui[k] !== v) { ui[k] = v; el(id).style[prop] = v; } }
+
 const ZONES = [[14, 'Смотровая площадка'], [-3, 'Луг у края'], [-16, 'Первое кольцо'], [-40, 'Карниз над бездной'], [-1e9, 'Нижний уступ']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
-  $('grab').classList.toggle('on', player.climbing);
-  $('grab').classList.toggle('ready', player.canGrab);
+  setCls('grab', 'on', player.climbing);
+  setCls('grab', 'ready', player.canGrab);
   const d = Math.round(-y);
-  $('depth').textContent = d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м';
-  $('bar').style.height = Math.min(100, (-y / 50) * 100) + '%';
+  setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
+  setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
   let z = ZONES.find((q) => y > q[0])[1];
   if (y > 14 && Math.hypot(player.pos.x - W.CRAG.x, player.pos.z - W.CRAG.z) > 14) z = 'Склоны гор';
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
-    $('zone').textContent = z; $('zoneBig').textContent = z;
-    $('zoneBig').classList.add('show');
+    setText('zone', z); setText('zoneBig', z);
+    setCls('zoneBig', 'show', true);
   }
-  if (zoneT > 0 && (zoneT -= dt) <= 0) $('zoneBig').classList.remove('show');
+  if (zoneT > 0 && (zoneT -= dt) <= 0) setCls('zoneBig', 'show', false);
 }
 
 function updateCamera(dt, inp) {
   yaw -= inp.lookX; pitch += inp.lookY;
-  pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(1.45, pitch));
-  const p = player.pos;
+  pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(firstPerson ? 1.45 : 1.3, pitch));
+  const p = player.viewPos;
   target.set(p.x, p.y + (firstPerson ? 1.28 : 1.5), p.z);
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
   // направление взгляда
@@ -149,19 +165,31 @@ function updateCamera(dt, inp) {
     camera.lookAt(target.x + fx, target.y + fy, target.z + fz);
     return;
   }
-  // камера не проваливается в скалы: укорачиваем дистанцию
-  let d = camDist;
-  // и в камни/островки/руины тоже не заезжает
+  // Камера не заходит в скалы, камни и руины. Луч «толстый»: проверяем и середину,
+  // и точки по бокам — края кадра тоже не должны цеплять стену.
   const solidH = (x, y, z) => Math.max(heightAt(x, z), groundAt(x, z, y));
-  for (let i = 1; i <= 14; i++) {
-    const t = (i / 14) * camDist;
-    const x = target.x - fx * t, y = target.y - fy * t, z = target.z - fz * t;
-    if (y < solidH(x, y, z) + 0.45) { d = Math.max(0.8, t - camDist / 14); break; }
+  // ширина «луча» — половина ближней плоскости кадра (≈0.3 м): шире не надо, иначе у стен
+  // камера без нужды прижимается к герою
+  const rx = Math.cos(yaw) * 0.32, rz = -Math.sin(yaw) * 0.32;
+  const clear = (x, y, z) => y > solidH(x, y, z) + 0.35
+    && y > solidH(x + rx, y, z + rz) + 0.15 && y > solidH(x - rx, y, z - rz) + 0.15;
+  let want = camDist;
+  const N = 18;
+  for (let i = 1; i <= N; i++) {
+    const t = (i / N) * camDist;
+    if (!clear(target.x - fx * t, target.y - fy * t, target.z - fz * t)) { want = Math.max(0.35, t - camDist / N - 0.15); break; }
   }
-  camPos.set(target.x - fx * d, target.y - fy * d, target.z - fz * d);
-  const gh = solidH(camPos.x, camPos.y, camPos.z) + 0.4;
+  // упёрлись — приближаемся сразу (иначе несколько кадров камера внутри камня), освободилось — отъезжаем плавно
+  camCur = want < camCur ? want : Math.min(want, camCur + dt * 4);
+  // итоговую точку проверяем отдельно (она лежит между пробами луча) и при нужде доводим ближе
+  for (let k = 0; k < 40 && camCur > 0.35; k++) {
+    if (clear(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur)) break;
+    camCur = Math.max(0.35, camCur - 0.1);
+  }
+  camPos.set(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur);
+  const gh = solidH(camPos.x, camPos.y, camPos.z) + 0.3;
   if (camPos.y < gh) camPos.y = gh;
-  camera.position.lerp(camPos, Math.min(1, dt * 14));
+  camera.position.copy(camPos);
   camera.lookAt(target);
 }
 
@@ -205,11 +233,12 @@ function frame(now) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }
   } else fade = Math.max(0, fade - dt * 1.2);
-  $('fade').style.opacity = fade;
+  setCss('fade', 'opacity', fade.toFixed(2));
 
   updateCamera(dt, inp);
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
-  player.m.root.visible = !firstPerson;
+  // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
+  player.m.root.visible = !firstPerson && (camCur > 0.7 || !!debugCam);
 
   U.uCenter.value.copy(player.pos);
   U.uPlayer.value.copy(player.pos);
@@ -220,7 +249,7 @@ function frame(now) {
 
   frames++; fpsT += dtMs;
   if (fpsT > 500) {
-    $('fps').textContent = `${Math.round((frames * 1000) / fpsT)} FPS`;
+    setText('fps', `${Math.round((frames * 1000) / fpsT)} FPS`);
     frames = 0; fpsT = 0;
   }
 }

@@ -146,7 +146,10 @@ function blobShadow() {
 }
 
 const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
-const MAX_SLOPE = 1.25; // подъём круче ~51° пешком не взять — только карабкаться
+// Пешком — до ~42°. Съезжать начинаем только круче ~46°, а останавливаемся положе ~40°:
+// так герой не попадает в петлю «зашёл — съехал — зашёл», от которой его дёргало
+const MAX_SLOPE = 0.9;
+const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
 const CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 
 export class Player {
@@ -161,13 +164,19 @@ export class Player {
     this.look = { color: SKIN_COLORS[0], armor: false }; // броня появится вместе с крафтом
     this.m = buildModel(this.look);
     scene.add(this.m.root);
-    this.swimming = false; this.swimT = 0;
+    this.swimming = false; this.swimT = 0; this.sliding = false;
+    // «заклинило»: съезжаем, а с места не двигаемся (узкая крутая выемка) — тогда тут можно стоять
+    this.wedge = new THREE.Vector3(1e9, 0, 0); this.stuckRef = new THREE.Vector3(); this.stuckT = 0; this.steepT = 0;
+    // визуальное смещение модели: физика может «перескочить» (ступенька, хват за стену),
+    // а картинка догоняет за десятую долю секунды — без рывков
+    this.vOff = new THREE.Vector3();
+    this.viewPos = this.pos.clone();
     this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
     this.shadow = blobShadow();
     scene.add(this.shadow);
-    this.n = new THREE.Vector3();
+    this.n = new THREE.Vector3(); this._n2 = new THREE.Vector3();
     // сетка для быстрых столкновений со стволами и валунами
     this.cells = new Map();
     for (const c of colliders) {
@@ -191,18 +200,37 @@ export class Player {
     if (step < 1e-6) return;
     const ok = (x, z) => {
       const h = this.G(x, z);
-      if (this.grounded) return h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.015 || (hitSolid && h - p.y <= 0.36);
+      // допуск — доли миллиметра: раньше 1.5 см на каждый микрошаг давали на малой скорости
+      // вползать на склоны под 60° и тут же съезжать обратно
+      if (this.grounded) return h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.0005 || (hitSolid && h - p.y <= 0.36);
       return h <= p.y + 0.3;
     };
     let nx = p.x + dx, nz = p.z + dz;
     if (!ok(nx, nz)) {
-      if (ok(nx, p.z)) nz = p.z; else if (ok(p.x, nz)) nx = p.x; else { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
+      // Упёрлись: скользим вдоль склона/стены по горизонтали. Обходной шаг не должен
+      // набирать высоту — иначе герой «лесенкой» вползал туда, куда прямо не пускает.
+      const flat = (x, z) => ok(x, z) && this.G(x, z) - p.y <= Math.hypot(x - p.x, z - p.z) * 0.35 + 0.0005;
+      let done = false;
+      const n = normalAt(nx, nz, this._n2, 0.3), hl = Math.hypot(n.x, n.z);
+      if (hl > 0.05) {
+        const ux = -n.x / hl, uz = -n.z / hl, up = dx * ux + dz * uz;
+        if (up > 0) {
+          const tx = p.x + dx - ux * up, tz = p.z + dz - uz * up;
+          if (flat(tx, tz)) { nx = tx; nz = tz; done = true; }
+        }
+      }
+      if (!done) {
+        if (flat(nx, p.z)) nz = p.z; else if (flat(p.x, nz)) nx = p.x; else { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
+      }
     }
     p.x = nx; p.z = nz;
     if (this.grounded) {
       const h = this.G(nx, nz);
       if (h < p.y - Math.max(0.3, step * 1.6)) this.grounded = false; // шагнули с обрыва
-      else p.y = h;
+      else {
+        if (Math.abs(h - p.y) > step * MAX_SLOPE + 0.03) this.vOff.y += p.y - h; // ступенька
+        p.y = h;
+      }
     }
   }
 
@@ -228,7 +256,9 @@ export class Player {
   grab() {
     const w = this.findWall();
     if (!w) return false;
+    const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
     this.pos.set(w.x, this.G(w.x, w.z), w.z);
+    this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
     this.climbing = true; this.grounded = false;
     this.vel.set(0, 0, 0);
     return true;
@@ -301,11 +331,24 @@ export class Player {
     for (let d = 0.1; d <= 1.6; d += 0.1) {
       if (this.G(p.x + ox * d, p.z + oz * d) < p.y - 0.05) {
         p.x += ox * d; p.z += oz * d;
+        this.vOff.x -= ox * d; this.vOff.z -= oz * d;
         this.vel.x = ox * 1.2; this.vel.z = oz * 1.2;
         return true;
       }
     }
     return false;
+  }
+
+  // Насколько круто земля уходит вниз прямо от ног, в сторону склона (tg угла).
+  // Меряем в одну сторону: у подножия стены там ровно, и герой не «съезжает» от стены,
+  // в которую просто упёрся (усреднённая нормаль цепляла стену — отсюда были дёрганья)
+  footSlope() {
+    const p = this.pos, n = this.N(p.x, p.z, this.n, 0.35);
+    if (hitSolid) return 0;
+    const hl = Math.hypot(n.x, n.z);
+    if (hl < 0.05) return 0;
+    const e = 0.18, dx = n.x / hl, dz = n.z / hl;
+    return (p.y - this.G(p.x + dx * e, p.z + dz * e)) / e;
   }
 
   collide() {
@@ -322,6 +365,7 @@ export class Player {
 
   update(dt, inp, camYaw) {
     const p = this.pos, v = this.vel;
+    const px0 = p.x, pz0 = p.z;
     // желаемая скорость относительно камеры
     const s = Math.sin(camYaw), c = Math.cos(camYaw);
     const mx = inp.mx * c - inp.my * s, mz = -inp.mx * s - inp.my * c;
@@ -336,19 +380,29 @@ export class Player {
     else if (this.climbing) this.climbStep(dt, inp);
     else if (inp.grab && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
     const top = inp.sprint ? RUN : WALK;
-    // на крутом склоне стоять и ходить нельзя: герой съезжает вниз, пока не схватится
-    if (this.grounded) this.N(p.x, p.z, this.n, 0.35);
-    const steep = this.grounded && this.n.y < 0.74;
-    if (steep) {
-      v.x += this.n.x * 34 * dt; v.z += this.n.z * 34 * dt;
-      const sl = Math.hypot(v.x, v.z);
-      if (sl > 13) { v.x *= 13 / sl; v.z *= 13 / sl; }
+    // на крутом склоне стоять нельзя: герой съезжает вниз, пока не схватится
+    if (this.grounded) {
+      const fs = this.footSlope();
+      // застряли в узкой крутой выемке (съезжать некуда) — разрешаем стоять и прыгать
+      const wedged = Math.hypot(p.x - this.wedge.x, p.z - this.wedge.z) < 0.6;
+      if (this.sliding) { if (fs < SLIDE_OUT || wedged) this.sliding = false; }
+      else if (fs > SLIDE_IN && !wedged) this.sliding = true;
+    } else this.sliding = false;
+    if (this.sliding) {
+      // скорость раскладываем на «вниз по склону» и «поперёк»: вниз разгоняемся,
+      // поперёк можно рулить, вверх — нельзя
+      const n = this.n, hl = Math.hypot(n.x, n.z) || 1, dx = n.x / hl, dz = n.z / hl, lx = -dz, lz = dx;
+      let vd = Math.max(0, v.x * dx + v.z * dz), vl = v.x * lx + v.z * lz;
+      vd = Math.min(12, vd + 26 * hl * dt);
+      vl += ((mx * lx + mz * lz) * top * 0.6 - vl) * Math.min(1, dt * 4);
+      v.x = dx * vd + lx * vl; v.z = dz * vd + lz * vl;
+      this.slideDir = Math.atan2(dx, dz);
     } else {
       const k = Math.min(1, dt * (this.grounded ? 11 : 2.5));
       v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
     }
     // прыгать можно только с ровного: по крутой стене прыжками не забраться
-    if (this.grounded) this.walkable = this.n.y >= 0.74;
+    if (this.grounded) this.walkable = !this.sliding;
     if (inp.jump && this.walkable && (this.grounded || this.airT < 0.12) && v.y <= 0.01) {
       v.y = JUMP; this.grounded = false; this.airT = 1;
     }
@@ -356,21 +410,34 @@ export class Player {
     const dist = Math.hypot(v.x, v.z) * dt, n = Math.max(1, Math.ceil(dist / 0.2));
     for (let i = 0; i < n; i++) this.tryMove((v.x * dt) / n, (v.z * dt) / n);
     this.collide();
+    this.steepT = this.sliding ? 0.2 : this.steepT - dt;
+    if (this.steepT > 0) {
+      if (Math.hypot(p.x - this.stuckRef.x, p.z - this.stuckRef.z) > 0.3) { this.stuckRef.copy(p); this.stuckT = 0; }
+      else if ((this.stuckT += dt) > 0.5) { this.wedge.copy(p); this.sliding = false; this.stuckT = 0; }
+    } else { this.stuckRef.copy(p); this.stuckT = 0; }
 
     if (!this.grounded) {
       this.airT += dt;
       v.y -= GRAV * dt;
+      // потолок берём ДО шага вверх: иначе за один кадр голова проскакивала
+      // сквозь низ плиты, и героя выбрасывало на её верх
+      this.G(p.x, p.z);
+      const ceil = ceiling, prevY = p.y;
       p.y += v.y * dt;
+      if (v.y > 0 && p.y + 1.3 > ceil) { p.y = Math.max(prevY, ceil - 1.3); v.y = 0; } // стукнулись головой
       const h = this.G(p.x, p.z);
-      if (v.y > 0 && p.y + 1.3 > ceiling) { p.y = ceiling - 1.3; v.y = 0; } // стукнулись головой
       if (p.y <= h && !this.slipOffWall()) {
+        // если ноги уже были ниже края (зацепились за уступ) — поднимаемся плавно
+        const assist = h - Math.max(p.y, prevY);
+        if (assist > 0.03) this.vOff.y -= assist;
         p.y = h; this.grounded = true; this.airT = 0;
         this.landT = Math.min(1, -v.y / 22); v.y = 0;
       }
     } else {
       this.airT = 0; v.y = 0;
       const h = this.G(p.x, p.z);
-      if (p.y - h > 0.4) this.grounded = false; else p.y = h;
+      if (p.y - h > 0.4) this.grounded = false;
+      else { if (Math.abs(h - p.y) > 0.12) this.vOff.y += p.y - h; p.y = h; }
     }
     }
 
@@ -378,17 +445,20 @@ export class Player {
     this.N(p.x, p.z, this.n, 0.35);
 
     // запоминаем безопасное место для возврата после падения в колодец
-    if (this.grounded && !this.swimming && this.n.y > 0.9 && p.y > -20 && waterAt(p.x, p.z) < p.y) {
+    if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && p.y > -60 && waterAt(p.x, p.z) < p.y) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
     }
 
     // ---- анимация: вразвалку, с болтающимися руками, глазами и фонариком ----
-    const sp = Math.hypot(v.x, v.z);
+    // скорость для анимации — по тому, сколько герой реально прошёл: упёрся в стену — стоит
+    const sp = this.climbing ? Math.hypot(v.x, v.z) : Math.hypot(p.x - px0, p.z - pz0) / Math.max(dt, 1e-3);
     const prevSpeed = this.speed;
     this.speed += (sp - this.speed) * Math.min(1, dt * 10);
-    if (ml > 0.05 && sp > 0.3) {
-      let d = Math.atan2(v.x, v.z) - this.facing;
+    // смотрим туда, куда ведёт стик (а не туда, куда несёт скорость), а при съезде — вниз по склону
+    const want = this.climbing ? null : this.sliding ? this.slideDir : ml > 0.05 ? Math.atan2(mx, mz) : null;
+    if (want !== null) {
+      let d = want - this.facing;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
       this.facing += d * Math.min(1, dt * 12);
@@ -401,7 +471,10 @@ export class Player {
     const sn = Math.sin(this.phase), cs = Math.cos(this.phase);
     const panic = !this.grounded && v.y < -9 ? 1 : 0;
 
-    m.root.position.copy(p);
+    this.vOff.multiplyScalar(Math.exp(-dt * 14));
+    if (this.vOff.lengthSq() < 1e-6) this.vOff.set(0, 0, 0);
+    this.viewPos.copy(p).add(this.vOff);
+    m.root.position.copy(this.viewPos);
     m.root.rotation.y = this.facing;
     const rig = m.rig;
     rig.position.z = 0;
@@ -513,6 +586,7 @@ export class Player {
   respawn() {
     this.pos.copy(this.safe);
     this.vel.set(0, 0, 0);
-    this.grounded = true; this.climbing = false;
+    this.vOff.set(0, 0, 0);
+    this.grounded = true; this.climbing = false; this.swimming = false; this.sliding = false;
   }
 }

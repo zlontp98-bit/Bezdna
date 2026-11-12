@@ -9,13 +9,13 @@ const TAU = Math.PI * 2;
 // ---------- небо ----------
 export function buildSky(scene) {
   const m = mat({
-    side: THREE.BackSide, depthWrite: false, depthTest: false,
+    side: THREE.BackSide, depthWrite: false, depthTest: true,
     vertexShader: /* glsl */ `
       varying vec3 vD;
       void main(){
         vD = position;
         vec4 p = projectionMatrix * viewMatrix * vec4(position + cameraPosition, 1.0);
-        gl_Position = p.xyww;
+        gl_Position = vec4(p.xy, p.w * 0.99999, p.w); // у самой дальней плоскости, но не на ней
       }`,
     fragmentShader: /* glsl */ `
       varying vec3 vD;
@@ -35,7 +35,8 @@ export function buildSky(scene) {
   });
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), m);
   sky.frustumCulled = false;
-  sky.renderOrder = -10;
+  // небо рисуем после всего непрозрачного: тогда оно закрашивает только пустые пиксели
+  sky.renderOrder = 1;
   scene.add(sky);
 }
 

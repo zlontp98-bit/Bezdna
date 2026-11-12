@@ -215,6 +215,7 @@ for (let c = 0; c < COLS; c++) { COSC[c] = Math.cos((c / COLS) * TAU); SINC[c] =
 const WG = new Float32Array(ROWS * COLS).fill(-1e9);
 const LG = new Float32Array(ROWS * COLS).fill(-1e9);
 const FG = new Float32Array(ROWS * COLS);
+const DG = new Float32Array(ROWS * COLS); // глубина русла от кромки: у обрыва мелеет в перекат
 // копия высот для отрисовки: под лентой русла сетка продавлена глубже, чтобы не торчать сквозь неё
 let MG = HG;
 const BAND = 12;
@@ -234,7 +235,7 @@ export function heightAt(x, z) {
   const flat = sampleGrid(FG, x, z);
   if (flat <= 0.001) return h;
   const rim = sampleGrid(LG, x, z) + 0.25; // кромка берега чуть выше воды
-  const ch = rim + (h - rim) * smoothstep(3.4, 4.2, d) - 1.7 * clamp((3.4 - d) / 2.1, 0, 1);
+  const ch = rim + (h - rim) * smoothstep(3.4, 4.2, d) - sampleGrid(DG, x, z) * clamp((3.4 - d) / 2.1, 0, 1);
   return Math.min(h, h + (ch - h) * flat);
 }
 // Уровень воды под точкой: ручей или чаша; -1e9 — суши
@@ -399,6 +400,43 @@ function bakeHeightTexture() {
 function carveStreams() {
   MG = HG.slice();
   const preAt = (x, z) => sampleGrid(HG, x, z);
+  // Профиль вдоль оси каждого ручья, шаг 0.5 м (вода течёт к центру, r убывает):
+  //  flat — пологость (0 — водопад по стене),
+  //  lvl  — уровень воды: ниже нижнего берега и никогда не растёт вниз по течению,
+  //         поэтому природные пороги русло прорезает насквозь, без запруд;
+  //  depth — глубина от кромки: в последние 4.5 м перед обрывом мелеет в перекат,
+  //  cut  — сила врезки: ещё 3 м после пологого участка, чтобы срезать каменный гребень
+  //         на кромке водопада (иначе вода «перелезала» через горку).
+  const R0 = W.PIT - 20, R1 = 245, NA = Math.round((R1 - R0) / 0.5) + 1, prof = {};
+  for (const tw of W.STREAMS) {
+    const cx = Math.cos(tw), cz = Math.sin(tw), px = -cz, pz = cx, e = 1.2;
+    const flat = new Float32Array(NA), lvl = new Float32Array(NA), depth = new Float32Array(NA), cut = new Float32Array(NA);
+    const lvlCut = new Float32Array(NA); // уровень, до которого режем: на кромке — уровень пологого русла выше
+    for (let k = 0; k < NA; k++) {
+      const r = R0 + k * 0.5, x = cx * r, z = cz * r;
+      const gx = (preAt(x + e, z) - preAt(x - e, z)) / (2 * e), gz = (preAt(x, z + e) - preAt(x, z - e)) / (2 * e);
+      flat[k] = smoothstep(1.1, 0.6, Math.hypot(gx, gz));
+      lvl[k] = Math.min(preAt(x, z), preAt(x + px * 3.3, z + pz * 3.3), preAt(x - px * 3.3, z - pz * 3.3)) - 0.45;
+    }
+    for (let k = NA - 2; k >= 0; k--) lvl[k] = Math.min(lvl[k], lvl[k + 1]);
+    for (let k = 0; k < NA; k++) {
+      let ahead = 1;
+      for (let j = 0; j <= 9 && k - j >= 0; j++) ahead = Math.min(ahead, flat[k - j]);
+      depth[k] = 0.45 + 1.25 * smoothstep(0.25, 0.9, ahead);
+      let behind = 0;
+      for (let j = 0; j <= 6 && k + j < NA; j++) behind = Math.max(behind, flat[k + j]);
+      cut[k] = behind;
+    }
+    // идём вниз по течению и помним уровень последнего пологого места: кромку срезаем до него,
+    // а скалу ниже не трогаем (местный «уровень» на стене водопада проваливается вместе с ней)
+    let lastL = lvl[NA - 1], since = 1e9;
+    for (let k = NA - 1; k >= 0; k--) {
+      if (flat[k] > 0.8) { lastL = lvl[k]; since = 0; } else since += 0.5;
+      lvlCut[k] = since <= 3 ? lastL : lvl[k];
+    }
+    prof[tw] = { flat, lvl, depth, cut, lvlCut };
+  }
+  const at = (arr, r) => arr[Math.max(0, Math.min(NA - 1, Math.round((r - R0) / 0.5)))];
   for (let ri = 0; ri < ROWS; ri++) {
     const r = radii[ri];
     if (r < W.PIT - 12 || r > 240) continue;
@@ -409,21 +447,57 @@ function carveStreams() {
       for (const a of W.STREAMS) { const d = Math.abs(angDiff(th, a)); if (d < best) { best = d; tw = a; } }
       const d = best * r;
       if (d > BAND) continue;
-      const i = ri * COLS + c;
-      const cx = Math.cos(tw) * r, cz = Math.sin(tw) * r, px = -Math.sin(tw), pz = Math.cos(tw);
-      const e = 1.2;
-      const gx = (preAt(cx + e, cz) - preAt(cx - e, cz)) / (2 * e), gz = (preAt(cx, cz + e) - preAt(cx, cz - e)) / (2 * e);
-      const flat = smoothstep(1.1, 0.6, Math.hypot(gx, gz));
-      // гладь стоит ниже нижнего из двух берегов
-      const bank = Math.min(preAt(cx, cz), preAt(cx + px * 3.3, cz + pz * 3.3), preAt(cx - px * 3.3, cz - pz * 3.3));
-      const level = bank - 0.45;
-      LG[i] = level; FG[i] = flat;
-      // на пологом — гладь, на крутом — плёнка воды по камню
-      WG[i] = Math.max(level * flat + (HG[i] + 0.2) * (1 - flat), HG[i] + 0.15 - 1.4 * flat);
-      // ячейки под лентой русла продавливаем, чтобы сетка не вылезала из-под неё
-      if (flat > 0.001 && d < spacing + 0.3) MG[i] = Math.min(HG[i], level - 1.9);
+      const i = ri * COLS + c, P = prof[tw];
+      const cut = at(P.cut, r), level = at(P.lvlCut, r);
+      LG[i] = level; FG[i] = cut; DG[i] = at(P.depth, r);
     }
   }
+  // Ряды ленты русла: только там, где русло реально есть — пологое дно или срезанная кромка.
+  // На отвесной стене водопада ленты нет (её редкие ряды «срезали бы угол» обрыва).
+  for (const tw of W.STREAMS) {
+    const on = new Uint8Array(SN), cx = Math.cos(tw), cz = Math.sin(tw), px = -cz, pz = cx;
+    for (let k = 0; k < SN; k++) {
+      const r = SR0 - k * SDR;
+      let carved = at(prof[tw].flat, r) > 0.02;
+      for (let o = -4.2; o <= 4.21 && !carved; o += 0.6) {
+        const x = cx * r + px * o, z = cz * r + pz * o;
+        carved = heightAt(x, z) < sampleGrid(HG, x, z) - 0.02;
+      }
+      on[k] = carved ? 1 : 0;
+    }
+    STRIP_ON[tw] = on;
+  }
+  // вода: на пологом — гладь на уровне, на крутом — плёнка поверх уже прорезанного дна
+  for (let ri = 0; ri < ROWS; ri++) {
+    const r = radii[ri];
+    if (r < W.PIT - 12 || r > 240) continue;
+    for (let c = 0; c < COLS; c++) {
+      const th = (c / COLS) * TAU;
+      let tw = W.STREAMS[0], best = 1e9;
+      for (const a of W.STREAMS) { const d = Math.abs(angDiff(th, a)); if (d < best) { best = d; tw = a; } }
+      if (best * r > BAND) continue;
+      const i = ri * COLS + c, P = prof[tw], flat = at(P.flat, r);
+      const g = heightAt(Math.cos(th) * r, Math.sin(th) * r);
+      WG[i] = Math.max(at(P.lvl, r) * flat + (g + 0.2) * (1 - flat), g + 0.2 * (1 - flat));
+      // грубую сетку под лентой русла притапливаем ниже точной поверхности — видна только лента.
+      // Только там, где лента закрывает и сам узел, и соседние по радиусу ряды сетки.
+      const spacing = (TAU * r) / COLS;
+      const dr = Math.max(radii[Math.min(ROWS - 1, ri + 1)] - r, r - radii[Math.max(0, ri - 1)]);
+      // На стыке ленты со стеной узел спрятать нельзя (откроется дыра) — опускаем его хотя бы
+      // до точного прорезанного дна, чтобы сетка не стояла над руслом.
+      if (best * r < STRIP - spacing && stripCovers(tw, r - dr) && stripCovers(tw, r + dr)) MG[i] = Math.min(HG[i], g - 0.3);
+      else if (best * r < 4.4) MG[i] = Math.min(HG[i], g);
+    }
+  }
+}
+const STRIP = 8; // полуширина ленты русла
+const SR0 = 229, SDR = 0.8, SN = Math.floor((229 - (W.PIT - 7)) / 0.8) + 1; // ряды ленты вдоль ручья
+const STRIP_ON = {};
+// лента закрывает радиус r: оба соседних ряда существуют
+function stripCovers(tw, r) {
+  const f = (SR0 - r) / SDR, k = Math.floor(f);
+  if (k < 0 || k + 1 >= SN) return false;
+  return STRIP_ON[tw][k] === 1 && STRIP_ON[tw][k + 1] === 1;
 }
 
 // Заплатка под утёс: мелкая круговая сетка по точной высоте, полярная сетка под ней притоплена
@@ -481,20 +555,18 @@ function buildCragPatch(scene, material) {
 // По краям она лежит на сетке, в середине — повторяет врезанное русло.
 function buildChannelStrips(scene, material) {
   // только само русло и узкая кромка; на водопадах (где русла нет) ленты нет
-  const offs = [-5.4, -4.6, -4.0, -3.5, -3.1, -2.7, -2.2, -1.4, 0, 1.4, 2.2, 2.7, 3.1, 3.5, 4.0, 4.6, 5.4];
+  const offs = [-STRIP, -6.6, -5.4, -4.6, -4.0, -3.5, -3.1, -2.7, -2.2, -1.4, 0, 1.4, 2.2, 2.7, 3.1, 3.5, 4.0, 4.6, 5.4, 6.6, STRIP];
   const K = offs.length, n = new THREE.Vector3();
   for (const th of W.STREAMS) {
     const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
     const pos = [], nor = [], idx = [];
     let row = 0, prevOk = false;
-    for (let r = 229; r > W.PIT - 7; r -= 0.8) {
-      const ok = sampleGrid(FG, cx * r, cz * r) > 0.001
-        || sampleGrid(FG, cx * (r + 0.8), cz * (r + 0.8)) > 0.001
-        || sampleGrid(FG, cx * (r - 0.8), cz * (r - 0.8)) > 0.001;
-      if (!ok) { prevOk = false; continue; }
+    for (let k = 0; k < SN; k++) {
+      const r = SR0 - k * SDR;
+      if (!STRIP_ON[th][k]) { prevOk = false; continue; }
       for (let k = 0; k < K; k++) {
         const o = offs[k], x = cx * r + px * o, z = cz * r + pz * o;
-        pos.push(x, heightAt(x, z) + (Math.abs(o) > 5 ? 0.02 : 0), z);
+        pos.push(x, heightAt(x, z) + (Math.abs(o) > 7 ? 0.02 : 0), z);
         normalAt(x, z, n, Math.abs(o) > 4.3 ? 0.8 : 0.3);
         nor.push(n.x, n.y, n.z);
       }

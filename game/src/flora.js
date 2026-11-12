@@ -391,6 +391,14 @@ const GRASS_VS = /* glsl */ `
     float fade = smoothstep(uS*0.5, uS*0.30, dist);
     float e = max(abs(base.x), abs(base.y));
     float k = hm.g * fade * step(e, uExt-1.0);
+    // травинки там, где травы нет, и за кадром не считаем вовсе — это большая часть ковра
+    vec4 cb = projectionMatrix * viewMatrix * vec4(base.x, hm.r + 0.5, base.y, 1.0);
+    float lim = cb.w * 1.15 + 1.5;
+    if (k < 0.03 || cb.w < -1.5 || abs(cb.x) > lim || abs(cb.y) > lim) {
+      gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+      vW = vec3(0.0); vC = vec3(0.0); vSh = 0.0;
+      return;
+    }
     float a = aOff.z * 6.2831;
     vec2 dir = vec2(cos(a), sin(a));
     float y = position.y;
