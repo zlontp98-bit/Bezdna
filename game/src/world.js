@@ -30,14 +30,14 @@ export function idRand(id) {
 
 // Правила, одинаковые для игры и (потом) сервера
 export const RULES = {
-  tree: { logs: 3, roots: 1, regrowMs: (id) => 100000 + idRand(id) * 50000 },
+  tree: { logs: 3, regrowMs: (id) => 100000 + idRand(id) * 50000 },
   // камушки на лугу: подобрал — через пару минут на том же месте лежит новый
   pebble: { stones: 1, respawnMs: (id) => 120000 + idRand(id) * 60000 },
   // чертежи у строителя (цена в искрах) и рецепты: что нужно, чтобы сделать вещь
   blueprints: { pickaxe: { item: 'bpPick', price: 30 }, spear: { item: 'bpSpear', price: 20 } },
   recipes: {
-    pickaxe: { name: 'Кирка', icon: '⛏️', cost: { log: 3, root: 2, stone: 2 } },
-    spear:   { name: 'Копьё', icon: '🔱', cost: { log: 2, root: 1, stone: 1 } },
+    pickaxe: { name: 'Кирка', icon: '⛏️', cost: { log: 3, stone: 2 } },
+    spear:   { name: 'Копьё', icon: '🔱', cost: { log: 2, stone: 1 } },
   },
   // постройки: цена и время стройки
   build: { house: { cost: { log: 40 }, ms: 30000 } },
@@ -81,7 +81,7 @@ class LocalAuthority {
       if (at !== undefined && now - at < RULES.tree.regrowMs(ev.id)) return; // уже срублено
       this.cut[ev.id] = now;
       this.save();
-      emit({ type: 'chopped', id: ev.id, at: now, by: this.me, reward: { log: RULES.tree.logs, root: RULES.tree.roots } });
+      emit({ type: 'chopped', id: ev.id, at: now, by: this.me, reward: { log: RULES.tree.logs } });
     }
     // стройка: плату пока снимает сама игра (инвентарь у неё); сервер будет проверять её сам
     if (ev.type === 'build' && RULES.build[ev.what] && this.built[ev.what] === undefined) {
