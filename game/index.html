@@ -98,20 +98,20 @@
   .cell.active { border-color: var(--accent); background: rgba(255,194,71,.22); }
   .cell.pick { transform: scale(1.1); border-color: #fff; background: rgba(255,255,255,.3); }
   #hot .cell:not(.active)::after { content: ''; }
-  #bagBtn { position: absolute; left: max(14px, env(safe-area-inset-left)); bottom: max(14px, env(safe-area-inset-bottom));
-    width: 60px; height: 60px; border-radius: 16px; display: grid; place-items: center; gap: 0; padding: 2px; }
-  #bagBtn .ico { font-size: 26px; line-height: 1; }
-  #bagBtn .cnt { font-size: 10px; font-weight: 700; opacity: .85; }
+  /* три точки справа от слотов открывают остальной инвентарь */
+  .hotrow { display: flex; align-items: center; gap: 6px; }
+  #bagBtn { width: 40px; height: 52px; border-radius: 14px; font-size: 24px; font-weight: 800; line-height: 1; padding: 0 0 12px; }
   #bagBtn.on { background: var(--accent); color: #3a2500; }
-  #bag { position: absolute; left: max(14px, env(safe-area-inset-left)); bottom: max(82px, calc(env(safe-area-inset-bottom) + 68px));
+  #bag { position: absolute; left: 50%; transform: translateX(-50%); bottom: max(104px, calc(env(safe-area-inset-bottom) + 100px));
     padding: 12px; border-radius: 18px; display: none; }
   #bag.show { display: block; }
   #bag h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
   #bagCells { display: grid; grid-template-columns: repeat(4, 52px); gap: 6px; }
   #bag .tip { margin-top: 8px; font-size: 11px; opacity: .7; max-width: 230px; }
-  @media (max-height: 470px) { .cell { width: 44px; height: 44px; } .cell .ic { font-size: 22px; } #bagCells { grid-template-columns: repeat(6, 44px); } }
-  .touch #bagBtn { left: max(14px, env(safe-area-inset-left)); bottom: auto; top: max(70px, calc(env(safe-area-inset-top) + 56px)); }
-  .touch #bag { bottom: auto; top: max(138px, calc(env(safe-area-inset-top) + 124px)); }
+  @media (max-height: 470px) { .cell { width: 44px; height: 44px; } .cell .ic { font-size: 22px; } #bagCells { grid-template-columns: repeat(6, 44px); } #bagBtn { height: 44px; } #bag { bottom: max(92px, calc(env(safe-area-inset-bottom) + 88px)); } }
+  #toast { position: absolute; left: 50%; bottom: max(112px, calc(env(safe-area-inset-bottom) + 108px)); transform: translate(-50%, 8px); padding: 6px 14px; border-radius: 12px;
+    font-size: 15px; font-weight: 800; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; white-space: nowrap; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
 
   /* сенсорное управление */
@@ -128,6 +128,12 @@
   #grab { right: max(26px, env(safe-area-inset-right)); bottom: max(126px, calc(env(safe-area-inset-bottom) + 108px)); width: 74px; height: 74px; opacity: .55; }
   #grab.ready, #grab.on { opacity: 1; }
   #grab.ready { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,194,71,.45); }
+  /* «рубить»: появляется у дерева, когда в руке топор */
+  #chop { right: max(122px, calc(env(safe-area-inset-right) + 100px)); bottom: max(100px, calc(env(safe-area-inset-bottom) + 86px)); width: 70px; height: 70px;
+    font-size: 30px; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,194,71,.45); }
+  #chop:not(.show) { display: none !important; }
+  #chop.show { display: grid; }
+  #chop .key { position: absolute; bottom: -18px; font-size: 11px; opacity: .85; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
   .pad svg { width: 46%; height: 46%; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
   .pad:active { transform: scale(.93); }
   @media (pointer: coarse) { .pad { display: grid; } .desk { display: none; } }
@@ -154,11 +160,11 @@
   <div id="zoneBig"></div>
   <div id="hotbar">
     <div id="held"></div>
-    <div id="hot" class="glass"></div>
+    <div class="hotrow"><div id="hot" class="glass"></div><button id="bagBtn" class="glass" aria-label="Инвентарь">⋯</button></div>
   </div>
-  <button id="bagBtn" class="glass" aria-label="Рюкзак"><span class="ico">🎒</span><span class="cnt">0/12</span></button>
+  <div id="toast" class="glass"></div>
   <div id="bag" class="glass">
-    <h3>Рюкзак</h3>
+    <h3>Инвентарь</h3>
     <div id="bagCells"></div>
     <div class="tip">Коснись предмета, потом ячейки — чтобы переложить</div>
   </div>
@@ -166,6 +172,7 @@
   <div id="stick"><div id="knob"></div></div>
   <button id="run" class="pad glass" aria-label="Бег"><svg viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></svg></button>
   <button id="grab" class="pad glass" aria-label="Хват"><svg viewBox="0 0 24 24"><path d="M8 13V6a1.5 1.5 0 013 0v5m0-1V4.5a1.5 1.5 0 013 0V11m0-4.5a1.5 1.5 0 013 0V14c0 4-2.5 7-6.5 7S5 18.5 4.5 16l-1-3.5a1.4 1.4 0 012.6-1L8 14"/></svg></button>
+  <button id="chop" class="pad glass" aria-label="Рубить">🪓<span class="key desk">F</span></button>
   <button id="jump" class="pad glass" aria-label="Прыжок"><svg viewBox="0 0 24 24"><path d="M5 13l7-7 7 7M5 19l7-7 7 7"/></svg></button>
 </div>
 <div id="fade"></div>
@@ -184,7 +191,7 @@
     <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button>
     <div id="ver" class="hint" hidden></div>
     <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · кнопка с рукой — схватиться за стену и лезть</div>
-    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · мышь — обзор · V — вид</div>
+    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · F — рубить дерево топором · мышь — обзор · V — вид</div>
   </div>
 </div>
 <div id="loading">Строим мир…</div>

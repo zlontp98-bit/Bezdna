@@ -2,7 +2,7 @@
 export class Input {
   constructor(canvas, ui) {
     this.mx = 0; this.my = 0; this.lookX = 0; this.lookY = 0;
-    this.jump = false; this.grab = false; this.sprint = false; this.sprintLock = false;
+    this.jump = false; this.grab = false; this.sprint = false; this.sprintLock = false; this.chop = false;
     this.keys = new Set();
     this.touch = false;
     this.stick = null; this.look = null;
@@ -72,6 +72,9 @@ export class Input {
     const btn = (el, fn) => el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
     btn(ui.jumpEl, () => { this.jump = true; });
     btn(ui.grabEl, () => { this.grab = true; });
+    // «рубить» можно держать: удары идут один за другим
+    btn(ui.chopEl, () => { this.chop = true; });
+    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) ui.chopEl.addEventListener(ev, () => { this.chop = false; });
     btn(ui.runEl, () => {
       this.sprintLock = !this.sprintLock; this.sprint = this.sprintLock;
       ui.runEl.classList.toggle('on', this.sprintLock);
@@ -90,7 +93,7 @@ export class Input {
     if (l > 1) { x /= l; y /= l; }
     this.mx = x; this.my = y;
     const sprint = this.sprint || k.has('ShiftLeft') || k.has('ShiftRight');
-    const out = { mx: x, my: y, jump: this.jump, grab: this.grab, sprint, lookX: this.lookX, lookY: this.lookY };
+    const out = { mx: x, my: y, jump: this.jump, grab: this.grab, sprint, chop: this.chop || k.has('KeyF'), lookX: this.lookX, lookY: this.lookY };
     this.jump = false; this.grab = false; this.lookX = 0; this.lookY = 0;
     return out;
   }

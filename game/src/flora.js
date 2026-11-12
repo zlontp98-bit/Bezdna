@@ -216,6 +216,7 @@ export function buildFlora(scene) {
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
 
+  const trees = [];
   const lists = { leaf: [], pine: [], shroom: [], rock: [], crystal: [], small: [], bush: [] };
   const spawn = { x: W.R + 10, z: 8 };
   const taken = [];
@@ -434,11 +435,14 @@ export function buildFlora(scene) {
       im.setColorAt(i, col.setHex(t.color));
     });
     im.instanceMatrix.needsUpdate = true;
+    // деревья можно рубить: запоминаем, где какое стоит и какой у него ствол-препятствие
+    if (key === 'leaf' || key === 'pine') L.forEach((t, i) => trees.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, rot: t.rot,
+      col: colliders.find((c) => c.x === t.x && c.z === t.z) || null }));
     im.frustumCulled = false; // один вызов на вид; вершин немного
     im.matrixAutoUpdate = false;
     scene.add(im);
   }
-  return { colliders, blobs, spawn };
+  return { colliders, blobs, spawn, trees };
 }
 
 // Валун становится твёрдым: верх его настоящей модели запекается в карту высот

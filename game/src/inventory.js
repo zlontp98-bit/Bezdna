@@ -2,6 +2,8 @@
 // Предметы складываются стопками. Перенос — коснуться ячейки, потом другой.
 
 export const ITEMS = {
+  axe:    { name: 'Топор',   icon: '🪓', max: 1,  tip: 'Рубит деревья: возьми в руку и подойди к стволу' },
+  log:    { name: 'Бревно',  icon: '🪵', max: 20, tip: 'Древесина. С одного дерева — три бревна' },
   torch:  { name: 'Факел',   icon: '🔥', max: 10, tip: 'Свет в темноте — пригодится глубже' },
   rope:   { name: 'Верёвка', icon: '🪢', max: 5,  tip: 'Для спуска с обрывов' },
   berry:  { name: 'Ягоды',   icon: '🫐', max: 20, tip: 'Еда. Растут на кустах' },
@@ -28,12 +30,16 @@ export class Inventory {
       if (d && Array.isArray(d.slots) && d.slots.length === this.slots.length) {
         this.slots = d.slots.map((s) => (s && ITEMS[s.id] && s.n > 0 ? { id: s.id, n: s.n } : null));
         this.active = Math.min(HOT - 1, Math.max(0, d.active | 0));
+        // топор появился позже: тем, кто уже играл, выдаём его один раз
+        if (!this.store.get('bezdna.axe', '')) { this.store.set('bezdna.axe', '1'); if (!this.count('axe')) this.add('axe'); }
         return;
       }
     } catch (_) { /* начнём заново */ }
     // стартовый набор
     this.slots[0] = { id: 'torch', n: 2 };
     this.slots[1] = { id: 'rope', n: 1 };
+    this.slots[2] = { id: 'axe', n: 1 };
+    this.store.set('bezdna.axe', '1');
     this.slots[3] = { id: 'berry', n: 4 };
   }
   save() { this.store.set('bezdna.inv', JSON.stringify({ slots: this.slots, active: this.active })); }
@@ -110,9 +116,6 @@ export function bindInventoryUI(inv, ui) {
     nameEl.textContent = h ? ITEMS[h.id].name : '';
     bagPanel.classList.toggle('show', inv.open);
     bagBtn.classList.toggle('on', inv.open);
-    let used = 0;
-    for (let i = HOT; i < HOT + BAG; i++) if (inv.slots[i]) used++;
-    bagBtn.querySelector('.cnt').textContent = used + '/' + BAG;
   };
   inv.onChange = render;
   bagBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });

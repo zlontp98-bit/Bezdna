@@ -12,6 +12,7 @@ import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
 import { groundAt } from './solids.js';
+import { Woodcutter } from './chop.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -21,7 +22,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -93,10 +94,11 @@ function build() {
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
   motes = buildMotes(scene, 220);
 
-  input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab') });
+  input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
   inv = new Inventory(store);
   bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
+  wood = new Woodcutter(scene, flora.trees, player, inv, toast);
   // облик героя: цвет и пробная броня, выбор запоминается
   const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]) };
   if (!SKIN_COLORS.includes(look.color)) look.color = SKIN_COLORS[0];
@@ -139,6 +141,7 @@ function updateHud(dt) {
   const y = player.pos.y;
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
+  setCls('chop', 'show', !!wood.target);
   const d = Math.round(-y);
   setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
@@ -151,6 +154,15 @@ function updateHud(dt) {
     setCls('zoneBig', 'show', true);
   }
   if (zoneT > 0 && (zoneT -= dt) <= 0) setCls('zoneBig', 'show', false);
+}
+
+// короткая подпись над слотами: «+3 бревна» и т.п.
+let toastT = 0;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => $('toast').classList.remove('show'), 1800);
 }
 
 function updateCamera(dt, inp) {
@@ -239,7 +251,8 @@ function frame(now) {
   adaptQuality(dtMs);
 
   const inp = input.poll();
-  if (!falling) player.update(dt, inp, yaw);
+  player.holdAxe = !!inv.held && inv.held.id === 'axe';
+  if (!falling) { player.update(dt, inp, yaw); wood.update(dt, inp.chop); }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
   if (player.pos.y < -80 && !falling) { falling = true; $('msg').classList.add('show'); }
   if (falling) {
@@ -332,7 +345,7 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, wood, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

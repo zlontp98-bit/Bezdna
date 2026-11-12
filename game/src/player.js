@@ -130,8 +130,16 @@ function buildModel(look) {
     return p;
   };
   const armL = limb(-0.29, 0.82, arm(-1)), armR = limb(0.29, 0.82, arm(1));
+  // топорик в правой руке: виден, когда выбран в слоте
+  const axe = mesh([
+    part(new THREE.CylinderGeometry(0.02, 0.024, 0.5, 5), 0x8a5a3a, { m: rotX(Math.PI / 2, 0, -0.41, 0.2) }),
+    part(new THREE.BoxGeometry(0.045, 0.2, 0.15), 0xb9c2cb, { m: T(0, -0.47, 0.4) }),
+    part(new THREE.BoxGeometry(0.03, 0.24, 0.05), 0xe6ecf2, { m: T(0, -0.5, 0.33) }),
+  ]);
+  axe.visible = false;
+  armR.add(axe);
   const legL = limb(-0.13, 0.345, leg()), legR = limb(0.13, 0.345, leg());
-  return { root, rig, body: torsoM, head, eyes, pupils, lure, armL, armR, legL, legR };
+  return { root, rig, body: torsoM, head, eyes, pupils, lure, armL, armR, legL, legR, axe };
 }
 
 // мягкое свечение: точка, всегда повёрнутая к камере, складывается со сценой
@@ -161,6 +169,7 @@ function blobShadow() {
   return mesh;
 }
 
+export const SWING = 0.42; // длительность взмаха топором
 const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
 // Пешком — до ~42°. Съезжать начинаем только круче ~46°, а останавливаемся положе ~40°:
 // так герой не попадает в петлю «зашёл — съехал — зашёл», от которой его дёргало
@@ -191,6 +200,7 @@ export class Player {
     this.vOff = new THREE.Vector3();
     this.viewPos = this.pos.clone();
     this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
+    this.swingT = 0; this.holdAxe = false; // взмах топором (сек. до конца) и топор в руке
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
     this.shadow = blobShadow();
@@ -588,6 +598,16 @@ export class Player {
       m.head.rotation.z = Math.sin(t * 18) * 0.06 * panic;
       m.head.rotation.x = up ? -0.2 : 0.18;
     }
+
+    // взмах топором: замах назад-вверх и удар вперёд
+    m.axe.visible = this.holdAxe;
+    if (this.swingT > 0) {
+      this.swingT = Math.max(0, this.swingT - dt);
+      const k = 1 - this.swingT / SWING;
+      m.armR.rotation.x = k < 0.35 ? -0.4 - 2.4 * (k / 0.35) : -2.8 + 2.6 * Math.min(1, (k - 0.35) / 0.3);
+      m.armR.rotation.z = 0.15;
+      rig.rotation.x += 0.12 * Math.sin(k * Math.PI);
+    } else if (this.holdAxe && this.grounded && !this.swimming) m.armR.rotation.x -= 0.35;
 
     // фонарик: пружина, которую дёргают разгон, торможение и прыжки
     const acc = (this.speed - prevSpeed) / Math.max(dt, 1e-3);
