@@ -51,9 +51,11 @@ float shadowAt(vec2 xz){
 }
 // Мягкий «мультяшный» свет: тёплое солнце, холодная тень
 vec3 shade(vec3 alb, vec3 n, float sh){
-  float lit = smoothstep(-0.05, 0.5, dot(n, uSun)) * sh;
+  float lit = smoothstep(-0.18, 0.55, dot(n, uSun)) * sh;
   vec3 amb = mix(uAmbLo, uAmbHi, n.y*0.5+0.5);
-  return alb * (amb + uSunCol * lit);
+  // слабый контровой свет с противоположной стороны, чтобы теневые склоны не чернели
+  float back = max(dot(n, normalize(vec3(-uSun.x, 0.3, -uSun.z))), 0.0);
+  return alb * (amb + uSunCol * lit + uAmbHi * back * 0.35);
 }
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
@@ -61,7 +63,9 @@ vec3 applyFog(vec3 c, vec3 w){
   // чем глубже, тем темнее: свет сверху туда почти не доходит
   c *= mix(1.0, 0.62, smoothstep(-12.0, -60.0, w.y));
   float deep = smoothstep(-18.0, -70.0, w.y);
-  float f = 1.0 - exp(-d * (uFogDen + deep*0.012));
+  // высоко над лугом воздух прозрачнее — горы не тонут в дымке
+  float den = uFogDen * (1.0 - 0.45*smoothstep(10.0, 60.0, w.y));
+  float f = 1.0 - exp(-d * (den + deep*0.012));
   // и чем ниже под ногами, тем гуще туман сам по себе
   f = max(f, smoothstep(-55.0, -120.0, w.y));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
@@ -92,7 +96,7 @@ export function mat(opts) {
 export const STYLES = {
   // выбранный стиль: цвета ясного дня + мягкая дымка туманного утра
   // поздний день: низкое тёплое солнце, холодные тени, сизая дымка
-  day: { name: 'Вечерняя дымка', sun: [0.80, 0.60, 0.40], hi: [0.30, 0.36, 0.50], lo: [0.21, 0.20, 0.27],
+  day: { name: 'Вечерняя дымка', sun: [0.80, 0.60, 0.40], hi: [0.36, 0.42, 0.56], lo: [0.27, 0.26, 0.33],
     fog: [0.55, 0.59, 0.68], zen: [0.16, 0.25, 0.45], den: 0.0062, sat: 0.92 },
 };
 export function setStyle(key) {

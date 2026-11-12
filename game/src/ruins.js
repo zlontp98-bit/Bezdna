@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { W, heightAt, POOLS, ROAD } from './terrain.js';
+import { W, heightAt, waterAt, POOLS, ROAD } from './terrain.js';
 import { STACKS } from './stacks.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { addCyl, addBox } from './solids.js';
@@ -107,10 +107,11 @@ export function buildRuins(scene) {
   for (const th of W.STREAMS) {
     const tx = -Math.sin(th), tz = Math.cos(th);
     const [fx, fz] = P(92.6, th), g = new Group(fx, fz);
-    for (const o of [-2.0, -0.65, 0.7, 2.05]) {
-      const x = fx + tx * o, z = fz + tz * o, top = heightAt(x, z) + 0.34;
-      g.add(new THREE.CylinderGeometry(0.58, 0.66, 0.5, 7, 1), STONE[g.i++ % 4], x, top - 0.25, z, { stone: 1 }, [1, 1, 1], o);
-      addCyl(x, z, 0.6, top);
+    for (const o of [-2.6, -1.3, 0, 1.3, 2.6]) {
+      const x = fx + tx * o, z = fz + tz * o, gy = heightAt(x, z);
+      const top = Math.max(gy + 0.34, waterAt(x, z) + 0.22), h = top - gy + 0.4;
+      g.add(new THREE.CylinderGeometry(0.6, 0.72, h, 7, 1), STONE[g.i++ % 4], x, top - h / 2, z, { stone: 1 }, [1, 1, 1], o);
+      addCyl(x, z, 0.62, top);
     }
     // мостик
     // мостик — между чашей и обрывом, если там хватает места
@@ -357,6 +358,34 @@ function buildOldWorld(scene, rnd, blobs) {
       g.block(x, z, w, w * 0.6, w * 1.2, rnd() * 3, y - 0.2, { rz: (rnd() - 0.5) * 0.5 });
     }
     blobs.push({ x: at(70)[0], z: at(70)[1], r: 3, h: 1 });
+    g.done(scene);
+  }
+
+  // ---- смотровая на утёсе: дощатый помост с перилами и обломок лестницы у стены ----
+  {
+    const C = W.CRAG, g = new Group(C.x, C.z);
+    const y0 = heightAt(C.x, C.z);
+    const ry = C.th + Math.PI / 2 - 0.3; // доски смотрят на провал
+    const fx = -Math.cos(C.th), fz = -Math.sin(C.th), sx = -fz, sz = fx;
+    const px = C.x + fx * 2.6, pz = C.z + fz * 2.6; // помост вынесен к обрыву
+    for (let i = 0; i < 8; i++) {
+      const o = -1.4 + i * 0.4;
+      if (i === 5) continue;
+      g.add(box(0.4, 0.09, 3.2), i % 2 ? WOOD : WOODG, px + sx * o, y0 + 0.28, pz + sz * o, {}, [1, 1, 1], ry, (rnd() - 0.5) * 0.04);
+    }
+    addBox(px, pz, 1.7, 1.6, ry, y0 + 0.33);
+    for (const [a, b] of [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) {
+      const x = px + sx * a + fx * b, z = pz + sz * a + fz * b;
+      g.add(box(0.16, 1.5, 0.16), WOODD, x, heightAt(x, z) + 0.6, z, {}, [1, 1, 1], ry, (rnd() - 0.5) * 0.1);
+    }
+    for (const b of [1.5]) g.add(box(3.3, 0.1, 0.1), WOOD, px + fx * b, y0 + 1.2, pz + fz * b, {}, [1, 1, 1], ry);
+    for (const a of [-1.5, 1.5]) g.add(box(0.1, 0.1, 3.0), WOOD, px + sx * a, y0 + 1.15, pz + sz * a, {}, [1, 1, 1], ry, 0.03 * a);
+    // остатки лестницы у подножия стены — намёк, что сюда поднимались
+    const lx = C.x - fx * (C.w + 4.5), lz = C.z - fz * (C.w + 4.5), ly = heightAt(lx, lz);
+    for (const a of [-0.35, 0.35]) g.add(box(0.1, 5.5, 0.1), WOODD, lx + sx * a, ly + 2.3, lz + sz * a, {}, [1, 1, 1], ry, 0.0);
+    for (let i = 0; i < 7; i++) if (i !== 3) g.add(box(0.8, 0.07, 0.08), WOOD, lx, ly + 0.5 + i * 0.6, lz, {}, [1, 1, 1], ry);
+    g.block(lx + sx * 1.6, lz + sz * 1.6, 0.9, 0.5, 0.9, 0.4, ly - 0.1, { color: WOODG, stone: 0 });
+    blobs.push({ x: px, z: pz, r: 2.4, h: 1 });
     g.done(scene);
   }
 

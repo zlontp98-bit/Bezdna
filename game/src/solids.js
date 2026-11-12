@@ -1,4 +1,4 @@
-import { heightAt, streamAt, POOLS } from './terrain.js';
+import { heightAt } from './terrain.js';
 
 // Твёрдые объекты поверх ландшафта: столбы, плиты, арки.
 // На них можно стоять и запрыгивать, под арками — проходить.
@@ -24,14 +24,6 @@ export function addBox(x, z, hx, hz, rot, top, bottom = -1e9) {
 // Высота опоры под точкой для героя, чьи ноги на высоте y
 export function groundAt(x, z, y) {
   let h = heightAt(x, z);
-  // вода мелкая: в ручье герой идёт по щиколотку, в чаше под водопадом — по колено,
-  // а не уходит под поверхность по пояс
-  const st = streamAt(x, z);
-  if (st > 0) h += st * 0.34;
-  for (const p of POOLS) {
-    const dx = x - p.x, dz = z - p.z;
-    if (dx * dx + dz * dz < 27 && h < p.level - 0.3) h = p.level - 0.3;
-  }
   hitSolid = false; ceiling = 1e9;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return h;

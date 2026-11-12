@@ -19,7 +19,9 @@ export const W = {
   OUTER: 340,   // край мира
   EXT: 232,     // половина стороны квадрата, покрытого текстурами высот/теней
   STREAMS: [2.155, 4.25], // углы, под которыми текут ручьи (сразу за началом пандусов)
+  CRAG: { th: 0.42, r: 141, top: 24, w: 6.5 }, // утёс-смотровая у лагеря: на него лезут по стене
 };
+W.CRAG.x = Math.cos(W.CRAG.th) * W.CRAG.r; W.CRAG.z = Math.sin(W.CRAG.th) * W.CRAG.r;
 
 const angDiff = (a, b) => {
   let d = a - b;
@@ -86,6 +88,12 @@ export function pathAt(x, z) {
   return m * (1 - streamAt(x, z));
 }
 
+// отдельные вершины хребта: угол, радиус, высота, ширина
+const PEAKS = [
+  [0.35, 300, 85, 55], [1.3, 290, 60, 45], [2.0, 310, 95, 60], [2.9, 285, 55, 40],
+  [3.7, 305, 80, 50], [4.6, 295, 70, 48], [5.4, 300, 90, 58], [6.0, 285, 50, 38],
+].map(([th, r, h, w]) => ({ x: Math.cos(th) * r, z: Math.sin(th) * r, h, w }));
+
 // контрфорсы: край стены гуляет по углу, получаются колонны и ниши
 const edgeR = (x, z) => W.HOLE + 0.6 + fbm(x * 0.11 + 7, z * 0.11 - 3, 3) * 3.2;
 const pitR = (x, z) => W.PIT + fbm(x * 0.09 - 11, z * 0.09 + 5, 3) * 4.0;
@@ -109,12 +117,34 @@ function rawHeight(x, z) {
   // горы кольцом вокруг долины
   const mt = smoothstep(W.MEADOW - 30, W.OUTER - 30, r);
   if (mt > 0) {
-    // острые хребты и отдельные пики
-    const ridge = 1 - Math.abs(fbm(x * 0.009 + 40, z * 0.009, 4));
-    const crag = 1 - Math.abs(fbm(x * 0.03 - 7, z * 0.03 + 2, 3));
-    m += mt * mt * (16 + ridge * ridge * ridge * 105 + crag * crag * 22 * mt);
+    // хребет: два слоя «гребней» разного масштаба + отдельные вершины для силуэта
+    const r1 = 1 - Math.abs(fbm(x * 0.009 + 40, z * 0.009, 3));
+    const r2 = 1 - Math.abs(fbm(x * 0.028 - 7, z * 0.028 + 2, 3));
+    const r3 = 1 - Math.abs(fbm(x * 0.07 + 3, z * 0.07 - 9, 2));
+    let mh = 14 + r1 * r1 * (70 + r2 * 40) + r2 * r2 * 18 + r3 * 5 * mt;
+    for (const pk of PEAKS) {
+      const d = Math.hypot(x - pk.x, z - pk.z) / pk.w;
+      mh += pk.h * Math.max(0, 1 - d) ** 1.6 * (0.8 + 0.2 * r2);
+    }
+    m += mt * mt * mh;
   }
   m += smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
+  // утёс-смотровая: столовая скала с отвесными боками
+  {
+    const C = W.CRAG, d = Math.hypot(x - C.x, z - C.z);
+    if (d < C.w + 9) {
+      // контур с рёбрами-контрфорсами, стена ~3:1 с парой выпуклостей — по ней лезут, но не ходят
+      const ang = Math.atan2(z - C.z, x - C.x);
+      const rib = 1 - Math.abs(fbm(Math.cos(ang) * 2.6 + 4, Math.sin(ang) * 2.6, 2));
+      const edge = C.w + fbm(x * 0.17 + 2, z * 0.17 - 5, 2) * 1.2 + rib * rib * 1.8;
+      let k = clamp((edge + 8 - d) / 8, 0, 1);
+      k = k < 0.1 ? k * k * 5 : k > 0.9 ? 1 - (1 - k) * (1 - k) * 5 : k;
+      k += Math.sin(k * Math.PI * 3 + rib * 2) * 0.05 * k * (1 - k) * 4;
+      const topH = C.top + fbm(x * 0.3, z * 0.3, 2) * 0.5;
+      m = m + (topH - m) * k + smoothstep(edge + 9, edge + 2, d) * 1.2 * (1 - k);
+      m += k * (1 - k) * 4 * (fbm(x * 0.5 + 1, z * 0.5 - 3, 2) * 0.8 + fbm(x * 1.6, z * 1.6, 1) * 0.2);
+    }
+  }
 
   // спираль уступов
   const wr = warpR(x, z);
@@ -151,7 +181,6 @@ function rawHeight(x, z) {
       h += (low - h) * wall;
     }
   }
-  h -= st * 0.6;
   for (const p of POOLS) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
   return h;
 }
@@ -164,7 +193,8 @@ const radii = [];
   while (r < W.PIT - 7) { radii.push(r); r += 3; }
   while (r < W.R + 8) { radii.push(r); r += 1.0; }
   while (r < W.MEADOW) { radii.push(r); r += 3; }
-  while (r < W.OUTER) { radii.push(r); r += 7; }
+  while (r < W.MEADOW + 40) { radii.push(r); r += 2.5; }
+  while (r < W.OUTER) { radii.push(r); r += 4; }
   radii.push(W.OUTER);
 }
 const ROWS = radii.length;
@@ -179,10 +209,44 @@ const rowLUT = new Float32Array(Math.ceil(W.OUTER / LUT_STEP) + 2);
   }
 }
 const HG = new Float32Array(ROWS * COLS);
+// вокруг русла ручья: уровень воды, уровень берега и «пологость» (0 — водопад по стене)
+const WG = new Float32Array(ROWS * COLS).fill(-1e9);
+const LG = new Float32Array(ROWS * COLS).fill(-1e9);
+const FG = new Float32Array(ROWS * COLS);
+// копия высот для отрисовки: под лентой русла сетка продавлена глубже, чтобы не торчать сквозь неё
+let MG = HG;
+const BAND = 12;
 
 // Высота земли в любой точке. Очень дёшево: читает готовую сетку.
 // Этим же пользуется физика, поэтому ноги всегда совпадают с картинкой.
 export function heightAt(x, z) {
+  let h = sampleGrid(HG, x, z);
+  const r = Math.sqrt(x * x + z * z);
+  if (r < W.PIT - 8 || r > 229) return h;
+  const th = Math.atan2(z, x);
+  let d = 1e9;
+  for (const tw of W.STREAMS) d = Math.min(d, Math.abs(angDiff(th, tw)) * r);
+  if (d > 4.3) return h;
+  // русло: плоское дно и берега с уклоном, по которому ещё можно выйти из воды;
+  // врезано в сетку точно, а не по её ячейкам
+  const flat = sampleGrid(FG, x, z);
+  if (flat <= 0.001) return h;
+  const rim = sampleGrid(LG, x, z) + 0.25; // кромка берега чуть выше воды
+  const ch = rim + (h - rim) * smoothstep(3.4, 4.2, d) - 1.7 * clamp((3.4 - d) / 2.1, 0, 1);
+  return Math.min(h, h + (ch - h) * flat);
+}
+// Уровень воды под точкой: ручей или чаша; -1e9 — суши
+export function waterAt(x, z) {
+  let w = -1e9;
+  const r = Math.hypot(x, z);
+  if (r > W.PIT - 5 && r < 228 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
+  for (const p of POOLS) {
+    const dx = x - p.x, dz = z - p.z;
+    if (dx * dx + dz * dz < 29) w = Math.max(w, p.level);
+  }
+  return w;
+}
+function sampleGrid(G, x, z) {
   const r = Math.sqrt(x * x + z * z);
   let th = Math.atan2(z, x);
   if (th < 0) th += TAU;
@@ -198,8 +262,8 @@ export function heightAt(x, z) {
   if (c0 >= COLS) c0 -= COLS;
   const c1 = c0 + 1 >= COLS ? 0 : c0 + 1;
   const r0 = fr | 0, r1 = r0 + 1 >= ROWS ? r0 : r0 + 1, tr = fr - r0;
-  const a = HG[r0 * COLS + c0], b = HG[r0 * COLS + c1];
-  const c = HG[r1 * COLS + c0], d = HG[r1 * COLS + c1];
+  const a = G[r0 * COLS + c0], b = G[r0 * COLS + c1];
+  const c = G[r1 * COLS + c0], d = G[r1 * COLS + c1];
   return (a + (b - a) * tc) * (1 - tr) + (c + (d - c) * tc) * tr;
 }
 
@@ -293,20 +357,139 @@ function bakeHeightTexture() {
       let m = 0;
       if (r > W.PIT + 2 && r < 236) {
         normalAt(x, z, n, 0.6);
-        m = smoothstep(0.84, 0.94, n.y) * (1 - streamAt(x, z)) * smoothstep(236, 222, r);
+        m = smoothstep(0.84, 0.94, n.y) * smoothstep(236, 222, r);
       }
       const pth = pathAt(x, z);
       for (const p of POOLS) m *= smoothstep(4.6, 5.6, Math.hypot(x - p.x, z - p.z));
+      const wl = waterAt(x, z);
+      m *= smoothstep(-0.3, -0.9, wl - h); // у воды — галька, не трава
       const o = (j * N + i) * 4;
       data[o] = toHalf(h);
       data[o + 1] = toHalf(m * (1 - pth));
       data[o + 2] = toHalf(pth);
+      data[o + 3] = toHalf(wl > -1e8 ? clamp(wl - h, -2, 4) : -2);
     }
   }
   const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.HalfFloatType);
   tex.magFilter = tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
   U.uHmap.value = tex;
+}
+
+// Русло: на пологих местах ручей врезан в землю на полтора метра, вода стоит
+// на уровне берега. На крутых стенах русла нет — вода бежит по камню.
+function carveStreams() {
+  MG = HG.slice();
+  const preAt = (x, z) => sampleGrid(HG, x, z);
+  for (let ri = 0; ri < ROWS; ri++) {
+    const r = radii[ri];
+    if (r < W.PIT - 12 || r > 240) continue;
+    const spacing = (TAU * r) / COLS;
+    for (let c = 0; c < COLS; c++) {
+      const th = (c / COLS) * TAU;
+      let tw = W.STREAMS[0], best = 1e9;
+      for (const a of W.STREAMS) { const d = Math.abs(angDiff(th, a)); if (d < best) { best = d; tw = a; } }
+      const d = best * r;
+      if (d > BAND) continue;
+      const i = ri * COLS + c;
+      const cx = Math.cos(tw) * r, cz = Math.sin(tw) * r, px = -Math.sin(tw), pz = Math.cos(tw);
+      const e = 1.2;
+      const gx = (preAt(cx + e, cz) - preAt(cx - e, cz)) / (2 * e), gz = (preAt(cx, cz + e) - preAt(cx, cz - e)) / (2 * e);
+      const flat = smoothstep(1.1, 0.6, Math.hypot(gx, gz));
+      // гладь стоит ниже нижнего из двух берегов
+      const bank = Math.min(preAt(cx, cz), preAt(cx + px * 3.3, cz + pz * 3.3), preAt(cx - px * 3.3, cz - pz * 3.3));
+      const level = bank - 0.45;
+      LG[i] = level; FG[i] = flat;
+      // на пологом — гладь, на крутом — плёнка воды по камню
+      WG[i] = Math.max(level * flat + (HG[i] + 0.2) * (1 - flat), HG[i] + 0.15 - 1.4 * flat);
+      // ячейки под лентой русла продавливаем, чтобы сетка не вылезала из-под неё
+      if (flat > 0.001 && d < spacing + 0.3) MG[i] = Math.min(HG[i], level - 1.9);
+    }
+  }
+}
+
+// Заплатка под утёс: мелкая круговая сетка по точной высоте, полярная сетка под ней притоплена
+const CRAG_R = 27;
+function sinkUnderCrag() {
+  const C = W.CRAG;
+  for (let ri = 0; ri < ROWS; ri++) {
+    const r = radii[ri];
+    if (Math.abs(r - C.r) > CRAG_R + 4) continue;
+    for (let c = 0; c < COLS; c++) {
+      const th = (c / COLS) * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
+      const d = Math.hypot(x - C.x, z - C.z);
+      if (d > CRAG_R) continue;
+      const i = ri * COLS + c;
+      MG[i] = Math.min(MG[i], HG[i] - 0.7 * smoothstep(CRAG_R, CRAG_R - 6, d));
+    }
+  }
+}
+function buildCragPatch(scene, material) {
+  const C = W.CRAG, SEG = 112, n = new THREE.Vector3();
+  const rings = [0];
+  for (let r = 0.5; r < CRAG_R; r += r < 17 ? 0.45 : 1.0) rings.push(r);
+  rings.push(CRAG_R);
+  const pos = [], nor = [], idx = [];
+  for (let j = 0; j < rings.length; j++) {
+    const rr = rings[j];
+    for (let i = 0; i < SEG; i++) {
+      const a = (i / SEG) * TAU, x = C.x + Math.cos(a) * rr, z = C.z + Math.sin(a) * rr;
+      pos.push(x, heightAt(x, z) + 0.03, z);
+      normalAt(x, z, n, 0.3);
+      nor.push(n.x, n.y, n.z);
+    }
+  }
+  for (let j = 0; j < rings.length - 1; j++) {
+    const a0 = j * SEG, b0 = a0 + SEG;
+    for (let i = 0; i < SEG; i++) {
+      const i1 = (i + 1) % SEG;
+      if (j === 0) { if (i1 === 0) continue; idx.push(a0, b0 + i, b0 + i1); continue; }
+      idx.push(a0 + i, b0 + i, a0 + i1, a0 + i1, b0 + i, b0 + i1);
+    }
+  }
+  // первое кольцо замыкаем отдельно
+  idx.push(0, SEG + SEG - 1, SEG);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  const mesh = new THREE.Mesh(g, material);
+  mesh.matrixAutoUpdate = false;
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+}
+
+// Лента русла: узкая полоса рельефа вдоль ручья, построенная по точной высоте heightAt.
+// По краям она лежит на сетке, в середине — повторяет врезанное русло.
+function buildChannelStrips(scene, material) {
+  const offs = [-BAND, -7.5, -4.6, -4.0, -3.5, -3.1, -2.7, -2.2, -1.4, 0, 1.4, 2.2, 2.7, 3.1, 3.5, 4.0, 4.6, 7.5, BAND];
+  const K = offs.length, n = new THREE.Vector3();
+  for (const th of W.STREAMS) {
+    const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
+    const pos = [], nor = [], idx = [];
+    let row = 0;
+    for (let r = 229; r > W.PIT - 7; r -= 0.8, row++) {
+      for (let k = 0; k < K; k++) {
+        const o = offs[k], x = cx * r + px * o, z = cz * r + pz * o;
+        const lift = Math.abs(o) > 4.3 ? 0.03 : 0.0;
+        pos.push(x, heightAt(x, z) + lift, z);
+        normalAt(x, z, n, Math.abs(o) > 4.3 ? 1.0 : 0.3);
+        nor.push(n.x, n.y, n.z);
+      }
+      if (row > 0) {
+        const a = (row - 1) * K, b = row * K;
+        for (let k = 0; k < K - 1; k++) idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setIndex(idx);
+    const mesh = new THREE.Mesh(g, material);
+    mesh.matrixAutoUpdate = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+  }
 }
 
 const terrainMat = () => mat({
@@ -340,29 +523,42 @@ const terrainMat = () => mat({
 
       // трещины: тонкие тёмные линии, вытянутые вниз
       float cr = vnoise(vec2(u*0.5, vW.y*0.055 + vnoise(vec2(u*0.2, vW.y*0.1))*0.6));
-      float crack = smoothstep(0.05, 0.0, abs(cr - 0.5)) * wall * lf;
-      // слои породы
-      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), 0.35 + 0.65*lf);
+      float crack = smoothstep(0.035, 0.0, abs(cr - 0.5)) * wall * lf;
+      // слои породы — только вблизи, вдали они превращаются в рябь
+      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), lf);
       float ledge = smoothstep(0.88, 0.95, fract(y*0.33)) * lf;
 
       // палитра камня: тёплая охра наверху, холодный сланец в глубине
       float tone = vnoise(vec2(u*0.04, vW.y*0.03) + vW.xz*0.01);
-      vec3 rock = mix(vec3(0.52,0.43,0.35), vec3(0.40,0.34,0.30), band);
+      vec3 rock = mix(vec3(0.50,0.42,0.35), vec3(0.43,0.36,0.31), band);
       rock = mix(rock, vec3(0.52,0.45,0.36), tone*0.6);
       vec3 deepR = mix(vec3(0.36,0.38,0.44), vec3(0.26,0.28,0.35), band);
       deepR = mix(deepR, vec3(0.36,0.40,0.46), tone*0.5);
       rock = mix(rock, deepR, smoothstep(10.0, 60.0, -vW.y));
-      rock = mix(rock, rock*1.25 + 0.03, ledge*(1.0-crack));
-      rock *= 0.82 + 0.3*col;
-      rock *= 1.0 - crack*0.6;
+      rock = mix(rock, rock*1.12 + 0.02, ledge*(1.0-crack));
+      rock *= 0.88 + 0.22*col;
+      rock *= 1.0 - crack*0.35;
       // мох и подтёки зелени на стенах: гуще под уступами и в сырых местах
-      float moss = smoothstep(0.55, 0.8, vnoise(vec2(u*0.12, vW.y*0.09)) + ledge*0.4 - (1.0-wall)*0.2) * wall;
+      float moss = smoothstep(0.55, 0.8, vnoise(vec2(u*0.12, vW.y*0.09)) + vnoise(vW.xz*0.5)*0.25 - (1.0-wall)*0.2) * wall;
       vec3 mossC = mix(vec3(0.20,0.30,0.16), vec3(0.14,0.27,0.24), smoothstep(10.0, 45.0, -vW.y));
       rock = mix(rock, mossC, moss*0.75*lf);
-      // горы: светлее и холоднее, наверху редкий снег
-      vec3 mtn = mix(vec3(0.48,0.46,0.48), vec3(0.36,0.35,0.40), band) * (0.85 + 0.3*col);
-      rock = mix(rock, mtn, smoothstep(20.0, 55.0, vW.y));
-      float snow = smoothstep(95.0, 115.0, vW.y + wob*2.0) * smoothstep(0.5, 0.8, n.y);
+      // горы: крупные грани, тёмные жилы по склону, снег в складках и на вершинах
+      float mtnK = smoothstep(16.0, 40.0, vW.y);
+      float facet = vnoise(vW.xz*0.035 + 3.0);
+      float facet2 = vnoise(vW.xz*0.012 - 5.0);
+      float tang = atan(vW.z, vW.x) * length(vW.xz);
+      float streak = vnoise(vec2(tang*0.05, vW.y*0.02));
+      streak = smoothstep(0.42, 0.58, streak);
+      vec3 mtn = mix(vec3(0.36,0.35,0.40), vec3(0.58,0.55,0.56), facet);
+      mtn = mix(mtn, vec3(0.26,0.26,0.31), streak*0.6);
+      mtn *= 0.75 + 0.5*facet2;
+      rock = mix(rock, mtn, mtnK);
+      nn = mix(nn, normalize(n + vec3(facet-0.5, 0.0, facet2-0.5)*0.9*mtnK), mtnK);
+      float snowLine = 46.0 + facet2*18.0 + (1.0-n.y)*34.0;
+      float snow = smoothstep(snowLine, snowLine + 12.0, vW.y) * smoothstep(0.42, 0.7, n.y + (facet-0.5)*0.25);
+      snow = max(snow, smoothstep(0.7, 0.85, n.y) * smoothstep(0.5, 0.6, mtnK) * smoothstep(55.0, 75.0, vW.y));
+      // снег забивается в складки и ложится полосами по гребням
+      snow = max(snow, streak * smoothstep(0.5, 0.75, n.y) * smoothstep(62.0, 80.0, vW.y) * 0.8);
 
       vec3 grass = grassCol(vW);
       grass = mix(grass, vec3(0.42,0.46,0.28), smoothstep(14.0, 60.0, vW.y));
@@ -374,10 +570,16 @@ const terrainMat = () => mat({
       pth = smoothstep(0.35, 0.65, pth + (vnoise(vW.xz*1.3)-0.5)*0.3);
       vec3 dirt = mix(vec3(0.52,0.43,0.32), vec3(0.42,0.35,0.27), vnoise(vW.xz*0.8));
       alb = mix(alb, dirt, pth * gm);
-      alb = mix(alb, vec3(0.86,0.88,0.94), snow);
+      // у воды: мокрая галька и тёмный песок
+      float wd = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5).a;
+      float wet = smoothstep(-0.45, 0.0, wd) * (1.0 - mtnK);
+      vec3 pebble = mix(vec3(0.33,0.30,0.26), vec3(0.46,0.42,0.36), vnoise(vW.xz*2.4));
+      alb = mix(alb, pebble, wet);
+      alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
+      alb = mix(alb, vec3(0.90,0.92,0.97), snow);
 
       // в щелях и у подножия стен темнее
-      float ao = mix(1.0, 0.8 + 0.2*col2, wall);
+      float ao = mix(1.0, 0.8 + 0.2*col2, wall) * (1.0 - mtnK*0.25*(1.0-facet2));
       vec3 c = shade(alb, mix(n, nn, 0.9), shadowAt(vW.xz)) * ao;
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
@@ -399,6 +601,9 @@ export function buildTerrain(scene) {
       HG[ri * COLS + c] = rawHeight(Math.cos(th) * r, Math.sin(th) * r);
     }
   }
+
+  carveStreams();
+  sinkUnderCrag();
 
   // уровень воды в чаше — чуть ниже самого низкого берега
   for (const p of POOLS) {
@@ -424,7 +629,7 @@ export function buildTerrain(scene) {
         const c = (s * per + ci) % COLS;
         const th = (c / COLS) * TAU;
         const x = Math.cos(th) * r, z = Math.sin(th) * r;
-        pos[p] = x; pos[p + 1] = HG[ri * COLS + c]; pos[p + 2] = z;
+        pos[p] = x; pos[p + 1] = MG[ri * COLS + c]; pos[p + 2] = z;
         normalAt(x, z, n, r < W.R + 10 ? 0.45 : 1.5);
         nor[p] = n.x; nor[p + 1] = n.y; nor[p + 2] = n.z;
         p += 3;
@@ -444,6 +649,8 @@ export function buildTerrain(scene) {
     mesh.matrixAutoUpdate = false;
     scene.add(mesh);
   }
+  buildChannelStrips(scene, material);
+  buildCragPatch(scene, material);
   bakeHeightTexture();
 }
 

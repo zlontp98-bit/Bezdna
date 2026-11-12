@@ -116,16 +116,17 @@ function onResize() {
   applyRes();
 }
 
-const ZONES = [[-3, 'Луг у края'], [-16, 'Первое кольцо'], [-40, 'Карниз над бездной'], [-1e9, 'Нижний уступ']];
+const ZONES = [[14, 'Смотровая площадка'], [-3, 'Луг у края'], [-16, 'Первое кольцо'], [-40, 'Карниз над бездной'], [-1e9, 'Нижний уступ']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
   $('grab').classList.toggle('on', player.climbing);
   $('grab').classList.toggle('ready', player.canGrab);
-  const d = Math.max(0, Math.round(-y));
-  $('depth').textContent = d > 0 ? `−${d} м` : '0 м';
+  const d = Math.round(-y);
+  $('depth').textContent = d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м';
   $('bar').style.height = Math.min(100, (-y / 50) * 100) + '%';
-  const z = ZONES.find((q) => y > q[0])[1];
+  let z = ZONES.find((q) => y > q[0])[1];
+  if (y > 14 && Math.hypot(player.pos.x - W.CRAG.x, player.pos.z - W.CRAG.z) > 14) z = 'Склоны гор';
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
     $('zone').textContent = z; $('zoneBig').textContent = z;

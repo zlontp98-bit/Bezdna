@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { heightAt, normalAt, shadowAtCPU } from './terrain.js';
+import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
 import { groundAt, hitSolid, ceiling } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat } from './shaders.js';
@@ -147,7 +147,7 @@ function blobShadow() {
 
 const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
 const MAX_SLOPE = 1.25; // подъём круче ~51° пешком не взять — только карабкаться
-const CLIMB = 2.5, STEEP = 0.72;
+const CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 
 export class Player {
   constructor(scene, spawn, colliders) {
@@ -161,6 +161,7 @@ export class Player {
     this.look = { color: SKIN_COLORS[0], armor: false }; // броня появится вместе с крафтом
     this.m = buildModel(this.look);
     scene.add(this.m.root);
+    this.swimming = false; this.swimT = 0;
     this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
@@ -261,6 +262,36 @@ export class Player {
     }
   }
 
+  // Плавание: держимся у поверхности, гребём медленно, у берега встаём на дно
+  swimStep(dt, inp, mx, mz, wl) {
+    const p = this.pos, v = this.vel;
+    this.swimT += dt;
+    const top = inp.sprint ? SWIM_FAST : SWIM;
+    const k = Math.min(1, dt * 4);
+    v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
+    // всплываем к уровню «голова над водой»
+    const want = wl - 1.0;
+    v.y += ((want - p.y) * 14 - v.y * 5) * dt;
+    p.y += v.y * dt;
+    const dist = Math.hypot(v.x, v.z) * dt, n = Math.max(1, Math.ceil(dist / 0.2));
+    for (let i = 0; i < n; i++) {
+      const nx = p.x + (v.x * dt) / n, nz = p.z + (v.z * dt) / n;
+      const h = this.G(nx, nz);
+      if (h - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; } // крутой берег — упёрлись
+      p.x = nx; p.z = nz;
+    }
+    this.collide();
+    const g = this.G(p.x, p.z);
+    if (p.y <= g) { // нащупали дно
+      p.y = g; this.swimming = false; this.grounded = true; v.y = 0;
+      return;
+    }
+    if (inp.jump && this.swimT > 0.3 && p.y > want - 0.15) { // выпрыгнуть из воды
+      this.swimming = false; this.grounded = false; this.airT = 1;
+      v.y = 6.2;
+    }
+  }
+
   collide() {
     const p = this.pos, cx = (p.x / 8) | 0, cz = (p.z / 8) | 0;
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
@@ -280,7 +311,13 @@ export class Player {
     const mx = inp.mx * c - inp.my * s, mz = -inp.mx * s - inp.my * c;
     const ml = this.climbing ? 0 : Math.min(1, Math.hypot(mx, mz));
     this.climbCd = Math.max(0, this.climbCd - dt);
-    if (this.climbing) this.climbStep(dt, inp);
+    // вода: если под ногами глубже роста по грудь — плывём
+    const wl = waterAt(p.x, p.z);
+    if (!this.climbing && wl > -1e8 && p.y < wl - 0.85 && wl - this.G(p.x, p.z) > 1.0) {
+      if (!this.swimming) { this.swimming = true; this.grounded = false; this.swimT = 0; v.y = Math.max(v.y, -1.5); }
+    }
+    if (this.swimming) this.swimStep(dt, inp, mx, mz, wl);
+    else if (this.climbing) this.climbStep(dt, inp);
     else if (inp.grab && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
     const top = inp.sprint ? RUN : WALK;
     // на крутом склоне стоять и ходить нельзя: герой съезжает вниз, пока не схватится
@@ -325,7 +362,7 @@ export class Player {
     this.N(p.x, p.z, this.n, 0.35);
 
     // запоминаем безопасное место для возврата после падения в колодец
-    if (this.grounded && this.n.y > 0.9 && p.y > -20) {
+    if (this.grounded && !this.swimming && this.n.y > 0.9 && p.y > -20 && waterAt(p.x, p.z) < p.y) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
     }
@@ -352,7 +389,20 @@ export class Player {
     m.root.rotation.y = this.facing;
     const rig = m.rig;
     rig.position.z = 0;
-    if (this.climbing) {
+    if (this.swimming) {
+      // гребём по-собачьи: тело лежит на воде, лапы молотят, голова задрана
+      const sw = Math.min(1, this.speed / SWIM + 0.35);
+      const ph = this.swimT * (6 + this.speed * 1.5);
+      const a = Math.sin(ph), b = Math.cos(ph);
+      m.armL.rotation.x = -1.4 + a * 0.9 * sw; m.armR.rotation.x = -1.4 - a * 0.9 * sw;
+      m.armL.rotation.z = -0.45; m.armR.rotation.z = 0.45;
+      m.legL.rotation.x = b * 0.7 * sw; m.legR.rotation.x = -b * 0.7 * sw;
+      rig.rotation.set(1.0 - sw * 0.1, 0, a * 0.06);
+      rig.position.set(0, 0.58 + Math.sin(t * 2.6) * 0.03, -0.05);
+      rig.scale.set(1, 1, 1);
+      m.head.rotation.x = -0.85; m.head.rotation.z = a * 0.08;
+      this.waddle = a * 0.05;
+    } else if (this.climbing) {
       // перебираем руками и ногами по очереди, тело прижато к стене
       const a = Math.sin(this.climbPhase), b = Math.cos(this.climbPhase);
       m.armL.rotation.x = -2.5 + a * 0.6; m.armR.rotation.x = -2.5 - a * 0.6;
