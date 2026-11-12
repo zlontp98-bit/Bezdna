@@ -143,6 +143,7 @@
   .cell { position: relative; width: 52px; height: 52px; border-radius: 12px; background: rgba(255,255,255,.1);
     border: 2px solid rgba(255,255,255,.18); display: grid; place-items: center; }
   .cell .ic { font-size: 26px; line-height: 1; filter: drop-shadow(0 2px 2px rgba(0,0,0,.35)); }
+  .cell .ic svg, .rc .ic svg { width: 34px; height: 34px; display: block; }
   .cell .n { position: absolute; right: 4px; bottom: 2px; font-size: 12px; font-weight: 800; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
   .cell.active { border-color: var(--accent); background: rgba(255,194,71,.22); }
   .cell.pick { transform: scale(1.1); border-color: #fff; background: rgba(255,255,255,.3); }
@@ -257,7 +258,7 @@
   <div id="bag" class="glass">
     <h3>Инвентарь</h3>
     <div id="bagCells"></div>
-    <div class="tip">Коснись предмета, потом ячейки — чтобы переложить</div>
+    <div class="tip">Инструмент — коснись, и он в руке. Остальное: коснись предмета, потом ячейки — чтобы переложить</div>
   </div>
   <div id="msg" class="glass">Глубже пока не пройти — этот слой ещё не открыт</div>
   <div id="stick"><div id="knob"></div></div>

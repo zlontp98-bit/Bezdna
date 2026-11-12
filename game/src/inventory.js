@@ -2,17 +2,19 @@
 // Предметы складываются стопками. Перенос — коснуться ячейки, потом другой.
 
 export const ITEMS = {
-  axe:    { name: 'Топор',   icon: '🪓', max: 1,  tip: 'Рубит деревья: возьми в руку и подойди к стволу' },
+  axe:    { name: 'Топор',   icon: '🪓', max: 1, tool: true, tip: 'Рубит деревья: возьми в руку и подойди к стволу' },
   log:    { name: 'Бревно',  icon: '🪵', max: 20, tip: 'Древесина. С одного дерева — три бревна' },
   bpPick: { name: 'Чертёж: кирка', icon: '📜', max: 1, tip: 'Свёрток от строителя. Возьми в руку и нажми «Изучить»' },
   bpSpear:{ name: 'Чертёж: копьё', icon: '📜', max: 1, tip: 'Свёрток от строителя. Возьми в руку и нажми «Изучить»' },
-  pickaxe:{ name: 'Кирка',   icon: '⛏️', max: 1,  tip: 'Сделана своими руками. Скоро ею можно будет добывать камень' },
-  spear:  { name: 'Копьё',   icon: '🔱', max: 1,  tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
+  pickaxe:{ name: 'Кирка',   icon: '⛏️', max: 1, tool: true, svg: `<svg viewBox="0 0 48 48"><path d="M13 41 L31 17" stroke="#4a2e1c" stroke-width="7.5" stroke-linecap="round"/><path d="M13 41 L31 17" stroke="#a8703f" stroke-width="4.5" stroke-linecap="round"/><path d="M15 37 L27 21" stroke="#c99566" stroke-width="1.4" stroke-linecap="round"/><path d="M7 21 Q25 3 43 22" stroke="#3f4650" stroke-width="9.5" fill="none" stroke-linecap="round"/><path d="M7 21 Q25 3 43 22" stroke="#b8c3cd" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M12 15 Q25 6 37 14" stroke="#eef3f7" stroke-width="1.8" fill="none" stroke-linecap="round"/><rect x="25.5" y="11.5" width="8" height="7" rx="1.5" transform="rotate(-38 29.5 15)" fill="#5a3824" stroke="#3a2416" stroke-width="1.2"/></svg>`, tip: 'Добывает камень из больших валунов: возьми в руку и подойди' },
+  spear:  { name: 'Копьё',   icon: '🗡️', max: 1, tool: true, svg: `<svg viewBox="0 0 48 48"><g transform="rotate(45 24 24)"><rect x="21.6" y="17" width="4.8" height="31" rx="2.4" fill="#4a2e1c"/><rect x="22.6" y="17" width="2.8" height="30" rx="1.4" fill="#a8703f"/><path d="M24 0 C30.5 7 30.5 14 24 19.5 C17.5 14 17.5 7 24 0 Z" fill="#b8c3cd" stroke="#3f4650" stroke-width="1.6" stroke-linejoin="round"/><path d="M24 3 L24 17" stroke="#eef3f7" stroke-width="1.3" stroke-linecap="round"/><rect x="20.6" y="17.5" width="6.8" height="5" rx="1.2" fill="#5a3824" stroke="#3a2416" stroke-width="1"/><path d="M27 21 q5 2 4 7 M27 21 q2 4 -1 8" stroke="#e5483a" stroke-width="1.6" fill="none" stroke-linecap="round"/></g></svg>`, tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
   stone:  { name: 'Камень',  icon: '🪨', max: 20, tip: 'Материал для построек' },
   shroom: { name: 'Гриб',    icon: '🍄', max: 20, tip: 'Светится. Растёт на кольце' },
   crystal:{ name: 'Кристалл',icon: '💎', max: 10, tip: 'Редкая находка из глубины' },
 };
 export const HOT = 3, BAG = 12;
+// значок предмета: нарисованный (svg), если есть, иначе эмодзи
+export function iconHtml(id) { const it = ITEMS[id]; return it.svg || it.icon; }
 
 export class Inventory {
   constructor(store) {
@@ -66,6 +68,21 @@ export class Inventory {
 
   // Касание ячейки: первое — взять, второе — положить/поменять/сложить
   tap(i) {
+    // рюкзак закрыт: касание слота только выбирает его (раньше оно ещё и «брало» предмет
+    // для переноса, и следующее касание меняло слоты местами вместо выбора)
+    if (!this.open) {
+      if (i < HOT) this.active = i;
+      this.pick = -1;
+      this.changed();
+      return;
+    }
+    // инструмент в рюкзаке — сразу в руку (в выбранный слот)
+    if (this.pick < 0 && i >= HOT && this.slots[i] && ITEMS[this.slots[i].id].tool) {
+      const a = this.active;
+      [this.slots[a], this.slots[i]] = [this.slots[i], this.slots[a]];
+      this.changed();
+      return;
+    }
     if (this.pick < 0) {
       if (i < HOT) this.active = i;
       if (this.slots[i]) this.pick = i;
@@ -105,7 +122,7 @@ export function bindInventoryUI(inv, ui) {
   const render = () => {
     inv.slots.forEach((s, i) => {
       const c = cells[i];
-      c.querySelector('.ic').textContent = s ? ITEMS[s.id].icon : '';
+      c.querySelector('.ic').innerHTML = s ? iconHtml(s.id) : '';
       c.querySelector('.n').textContent = s && s.n > 1 ? s.n : '';
       c.title = s ? ITEMS[s.id].name : '';
       c.classList.toggle('active', i === inv.active);

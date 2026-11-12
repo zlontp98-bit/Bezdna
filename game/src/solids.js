@@ -53,7 +53,9 @@ export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false } = {
     }
   }
   const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  insert({ x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: hang ? y0 : -1e9, soft }, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
+  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: hang ? y0 : -1e9, soft, off: false };
+  insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
+  return s; // off = true — объекта сейчас нет (разбитый валун)
 }
 function fieldAt(s, x, z) {
   const fx = (x - s.x0) / s.cell, fz = (z - s.z0) / s.cell;
@@ -77,7 +79,7 @@ export function groundAt(x, z, y, forCamera = false) {
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return h;
   for (const s of list) {
-    if (forCamera && s.soft) continue;
+    if (s.off || (forCamera && s.soft)) continue;
     const dx = x - s.x, dz = z - s.z;
     let top = s.top;
     if (s.field) {

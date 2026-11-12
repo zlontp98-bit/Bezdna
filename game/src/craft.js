@@ -1,4 +1,4 @@
-import { ITEMS } from './inventory.js';
+import { ITEMS, iconHtml } from './inventory.js';
 import { RULES } from './world.js';
 
 // Крафт. Кнопка на экране с самого начала; пока ни один чертёж не изучен — «Крафты пока не изучены».
@@ -20,7 +20,7 @@ export class Crafting {
       if (ev.type === 'crafted') {
         for (const id in ev.cost) inv.remove(id, ev.cost[id]);
         inv.add(ev.what, 1);
-        toast(`${RULES.recipes[ev.what].icon} ${RULES.recipes[ev.what].name} готова!`);
+        toast(`${RULES.recipes[ev.what].name} — готово! Коснись слота, чтобы взять в руку`);
         if (this.onChange) this.onChange();
       }
     });
@@ -44,7 +44,7 @@ export class Crafting {
     return this.known.map((what) => {
       const r = RULES.recipes[what];
       const need = Object.keys(r.cost).map((id) => `${ITEMS[id].icon} ${this.inv.count(id)}/${r.cost[id]}`).join('  ');
-      return { what, name: r.name, icon: r.icon, need, can: this.canMake(what), have: this.inv.count(what) > 0 };
+      return { what, name: r.name, icon: iconHtml(what), need, can: this.canMake(what), have: this.inv.count(what) > 0 };
     });
   }
 }

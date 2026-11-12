@@ -124,7 +124,7 @@ export class Woodcutter {
 
   update(dt, want) {
     const pl = this.player;
-    const can = pl.holdAxe && pl.grounded && !pl.climbing && !pl.swimming;
+    const can = pl.held === 'axe' && pl.grounded && !pl.climbing && !pl.swimming;
     this.target = can ? this.find() : null;
     this.cd -= dt;
     if (this.pending && (this.pending.at -= dt) <= 0) { this.land(this.pending); this.pending = null; }

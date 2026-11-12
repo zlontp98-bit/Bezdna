@@ -31,13 +31,15 @@ export function idRand(id) {
 // Правила, одинаковые для игры и (потом) сервера
 export const RULES = {
   tree: { logs: 3, regrowMs: (id) => 100000 + idRand(id) * 50000 },
+  // большие валуны: кирка разбивает их на камни, через 3–4 минуты валун на месте
+  boulder: { hits: 5, stones: 4, respawnMs: (id) => 180000 + idRand(id) * 60000 },
   // камушки на лугу: подобрал — через пару минут на том же месте лежит новый
   pebble: { stones: 1, respawnMs: (id) => 120000 + idRand(id) * 60000 },
   // чертежи у строителя (цена в искрах) и рецепты: что нужно, чтобы сделать вещь
   blueprints: { pickaxe: { item: 'bpPick', price: 30 }, spear: { item: 'bpSpear', price: 20 } },
   recipes: {
     pickaxe: { name: 'Кирка', icon: '⛏️', cost: { log: 3, stone: 2 } },
-    spear:   { name: 'Копьё', icon: '🔱', cost: { log: 2, stone: 1 } },
+    spear:   { name: 'Копьё', icon: '🗡️', cost: { log: 2, stone: 1 } },
   },
   // постройки: цена и время стройки
   build: { house: { cost: { log: 40 }, ms: 30000 } },
@@ -56,6 +58,7 @@ class LocalAuthority {
     this.wallets = {}; // игрок → искры
     this.known = {}; // игрок → изученные рецепты
     this.picked = {}; // камушек → когда подобран
+    this.mined = {}; // валун → когда разбит
     this.treasury = { logs: 0 }; // казна лагеря: сколько брёвен внесено к следующему улучшению
     try {
       const d = JSON.parse(store.get('bezdna.world', 'null'));
@@ -64,16 +67,18 @@ class LocalAuthority {
       if (d && d.wallets) this.wallets = d.wallets;
       if (d && d.known) this.known = d.known;
       if (d && d.picked) this.picked = d.picked;
+      if (d && d.mined) this.mined = d.mined;
       if (d && d.treasury) this.treasury = d.treasury;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, known: this.known, picked: this.picked })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, known: this.known, picked: this.picked, mined: this.mined })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
+    for (const id in this.mined) if (now - this.mined[id] > RULES.boulder.respawnMs(id) + 60000) delete this.mined[id];
     for (const id in this.picked) if (now - this.picked[id] > RULES.pebble.respawnMs(id) + 60000) delete this.picked[id];
     this.save();
-    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked } };
+    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined } };
   }
   handle(ev, now, emit) {
     if (ev.type === 'chop') {
@@ -88,6 +93,13 @@ class LocalAuthority {
       this.built[ev.what] = now;
       this.save();
       emit({ type: 'built', what: ev.what, at: now, by: this.me });
+    }
+    if (ev.type === 'mine') {
+      const at = this.mined[ev.id];
+      if (at !== undefined && now - at < RULES.boulder.respawnMs(ev.id)) return; // уже разбит
+      this.mined[ev.id] = now;
+      this.save();
+      emit({ type: 'mined', id: ev.id, at: now, by: this.me, reward: { stone: RULES.boulder.stones } });
     }
     if (ev.type === 'pick') {
       const at = this.picked[ev.id];

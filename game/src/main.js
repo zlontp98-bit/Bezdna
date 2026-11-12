@@ -17,6 +17,7 @@ import { World } from './world.js';
 import { Settlement } from './npc.js';
 import { Pickups } from './pickups.js';
 import { Crafting } from './craft.js';
+import { Miner } from './mine.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -27,7 +28,7 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, craft;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, craft, mine;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -146,6 +147,7 @@ async function build() {
   town = new Settlement(scene, camp, player, inv, world, toast);
   town.craft = craft;
   picks = new Pickups(scene, flora.pebbles, flora.rockGeo, player, inv, world, toast);
+  mine = new Miner(scene, flora.boulders, flora.rockGeo, player, inv, world, toast);
   renderCraft();
   setQuality(Q.mode);
   addEventListener('resize', onResize);
@@ -175,9 +177,9 @@ function updateHud(dt) {
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
-  act = town.near ? 'talk' : town.nearBoard ? 'board' : craft.heldBlueprint() ? 'learn' : picks.target ? 'pick' : wood.target ? 'chop' : '';
+  act = town.near ? 'talk' : town.nearBoard ? 'board' : craft.heldBlueprint() ? 'learn' : picks.target ? 'pick' : wood.target ? 'chop' : mine.target ? 'mine' : '';
   setCls('chop', 'show', !!act);
-  if (act) setText('actIcon', { talk: '💬', board: '📜', learn: '📖', pick: '✋', chop: '🪓' }[act]);
+  if (act) setText('actIcon', { talk: '💬', board: '📜', learn: '📖', pick: '✋', chop: '🪓', mine: '⛏️' }[act]);
   if (talkOpen) { if (talkOpen !== act) closeTalk(); else showTalk(talkOpen); }
   setText('coinN', String(town.wallet));
   const d = Math.round(-y);
@@ -338,10 +340,11 @@ function frame(now) {
   adaptQuality(dtMs);
 
   const inp = input.poll();
-  player.holdAxe = !!inv.held && inv.held.id === 'axe';
+  player.held = inv.held ? inv.held.id : null;
   if (!falling) {
     player.update(dt, inp, yaw);
     wood.update(dt, act === 'chop' && inp.chop);
+    mine.update(dt, act === 'mine' && inp.chop);
     picks.update(act === 'pick' && inp.chop && !actHeld);
     town.update(dt);
     // нажатие (не удержание) кнопки действия рядом с жителем или доской
@@ -476,7 +479,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     showSave();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, wood, world, town, picks, craft, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, wood, world, town, picks, craft, mine, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

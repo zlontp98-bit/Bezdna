@@ -216,7 +216,7 @@ export function buildFlora(scene) {
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
 
-  const trees = [];
+  const trees = [], boulders = [];
   const lists = { leaf: [], pine: [], shroom: [], rock: [], crystal: [], small: [], bush: [] };
   const spawn = { x: W.R + 10, z: 8 };
   const taken = [];
@@ -378,6 +378,7 @@ export function buildFlora(scene) {
     const g = 0.5 + rnd() * 0.16;
     if (y < -30) col.setRGB(g * 0.7, g * 0.74, g * 0.9); else col.setRGB(g * 1.0, g * 0.92, g * 0.82);
     add(lists.rock, x, y, z, s, col.getHex(), rnd() * TAU, rnd() * 0.5);
+    if (big) lists.rock[lists.rock.length - 1].mine = true;
     if (s > 0.8) { taken.push({ x, z, r: s }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
     return true;
   });
@@ -438,7 +439,11 @@ export function buildFlora(scene) {
         dummy.position.y += t.top - hi;
         dummy.updateMatrix();
       }
-      if (key === 'rock') rockSolid(geos.rock, dummy.matrix, t);
+      if (key === 'rock') {
+        const solid = rockSolid(geos.rock, dummy.matrix, t);
+        // крупные валуны луга и уступов можно разбить киркой (камни паркура и берега — нет)
+        if (t.mine && solid) boulders.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone(), solid });
+      }
       im.setMatrixAt(i, dummy.matrix);
       im.setColorAt(i, col.setHex(t.color));
     });
@@ -450,19 +455,19 @@ export function buildFlora(scene) {
     im.matrixAutoUpdate = false;
     scene.add(im);
   }
-  return { colliders, blobs, spawn, trees, pebbles, rockGeo: geos.rock };
+  return { colliders, blobs, spawn, trees, pebbles, boulders, rockGeo: geos.rock };
 }
 
 // Валун становится твёрдым: верх его настоящей модели запекается в карту высот
 const _v = new THREE.Vector3();
 function rockSolid(geo, m, t) {
-  if (t.s < 0.3) return;
+  if (t.s < 0.3) return null;
   const P = geo.attributes.position, tris = new Float32Array(P.count * 3);
   for (let i = 0; i < P.count; i++) {
     _v.fromBufferAttribute(P, i).applyMatrix4(m);
     tris[i * 3] = _v.x; tris[i * 3 + 1] = _v.y; tris[i * 3 + 2] = _v.z;
   }
-  addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, hang: !!t.hang });
+  return addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, hang: !!t.hang });
 }
 
 // ---------- трава и цветы: «ковёр», который ездит за игроком ----------
