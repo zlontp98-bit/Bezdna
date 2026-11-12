@@ -178,12 +178,8 @@ function updateHud(dt) {
   if (y > 14 && Math.hypot(player.pos.x - W.CRAG.x, player.pos.z - W.CRAG.z) > 14) z = 'Склоны гор';
   if (Math.hypot(player.pos.x, player.pos.z) < 47 && y > -45 && player.grounded) z = Math.hypot(player.pos.x, player.pos.z) < 16 ? 'Остров в центре бездны' : 'Островки над бездной';
   if (SOURCES.some((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < 30 && y > s.base - 4)) z = 'Исток ручья';
-  if (z !== zoneName) {
-    zoneName = z; zoneT = 3.2;
-    setText('zone', z); setText('zoneBig', z);
-    setCls('zoneBig', 'show', true);
-  }
-  if (zoneT > 0 && (zoneT -= dt) <= 0) setCls('zoneBig', 'show', false);
+  // названия зон на экране пока не показываем; zone считается дальше для будущих заданий
+  zoneName = z;
 }
 
 // разговор с жителем: текст и кнопка зависят от того, что сейчас с домом
