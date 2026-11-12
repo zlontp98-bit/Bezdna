@@ -131,11 +131,16 @@
   #talk.show { display: block; }
   #talkName { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .8; font-weight: 800; margin-bottom: 6px; color: var(--accent); }
   #talkText { font-size: 15px; line-height: 1.35; margin-bottom: 12px; }
-  #talk .seg { margin: 0; }
-  #talk .seg button { padding: 11px 6px; }
-  #talkYes { background: var(--accent) !important; color: #3a2500; }
-  #talkYes:disabled { filter: grayscale(.8); opacity: .6; }
-  #talkYes[hidden] { display: none; }
+  #talkActs { display: flex; flex-direction: column; gap: 6px; }
+  #talkActs button { padding: 11px 8px; border-radius: 10px; font-size: 14px; font-weight: 800; background: var(--accent); color: #3a2500; }
+  #talkActs button:disabled { filter: grayscale(.8); opacity: .55; }
+  #talkNo { padding: 10px 6px; }
+  #talkProg { height: 10px; border-radius: 6px; background: rgba(255,255,255,.15); overflow: hidden; margin: -4px 0 12px; }
+  #talkProg[hidden] { display: none; }
+  #talkProg div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd978, #ffb02e); }
+  /* кошелёк: искры — местная валюта */
+  #coins { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
+    padding: 6px 12px; border-radius: 12px; font-size: 16px; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
   #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
 
   /* сенсорное управление */
@@ -172,6 +177,7 @@
     <div id="gauge"><div id="bar"></div></div>
     <div><div id="depth">0 м</div><div id="zone">Луг у края</div></div>
   </div>
+  <div id="coins" class="glass">✨ <span id="coinN">0</span></div>
   <button id="gear" class="glass" aria-label="Меню">☰</button>
   <div id="fps"></div>
   <div id="panel" class="glass">
@@ -190,7 +196,9 @@
   <div id="talk" class="glass">
     <div id="talkName"></div>
     <div id="talkText"></div>
-    <div class="seg"><button id="talkYes"></button><button id="talkNo">Закрыть</button></div>
+    <div id="talkProg" hidden><div id="talkProgFill"></div></div>
+    <div id="talkActs"></div>
+    <button id="talkNo" class="row">Закрыть</button>
   </div>
   <div id="bag" class="glass">
     <h3>Инвентарь</h3>

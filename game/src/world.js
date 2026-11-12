@@ -33,6 +33,10 @@ export const RULES = {
   tree: { logs: 3, regrowMs: (id) => 100000 + idRand(id) * 50000 },
   // постройки: цена и время стройки
   build: { house: { cost: { log: 40 }, ms: 30000 } },
+  // местная валюта — искры ✨. Строитель покупает брёвна; казна лагеря платит за них больше,
+  // но принимает только до цели следующего улучшения
+  trade: { logPrice: 1 },
+  treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Мастерская' },
 };
 
 // Пока сервера нет: решает сама игра и хранит состояние в памяти телефона
@@ -41,18 +45,22 @@ class LocalAuthority {
     this.store = store; this.me = me;
     this.cut = {}; // id дерева → когда срублено (мс, общие часы)
     this.built = {}; // постройка → когда начали строить
+    this.wallets = {}; // игрок → искры
+    this.treasury = { logs: 0 }; // казна лагеря: сколько брёвен внесено к следующему улучшению
     try {
       const d = JSON.parse(store.get('bezdna.world', 'null'));
       if (d && d.cut) this.cut = d.cut;
       if (d && d.built) this.built = d.built;
+      if (d && d.wallets) this.wallets = d.wallets;
+      if (d && d.treasury) this.treasury = d.treasury;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
     this.save();
-    return { cut: { ...this.cut }, built: { ...this.built } };
+    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury } };
   }
   handle(ev, now, emit) {
     if (ev.type === 'chop') {
@@ -67,6 +75,21 @@ class LocalAuthority {
       this.built[ev.what] = now;
       this.save();
       emit({ type: 'built', what: ev.what, at: now, by: this.me });
+    }
+    // Продажа и казна. Брёвна игра снимает, только получив ответ, и ровно столько, сколько принято.
+    const pay = (coins) => (this.wallets[this.me] = (this.wallets[this.me] || 0) + coins);
+    if (ev.type === 'sell' && ev.n > 0) {
+      const coins = ev.n * RULES.trade.logPrice;
+      pay(coins); this.save();
+      emit({ type: 'paid', by: this.me, n: ev.n, coins, wallet: this.wallets[this.me] });
+    }
+    if (ev.type === 'deposit' && ev.n > 0) {
+      const T = RULES.treasury, n = Math.min(ev.n, T.goal - this.treasury.logs);
+      if (n <= 0) return;
+      this.treasury.logs += n;
+      const done = this.treasury.logs >= T.goal, coins = n * T.perLog + (done ? T.bonus : 0);
+      pay(coins); this.save();
+      emit({ type: 'deposited', by: this.me, n, coins, wallet: this.wallets[this.me], treasury: { ...this.treasury }, done });
     }
   }
 }

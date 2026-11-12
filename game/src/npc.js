@@ -45,7 +45,18 @@ export class Settlement {
     // ---- состояние из мира ----
     const snap = world.snapshot();
     if (snap.built && snap.built.house !== undefined) this.begin(snap.built.house);
-    world.on((ev) => { if (ev.type === 'built' && ev.what === 'house') this.begin(ev.at); });
+    this.wallet = snap.wallet || 0;
+    this.treasury = snap.treasury || { logs: 0 };
+    world.on((ev) => {
+      if (ev.type === 'built' && ev.what === 'house') this.begin(ev.at);
+      // ответы на продажу и взнос: брёвна снимаем ровно столько, сколько принято
+      if (ev.type === 'deposited') this.treasury = ev.treasury;
+      if ((ev.type === 'paid' || ev.type === 'deposited') && ev.by === world.me) {
+        this.inv.remove('log', ev.n);
+        this.wallet = ev.wallet;
+        this.toast(ev.done ? `🎉 Казна собрана! +${ev.coins} ✨` : `−${ev.n} 🪵  +${ev.coins} ✨`);
+      }
+    });
   }
 
   buildHouse(scene) {
@@ -156,14 +167,29 @@ export class Settlement {
   }
   left() { return Math.max(0, Math.ceil((RULES.build.house.ms - (this.world.now() - this.at)) / 1000)); }
 
-  // что говорит строитель и что предлагает
+  // что говорит строитель и что предлагает: { name, text, acts: [{ label, can, run }] }
   dialog() {
-    const cost = RULES.build.house.cost.log, have = this.inv.count('log');
-    const name = 'Борода, строитель';
-    if (this.state === 'none') return { name, text: `Привет! Палатка — это не дом. Принеси ${cost} брёвен, и я за полминуты поставлю настоящий — с дверью и доской заданий.`,
-      yes: `Отдать ${cost} 🪵 (есть ${have})`, can: have >= cost };
-    if (this.state === 'building') return { name, text: `Строю, не отвлекай! Осталось ${this.left()} с.`, yes: null };
-    return { name, text: 'Дом готов, заходи. Внутри висит доска заданий — скоро на ней появится работа.', yes: null };
+    const cost = RULES.build.house.cost.log, have = this.inv.count('log'), price = RULES.trade.logPrice;
+    const name = 'Борода, строитель', acts = [];
+    let text;
+    if (this.state === 'none') {
+      text = `Привет! Палатка — это не дом. Принеси ${cost} брёвен, и я за полминуты поставлю настоящий — с дверью и доской заданий. Лишние брёвна тоже куплю.`;
+      acts.push({ label: `Построить дом: ${cost} 🪵 (есть ${have})`, can: have >= cost, run: () => this.accept() });
+    } else if (this.state === 'building') text = `Строю, не отвлекай! Осталось ${this.left()} с. Брёвна куплю, если есть.`;
+    else text = `Дом готов. Брёвна покупаю по ${price} ✨. А в казну лагеря на доске заданий за них дают больше.`;
+    acts.push({ label: have ? `Продать ${have} 🪵 за ${have * price} ✨` : 'Продать брёвна — нет брёвен', can: have > 0, run: () => this.world.send({ type: 'sell', n: have }) });
+    return { name, text, acts };
+  }
+  // доска заданий: пока одно задание — казна лагеря
+  boardDialog() {
+    const T = RULES.treasury, got = this.treasury.logs, have = this.inv.count('log'), k = Math.min(have, T.goal - got);
+    if (got >= T.goal) return { name: 'Доска заданий', text: `Казна собрана: ${T.goal}/${T.goal} 🪵. «${T.next}» скоро начнут строить — следи за доской.`, prog: 1, acts: [] };
+    return {
+      name: 'Доска заданий',
+      text: `Казна лагеря. Следующее улучшение — «${T.next}». Внесено ${got}/${T.goal} 🪵. За бревно — ${T.perLog} ✨, за последнее — ещё ${T.bonus} ✨.`,
+      prog: got / T.goal,
+      acts: [{ label: k ? `Внести ${k} 🪵 → ${k * T.perLog} ✨` : 'Внести брёвна — нет брёвен', can: k > 0, run: () => this.world.send({ type: 'deposit', n: k }) }],
+    };
   }
   // игрок согласился: платим брёвнами и просим мир начать стройку
   accept() {

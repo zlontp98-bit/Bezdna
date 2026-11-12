@@ -169,7 +169,8 @@ function updateHud(dt) {
   act = town.near ? 'talk' : town.nearBoard ? 'board' : wood.target ? 'chop' : '';
   setCls('chop', 'show', !!act);
   if (act) setText('actIcon', act === 'talk' ? '💬' : act === 'board' ? '📜' : '🪓');
-  if (talkOpen) { if (!town.near) closeTalk(); else showTalk(); }
+  if (talkOpen) { if (talkOpen !== act) closeTalk(); else showTalk(talkOpen); }
+  setText('coinN', String(town.wallet));
   const d = Math.round(-y);
   setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
@@ -186,19 +187,33 @@ function updateHud(dt) {
 }
 
 // разговор с жителем: текст и кнопка зависят от того, что сейчас с домом
-let act = '', actHeld = false, talkOpen = false;
-function showTalk() {
-  const d = town.dialog();
-  talkOpen = true;
+let act = '', actHeld = false, talkOpen = '', talkSig = '';
+// talkOpen: '' | 'talk' (строитель) | 'board' (доска заданий)
+function showTalk(src) {
+  const d = src === 'board' ? town.boardDialog() : town.dialog();
+  talkOpen = src;
   setCls('talk', 'show', true);
   setText('talkName', d.name); setText('talkText', d.text);
-  const yes = $('talkYes');
-  if (yes.hidden !== !d.yes) yes.hidden = !d.yes;
-  if (d.yes) { setText('talkYes', d.yes); if (yes.disabled !== !d.can) yes.disabled = !d.can; }
+  const pr = $('talkProg');
+  if (pr.hidden !== (d.prog === undefined)) pr.hidden = d.prog === undefined;
+  if (d.prog !== undefined) setCss('talkProgFill', 'width', Math.round(d.prog * 100) + '%');
+  // кнопки пересобираем, только когда они поменялись (окно обновляется каждый кадр)
+  const sig = '#' + d.acts.map((a) => a.label + a.can).join('|');
+  if (sig !== talkSig) {
+    talkSig = sig;
+    const box = $('talkActs');
+    box.textContent = '';
+    for (const a of d.acts) {
+      const b = document.createElement('button');
+      b.textContent = a.label; b.disabled = !a.can;
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', () => { a.run(); talkSig = ''; showTalk(talkOpen); });
+      box.appendChild(b);
+    }
+  }
 }
-function closeTalk() { talkOpen = false; setCls('talk', 'show', false); }
-for (const id of ['talkYes', 'talkNo']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
-$('talkYes').addEventListener('click', () => { town.accept(); showTalk(); });
+function closeTalk() { talkOpen = ''; talkSig = ''; setCls('talk', 'show', false); }
+$('talkNo').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('talkNo').addEventListener('click', closeTalk);
 
 // короткая подпись над слотами: «+3 бревна» и т.п.
@@ -304,8 +319,7 @@ function frame(now) {
     town.update(dt);
     // нажатие (не удержание) кнопки действия рядом с жителем или доской
     if (inp.chop && !actHeld) {
-      if (act === 'talk') { if (talkOpen) closeTalk(); else showTalk(); }
-      else if (act === 'board') toast('📜 Заданий пока нет — скоро появятся');
+      if (act === 'talk' || act === 'board') { if (talkOpen) closeTalk(); else showTalk(act); }
     }
     actHeld = inp.chop;
   }
