@@ -4,8 +4,9 @@ setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
-import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools } from './atmosphere.js';
+import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
+import { buildStacks } from './stacks.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
@@ -62,12 +63,13 @@ function adaptQuality(dtMs) {
 function build() {
   const t0 = performance.now();
   renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance', stencil: false });
-  renderer.setClearColor(0xcfe2ee);
+  renderer.setClearColor(0x8c96aa);
   scene = new THREE.Scene();
   scene.matrixWorldAutoUpdate = true;
   camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.25, 1400);
 
   buildTerrain(scene);
+  buildStacks(scene);
   const flora = buildFlora(scene);
   const camp = buildCamp(scene, flora.spawn);
   const ruins = buildRuins(scene);
@@ -77,6 +79,7 @@ function build() {
   buildStreams(scene);
   spray = buildPools(scene);
   buildMist(scene);
+  buildShafts(scene);
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
   motes = buildMotes(scene, 220);
 
@@ -113,7 +116,7 @@ function onResize() {
   applyRes();
 }
 
-const ZONES = [[-3, 'Луг у края'], [-1e9, 'Первое кольцо']];
+const ZONES = [[-3, 'Луг у края'], [-16, 'Первое кольцо'], [-40, 'Карниз над бездной'], [-1e9, 'Нижний уступ']];
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
@@ -121,7 +124,7 @@ function updateHud(dt) {
   $('grab').classList.toggle('ready', player.canGrab);
   const d = Math.max(0, Math.round(-y));
   $('depth').textContent = d > 0 ? `−${d} м` : '0 м';
-  $('bar').style.height = Math.min(100, (-y / 13) * 100) + '%';
+  $('bar').style.height = Math.min(100, (-y / 50) * 100) + '%';
   const z = ZONES.find((q) => y > q[0])[1];
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
@@ -193,7 +196,7 @@ function frame(now) {
   const inp = input.poll();
   if (!falling) player.update(dt, inp, yaw);
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
-  if (player.pos.y < -44 && !falling) { falling = true; $('msg').classList.add('show'); }
+  if (player.pos.y < -80 && !falling) { falling = true; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }

@@ -63,8 +63,8 @@ export function buildClouds(scene) {
       void main(){
         vec3 n = normalize(vN);
         float l = smoothstep(-0.5, 0.7, dot(n, uSun));
-        vec3 c = min(uAmbHi*1.5 + uSunCol*l*0.75, vec3(1.0));
-        c = mix(c, uFogCol, 0.25);
+        vec3 c = mix(vec3(0.70,0.73,0.80), vec3(1.0,0.88,0.74), l);
+        c = mix(c, uFogCol, 0.45);
         gl_FragColor = vec4(grade(c), 1.0);
       }`,
   });
@@ -88,8 +88,8 @@ export function buildClouds(scene) {
 // ---------- слои тумана в провале ----------
 export function buildMist(scene) {
   const layers = [
-    // море тумана под первым кольцом
-    { y: -23, r: 110, a: 0.3 }, { y: -29, r: 110, a: 0.6 }, { y: -36, r: 110, a: 1.0 },
+    // дымка над нижним уступом и море тумана в шахте
+    { y: -40, r: 74, a: 0.22 }, { y: -58, r: 62, a: 0.45 }, { y: -68, r: 62, a: 0.75 }, { y: -82, r: 62, a: 1.0 },
   ];
   const geo = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
   for (const L of layers) {
@@ -113,9 +113,10 @@ export function buildMist(scene) {
           float a = uA * smoothstep(1.0, 0.8, r) * (0.55 + 0.6*n);
           // растворяемся, когда камера проходит сквозь слой
           a *= smoothstep(1.5, 9.0, abs(cameraPosition.y - vW.y));
-          vec3 c = uAbyssA * 1.1;
+          vec3 c = uAbyssA * 1.15;
           // свечение из глубины
-          c += vec3(0.16,0.22,0.24) * smoothstep(0.45, 0.0, r) * step(0.99, uA);
+          c = mix(c, uAbyssB*1.6, smoothstep(-45.0, -85.0, vW.y));
+          c += vec3(0.10,0.18,0.22) * smoothstep(0.5, 0.0, r) * step(0.99, uA);
           gl_FragColor = vec4(grade(c), clamp(a, 0.0, 1.0));
         }`,
     });
@@ -207,7 +208,7 @@ export function buildStreams(scene) {
     const pos = [], uvs = [], idx = [];
     let len = 0, prev = null, i = 0;
     const half = 1.9;
-    for (let r = 229; r > W.HOLE - 6; r -= 0.5, i++) {
+    for (let r = 229; r > W.PIT - 6; r -= 0.5, i++) {
       const row = [];
       for (const side of [-1, 1]) {
         const x = cx * r + tx * half * side, z = cz * r + tz * half * side;
@@ -308,4 +309,55 @@ export function buildPools(scene) {
     scene.add(pts);
   }
   return spray;
+}
+
+// ---------- лучи света, падающие в провал ----------
+// Каждый луч — полоска, которая всегда развёрнута к камере вокруг оси луча.
+export function buildShafts(scene) {
+  const rnd = mulberry32(SEED + 77);
+  const N = 7;
+  const pos = [], A = [], B = [], idx = [];
+  for (let i = 0; i < N; i++) {
+    const a = rnd() * TAU, r = 8 + rnd() * 40;
+    const cx = Math.cos(a) * r, cz = Math.sin(a) * r, cy = -20 - rnd() * 25;
+    const w = 3 + rnd() * 7, h = 60 + rnd() * 40, ph = rnd() * 10;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      pos.push(sx, sy, 0); A.push(cx, cy, cz, ph); B.push(w, h);
+    }
+    const o = i * 4;
+    idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aA', new THREE.Float32BufferAttribute(A, 4));
+  g.setAttribute('aB', new THREE.Float32BufferAttribute(B, 2));
+  g.setIndex(idx);
+  const m = mat({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    vertexShader: /* glsl */ `
+      attribute vec4 aA; attribute vec2 aB;
+      varying vec2 vUv; varying float vPh; varying vec3 vW;
+      void main(){
+        vec3 axis = normalize(uSun);
+        vec3 toCam = cameraPosition - aA.xyz;
+        vec3 right = normalize(cross(axis, toCam));
+        vec3 p = aA.xyz + right * position.x * aB.x + axis * position.y * aB.y * 0.5;
+        vUv = position.xy; vPh = aA.w; vW = p;
+        gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      varying vec2 vUv; varying float vPh; varying vec3 vW;
+      void main(){
+        float edge = smoothstep(1.0, 0.15, abs(vUv.x));
+        float len = smoothstep(-1.0, -0.2, vUv.y) * smoothstep(1.0, 0.3, vUv.y);
+        float flick = 0.65 + 0.35*sin(uTime*0.35 + vPh) * vnoise(vec2(vUv.x*2.0 + vPh, uTime*0.1));
+        float near = smoothstep(4.0, 30.0, distance(vW, cameraPosition));
+        float a = edge * len * flick * near * 0.085;
+        gl_FragColor = vec4(grade(uSunCol*1.1 + vec3(0.05,0.06,0.08)) * a, 1.0);
+      }`,
+  });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 8;
+  scene.add(mesh);
 }

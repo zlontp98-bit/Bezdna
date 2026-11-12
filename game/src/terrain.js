@@ -11,7 +11,10 @@ export const W = {
   PITCH: 10,    // шаг уступов по радиусу
   DROP: 13,     // высота одной стены
   ARMS: 3,      // сколько спиральных пандусов
-  HOLE: 70,     // радиус обрыва в туман (всё, что ниже первого кольца, — потом)
+  HOLE: 70,     // край первого кольца: отсюда гигантская стена вниз
+  LOW: 48,      // глубина нижнего уступа под стеной
+  PIT: 50,      // радиус шахты, уходящей в бездну
+  SHELF: [4.55, 1.68], // карниз-спуск по стене: начальный угол и длина дуги (рад)
   MEADOW: 205,  // где луг переходит в горы
   OUTER: 340,   // край мира
   EXT: 232,     // половина стороны квадрата, покрытого текстурами высот/теней
@@ -52,10 +55,20 @@ function streamWide(x, z) {
 export const POOLS = [];
 const warpR = (x, z) => Math.hypot(x, z) + fbm(x * 0.028 + 9, z * 0.028 - 4, 2) * 4.0;
 
+// старая дорога: от лугов к краю, где стоит подъёмник
+export const ROAD = [Math.cos(5.80) * 118, Math.sin(5.80) * 118, Math.cos(5.93) * 96.5, Math.sin(5.93) * 96.5];
+function segDist(x, z, ax, az, bx, bz) {
+  const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
+  return Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t));
+}
+
 // 0..1 — тропинка: от лагеря к пандусу, по пандусам вниз и вокруг по кольцу
 export function pathAt(x, z) {
   const r = Math.hypot(x, z);
-  if (r < 66 || r > 116) return 0;
+  if (r < 66 || r > 124) return 0;
+  // кусок старой мощёной дороги к подъёмнику на краю
+  const road = segDist(x, z, ROAD[0], ROAD[1], ROAD[2], ROAD[3]);
+  if (r > 116) return smoothstep(2.3, 1.6, road) * (1 - streamAt(x, z));
   const wr = warpR(x, z);
   let th = Math.atan2(z, x);
   if (th < 0) th += TAU;
@@ -69,7 +82,20 @@ export function pathAt(x, z) {
   const t = clamp(((x - ax) * (bx - ax) + (z - az) * (bz - az)) / ((bx - ax) ** 2 + (bz - az) ** 2), 0, 1);
   const d = Math.hypot(x - (ax + (bx - ax) * t), z - (az + (bz - az) * t));
   m = Math.max(m, smoothstep(1.7, 0.9, d + wob * 10));
+  m = Math.max(m, smoothstep(2.3, 1.6, road + wob * 6));
   return m * (1 - streamAt(x, z));
+}
+
+// контрфорсы: край стены гуляет по углу, получаются колонны и ниши
+const edgeR = (x, z) => W.HOLE + 0.6 + fbm(x * 0.11 + 7, z * 0.11 - 3, 3) * 3.2;
+const pitR = (x, z) => W.PIT + fbm(x * 0.09 - 11, z * 0.09 + 5, 3) * 4.0;
+// высота карниза на угле th (или null — карниза нет)
+export function shelfAt(th) {
+  let t = th - W.SHELF[0];
+  if (t < -0.04) t += TAU;
+  t /= W.SHELF[1];
+  if (t < -0.03 || t > 1.15) return null;
+  return -W.DROP - (W.LOW - W.DROP) * clamp(t, 0, 1);
 }
 
 // Аналитическая высота — источник правды, из неё строится сетка
@@ -82,8 +108,13 @@ function rawHeight(x, z) {
   let m = 1.2 + fbm(x * 0.011, z * 0.011, 3) * 5.5;
   // горы кольцом вокруг долины
   const mt = smoothstep(W.MEADOW - 30, W.OUTER - 30, r);
-  const ridge = 1 - Math.abs(fbm(x * 0.009 + 40, z * 0.009, 4));
-  m += mt * mt * (22 + ridge * ridge * 88) + smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
+  if (mt > 0) {
+    // острые хребты и отдельные пики
+    const ridge = 1 - Math.abs(fbm(x * 0.009 + 40, z * 0.009, 4));
+    const crag = 1 - Math.abs(fbm(x * 0.03 - 7, z * 0.03 + 2, 3));
+    m += mt * mt * (16 + ridge * ridge * ridge * 105 + crag * crag * 22 * mt);
+  }
+  m += smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
 
   // спираль уступов
   const wr = warpR(x, z);
@@ -103,10 +134,25 @@ function rawHeight(x, z) {
   const hh = clamp(0.5 + (0.5 * (m - sp)) / kk, 0, 1);
   let h = m + (sp - m) * hh - kk * hh * (1 - hh);
 
+  // гигантская стена от первого кольца вниз до нижнего уступа
+  if (r < W.HOLE + 8) {
+    const er = edgeR(x, z);
+    const wall = smoothstep(er + 0.7, er - 0.7, r);
+    if (wall > 0) {
+      let low = -W.LOW + fbm(x * 0.06, z * 0.06, 2) * 1.6 + fbm(x * 0.3, z * 0.3, 1) * 0.25;
+      // карниз: узкая полка вдоль стены, спускается по дуге
+      const hs = shelfAt(th);
+      if (hs !== null) {
+        const band = smoothstep(er - 5.0, er - 4.3, r);
+        low += (Math.max(low, hs + fbm(x * 0.4, z * 0.4, 1) * 0.15) - low) * band;
+      }
+      // шахта в бездну
+      low -= smoothstep(pitR(x, z) + 1.0, pitR(x, z) - 1.5, r) * 140;
+      h += (low - h) * wall;
+    }
+  }
   h -= st * 0.6;
   for (const p of POOLS) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
-  // центральный колодец
-  h -= smoothstep(W.HOLE + 2.5, W.HOLE - 2.5, wr) * 170;
   return h;
 }
 
@@ -115,7 +161,7 @@ const COLS = 256;
 const radii = [];
 {
   let r = 1;
-  while (r < W.HOLE - 4) { radii.push(r); r += 3; }
+  while (r < W.PIT - 7) { radii.push(r); r += 3; }
   while (r < W.R + 8) { radii.push(r); r += 1.0; }
   while (r < W.MEADOW) { radii.push(r); r += 3; }
   while (r < W.OUTER) { radii.push(r); r += 7; }
@@ -245,7 +291,7 @@ function bakeHeightTexture() {
       const h = heightAt(x, z);
       const r = Math.hypot(x, z);
       let m = 0;
-      if (r > W.HOLE + 2 && r < 236) {
+      if (r > W.PIT + 2 && r < 236) {
         normalAt(x, z, n, 0.6);
         m = smoothstep(0.84, 0.94, n.y) * (1 - streamAt(x, z)) * smoothstep(236, 222, r);
       }
@@ -275,38 +321,64 @@ const terrainMat = () => mat({
     varying vec3 vW; varying vec3 vN;
     void main(){
       vec3 n = normalize(vN);
-      float d = -vW.y;
-      // слоистая порода: полосы идут по высоте и слегка «гуляют»
+      float camD = distance(vW, cameraPosition);
+      float lf = smoothstep(190.0, 50.0, camD);
+      float wall = 1.0 - smoothstep(0.5, 0.82, n.y);
+      // координата вдоль стены — по ней идут колонны и трещины
+      vec2 tg = normalize(vec2(-n.z, n.x) + 1e-4);
+      float u = dot(vW.xz, tg);
       float wob = vnoise(vW.xz*0.045)*5.0 + vnoise(vW.xz*0.21)*0.9;
       float y = vW.y + wob;
-      // вдали полосы гасим, чтобы не рябило
-      float lf = smoothstep(300.0, 70.0, distance(vW, cameraPosition));
-      float band = mix(0.5, smoothstep(0.35, 0.65, fract(y*0.21)), 0.25 + 0.75*lf);
-      float thin = smoothstep(0.86, 0.93, fract(y*0.55)) * lf * (1.0 - smoothstep(8.0, 26.0, vW.y));
-      vec3 rock = mix(vec3(0.66,0.55,0.44), vec3(0.50,0.41,0.36), band);
-      rock = mix(rock, vec3(0.80,0.71,0.58), thin*0.55);
-      vec3 rockDeep = mix(vec3(0.42,0.44,0.60), vec3(0.30,0.31,0.50), band);
-      rockDeep = mix(rockDeep, vec3(0.56,0.66,0.84), thin*0.5);
-      rock = mix(rock, rockDeep, smoothstep(22.0, 80.0, d));
-      // горы: серый камень и снежные шапки
-      vec3 mtn = mix(vec3(0.60,0.57,0.56), vec3(0.52,0.50,0.53), band);
-      rock = mix(rock, mtn, smoothstep(18.0, 50.0, vW.y));
-      float snow = smoothstep(62.0, 80.0, vW.y + wob*2.0) * smoothstep(0.45, 0.75, n.y);
+
+      // колонны: грани стены повёрнуты чуть по-разному, свет ложится плоскостями
+      float col = vnoise(vec2(u*0.16, vW.y*0.018));
+      float col2 = vnoise(vec2(u*0.45 + 7.0, vW.y*0.05));
+      vec3 nn = n;
+      nn.xz += tg * ((col - 0.5)*1.3 + (col2 - 0.5)*0.5) * wall;
+      nn.y += (col2 - 0.5) * 0.25 * wall;
+      nn = normalize(nn);
+
+      // трещины: тонкие тёмные линии, вытянутые вниз
+      float cr = vnoise(vec2(u*0.5, vW.y*0.055 + vnoise(vec2(u*0.2, vW.y*0.1))*0.6));
+      float crack = smoothstep(0.05, 0.0, abs(cr - 0.5)) * wall * lf;
+      // слои породы
+      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), 0.35 + 0.65*lf);
+      float ledge = smoothstep(0.88, 0.95, fract(y*0.33)) * lf;
+
+      // палитра камня: тёплая охра наверху, холодный сланец в глубине
+      float tone = vnoise(vec2(u*0.04, vW.y*0.03) + vW.xz*0.01);
+      vec3 rock = mix(vec3(0.52,0.43,0.35), vec3(0.40,0.34,0.30), band);
+      rock = mix(rock, vec3(0.52,0.45,0.36), tone*0.6);
+      vec3 deepR = mix(vec3(0.36,0.38,0.44), vec3(0.26,0.28,0.35), band);
+      deepR = mix(deepR, vec3(0.36,0.40,0.46), tone*0.5);
+      rock = mix(rock, deepR, smoothstep(10.0, 60.0, -vW.y));
+      rock = mix(rock, rock*1.25 + 0.03, ledge*(1.0-crack));
+      rock *= 0.82 + 0.3*col;
+      rock *= 1.0 - crack*0.6;
+      // мох и подтёки зелени на стенах: гуще под уступами и в сырых местах
+      float moss = smoothstep(0.55, 0.8, vnoise(vec2(u*0.12, vW.y*0.09)) + ledge*0.4 - (1.0-wall)*0.2) * wall;
+      vec3 mossC = mix(vec3(0.20,0.30,0.16), vec3(0.14,0.27,0.24), smoothstep(10.0, 45.0, -vW.y));
+      rock = mix(rock, mossC, moss*0.75*lf);
+      // горы: светлее и холоднее, наверху редкий снег
+      vec3 mtn = mix(vec3(0.48,0.46,0.48), vec3(0.36,0.35,0.40), band) * (0.85 + 0.3*col);
+      rock = mix(rock, mtn, smoothstep(20.0, 55.0, vW.y));
+      float snow = smoothstep(95.0, 115.0, vW.y + wob*2.0) * smoothstep(0.5, 0.8, n.y);
 
       vec3 grass = grassCol(vW);
-      // в горах трава редеет и желтеет
-      grass = mix(grass, vec3(0.56,0.62,0.34), smoothstep(14.0, 60.0, vW.y));
-      float gm = smoothstep(0.70, 0.86, n.y + (vnoise(vW.xz*0.9)-0.5)*0.08);
-      gm *= 1.0 - smoothstep(40.0, 70.0, vW.y)*0.9;
+      grass = mix(grass, vec3(0.42,0.46,0.28), smoothstep(14.0, 60.0, vW.y));
+      float gm = smoothstep(0.72, 0.86, n.y + (vnoise(vW.xz*0.9)-0.5)*0.08);
+      gm *= 1.0 - smoothstep(30.0, 60.0, vW.y)*0.95;
       vec3 alb = mix(rock, grass, gm);
-      // утоптанная тропинка
+      // край обрыва: голая земля и камень перед кромкой
       float pth = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5).b;
       pth = smoothstep(0.35, 0.65, pth + (vnoise(vW.xz*1.3)-0.5)*0.3);
-      vec3 dirt = mix(vec3(0.74,0.63,0.46), vec3(0.62,0.52,0.38), vnoise(vW.xz*0.8));
+      vec3 dirt = mix(vec3(0.52,0.43,0.32), vec3(0.42,0.35,0.27), vnoise(vW.xz*0.8));
       alb = mix(alb, dirt, pth * gm);
-      alb = mix(alb, vec3(0.94,0.96,1.0), snow);
+      alb = mix(alb, vec3(0.86,0.88,0.94), snow);
 
-      vec3 c = shade(alb, n, shadowAt(vW.xz));
+      // в щелях и у подножия стен темнее
+      float ao = mix(1.0, 0.8 + 0.2*col2, wall);
+      vec3 c = shade(alb, mix(n, nn, 0.9), shadowAt(vW.xz)) * ao;
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
 });
@@ -338,7 +410,7 @@ export function buildTerrain(scene) {
     p.level = lo - 0.12;
   }
 
-  const material = terrainMat();
+  const material = rockMat = terrainMat();
   const SECT = 8, per = COLS / SECT;
   const n = new THREE.Vector3();
   for (let s = 0; s < SECT; s++) {
@@ -376,3 +448,5 @@ export function buildTerrain(scene) {
 }
 
 export { bakeShadows };
+// материал скал — им же покрыты островки-столпы
+export let rockMat;

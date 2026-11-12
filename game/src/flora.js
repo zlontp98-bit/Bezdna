@@ -2,23 +2,24 @@ import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, heightAt, normalAt, streamAt, pathAt, POOLS } from './terrain.js';
+import { STACKS } from './stacks.js';
 
 const TAU = Math.PI * 2;
 
 // ---------- сборка моделей из простых форм ----------
 // Каждая часть: геометрия + цвет + свечение + «качается ли на ветру».
 // Всё сливается в одну геометрию => один вызов отрисовки на весь вид объектов.
-export function part(geo, color, { glow = 0, sway = 0, m = null, round = null } = {}) {
+export function part(geo, color, { glow = 0, sway = 0, m = null, round = null, stone = 0 } = {}) {
   let g = geo.index ? geo.toNonIndexed() : geo.clone();
   if (m) g.applyMatrix4(m);
   if (!round) g.computeVertexNormals();
   const n = g.attributes.position.count;
-  const col = new Float32Array(n * 3), fx = new Float32Array(n * 2);
+  const col = new Float32Array(n * 3), fx = new Float32Array(n * 3);
   const c = new THREE.Color(color);
   const P = g.attributes.position, N = g.attributes.normal;
   for (let i = 0; i < n; i++) {
     col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-    fx[i * 2] = glow; fx[i * 2 + 1] = sway;
+    fx[i * 3] = glow; fx[i * 3 + 1] = sway; fx[i * 3 + 2] = stone;
     if (round) {
       // «пухлые» нормали от центра — мягкая мультяшная листва
       const x = P.getX(i) - round.x, y = P.getY(i) - round.y, z = P.getZ(i) - round.z;
@@ -27,7 +28,7 @@ export function part(geo, color, { glow = 0, sway = 0, m = null, round = null } 
     }
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setAttribute('aFx', new THREE.BufferAttribute(fx, 2));
+  g.setAttribute('aFx', new THREE.BufferAttribute(fx, 3));
   return g;
 }
 
@@ -35,21 +36,21 @@ export function merge(parts) {
   let n = 0;
   for (const p of parts) n += p.attributes.position.count;
   const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3);
-  const col = new Float32Array(n * 3), fx = new Float32Array(n * 2);
+  const col = new Float32Array(n * 3), fx = new Float32Array(n * 3);
   let o = 0;
   for (const p of parts) {
     const c = p.attributes.position.count;
     pos.set(p.attributes.position.array, o * 3);
     nor.set(p.attributes.normal.array, o * 3);
     col.set(p.attributes.color.array, o * 3);
-    fx.set(p.attributes.aFx.array, o * 2);
+    fx.set(p.attributes.aFx.array, o * 3);
     o += c;
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  g.setAttribute('aFx', new THREE.BufferAttribute(fx, 2));
+  g.setAttribute('aFx', new THREE.BufferAttribute(fx, 3));
   return g;
 }
 
@@ -66,8 +67,8 @@ export function propMaterial() {
   _prop = mat({
     vertexColors: true,
     vertexShader: /* glsl */ `
-      attribute vec2 aFx;
-      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow;
+      attribute vec3 aFx;
+      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL;
       void main(){
         mat4 mm = modelMatrix;
         vec3 tint = vec3(1.0);
@@ -85,16 +86,27 @@ export function propMaterial() {
         vW = wp.xyz;
         vN = normalize(mat3(mm) * normal);
         vC = color * tint;
-        vGlow = aFx.x;
+        vGlow = aFx.x; vStone = aFx.z; vL = position;
         vSh = shadowAt(o.xz + uSun.xz*2.5);
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */ `
-      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow;
+      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL;
       void main(){
         vec3 n = normalize(vN);
         vec3 v = normalize(cameraPosition - vW);
-        vec3 c = shade(vC, n, vSh);
+        vec3 alb = vC;
+        if (vStone > 0.5) {
+          // старый камень: пятна, сколы, тёмные прожилки и мох на верхних гранях
+          vec3 q = vL * 1.7;
+          float t = vnoise(q.xz + q.y*0.7) * 0.6 + vnoise(q.zy*2.3 + q.x) * 0.4;
+          float vein = smoothstep(0.03, 0.0, abs(vnoise(q.xy*2.2 + q.z*1.3) - 0.5));
+          alb *= 0.78 + 0.38*t;
+          alb *= 1.0 - vein*0.2;
+          float moss = smoothstep(0.5, 0.9, n.y) * smoothstep(0.58, 0.78, vnoise(q.xz*0.45 + q.y*0.3));
+          alb = mix(alb, vec3(0.24,0.34,0.17) * (0.8 + 0.4*t), moss*0.8);
+        }
+        vec3 c = shade(alb, n, vSh);
         float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
         c += uSunCol * rim * 0.16 * (0.4 + 0.6*vSh);
         c = mix(c, vC * (1.25 + 0.2*sin(uTime*1.7 + vW.x + vW.z)), vGlow);
@@ -165,7 +177,7 @@ function rockGeo() {
     const k = 1 + fbm(x * 1.3 + 5, z * 1.3 + y * 1.7, 2) * 0.55;
     P.setXYZ(i, x * k, Math.max(-0.25, y * k * 0.72), z * k);
   }
-  return merge([part(g, 0xffffff)]);
+  return merge([part(g, 0xffffff, { stone: 1 })]);
 }
 function crystalGeo() {
   const s = new THREE.OctahedronGeometry(1, 0);
@@ -235,7 +247,7 @@ export function buildFlora(scene) {
     }
   }
   // кусты: много, по лугу и кольцу
-  scatter(230, W.HOLE + 3, W.MEADOW - 10, (x, y, z, ny) => {
+  scatter(230, W.PIT + 3, W.MEADOW - 10, (x, y, z, ny) => {
     if (ny < 0.9 || !free(x, z, 1.2)) return false;
     const deep = y < -9;
     col.setHSL(deep ? 0.44 + rnd() * 0.05 : 0.26 + rnd() * 0.09, 0.5, 0.36 + rnd() * 0.1);
@@ -249,10 +261,10 @@ export function buildFlora(scene) {
     if (fbm(x * 0.02 + 3, z * 0.02, 2) < -0.08 && y > -2) return false;
     if (!free(x, z, 2.6)) return false;
     const s = (y < -2 ? 0.75 : 0.95) + rnd() * 0.6;
-    const hue = 0.24 + rnd() * 0.1, deep = y < -9;
-    col.setHSL(deep ? 0.42 + rnd() * 0.05 : hue, 0.55, 0.36 + rnd() * 0.08);
+    const hue = 0.25 + rnd() * 0.09, deep = y < -9;
+    col.setHSL(deep ? 0.42 + rnd() * 0.05 : hue, 0.45, 0.29 + rnd() * 0.07);
     // осенние деревья для пятен цвета
-    if (!deep && rnd() < 0.09) col.setHSL(0.07 + rnd() * 0.05, 0.75, 0.5);
+    if (!deep && rnd() < 0.09) col.setHSL(0.06 + rnd() * 0.04, 0.6, 0.42);
     add(lists.leaf, x, y - 0.1, z, s, col.getHex());
     taken.push({ x, z, r: 2.2 });
     colliders.push({ x, z, r: 0.42 * s });
@@ -271,7 +283,7 @@ export function buildFlora(scene) {
     return true;
   });
   // гигантские светящиеся грибы на глубоких уступах
-  scatter(12, W.HOLE + 3, W.R - 6, (x, y, z, ny) => {
+  scatter(14, W.PIT + 3, W.R - 6, (x, y, z, ny) => {
     if (ny < 0.93 || y > -11.5 || !free(x, z, 2.8)) return false;
     const s = 0.7 + rnd() * 0.9;
     col.setHSL(y < -66 ? 0.74 + rnd() * 0.08 : 0.47 + rnd() * 0.07, 0.6, 0.55);
@@ -282,27 +294,45 @@ export function buildFlora(scene) {
     return true;
   });
   // камни: везде, особенно у края
-  scatter(250, W.HOLE + 2, W.MEADOW + 40, (x, y, z, ny, r) => {
+  scatter(250, W.PIT + 2, W.MEADOW + 40, (x, y, z, ny, r) => {
     if (ny < 0.8) return false;
     const big = rnd() < 0.22;
     const s = big ? 1.3 + rnd() * 1.5 : 0.35 + rnd() * 0.6;
     if (!free(x, z, s + 0.6)) return false;
     if (r > W.R + 30 && r < W.MEADOW - 30 && rnd() < 0.5) return false;
     const g = 0.5 + rnd() * 0.16;
-    if (y < -30) col.setRGB(g * 0.8, g * 0.84, g * 1.12); else col.setRGB(g * 1.1, g, g * 0.9);
+    if (y < -30) col.setRGB(g * 0.7, g * 0.74, g * 0.9); else col.setRGB(g * 1.0, g * 0.92, g * 0.82);
     add(lists.rock, x, y, z, s, col.getHex(), rnd() * TAU, rnd() * 0.5);
     if (s > 0.8) { taken.push({ x, z, r: s }); colliders.push({ x, z, r: s * 0.85 }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
     return true;
   });
+  // одинокие деревья на островках
+  for (const st of STACKS) {
+    for (let i = 0; i < st.trees; i++) {
+      const a = rnd() * TAU, rr = st.w * (i === 0 ? 0.15 : 0.35 + rnd() * 0.3);
+      const x = st.x + Math.cos(a) * rr, z = st.z + Math.sin(a) * rr, s = 0.9 + rnd() * 0.7;
+      const pine = rnd() < 0.65;
+      col.setHSL(pine ? 0.37 + rnd() * 0.05 : 0.30 + rnd() * 0.06, 0.45, 0.25 + rnd() * 0.06);
+      add(pine ? lists.pine : lists.leaf, x, st.top + 0.2, z, s, col.getHex());
+    }
+  }
+  // одинокие сосны на нижнем уступе
+  scatter(14, W.PIT + 4, W.HOLE - 4, (x, y, z, ny) => {
+    if (ny < 0.9 || y > -40 || !free(x, z, 3)) return false;
+    col.setHSL(0.40 + rnd() * 0.05, 0.4, 0.22 + rnd() * 0.05);
+    add(lists.pine, x, y - 0.1, z, 0.8 + rnd() * 0.7, col.getHex());
+    taken.push({ x, z, r: 2 }); colliders.push({ x, z, r: 0.35 });
+    return true;
+  });
   // кристаллы: глубина
-  scatter(40, W.HOLE + 1, W.R - 4, (x, y, z, ny) => {
+  scatter(40, W.PIT + 1, W.R - 4, (x, y, z, ny) => {
     if (y > -10 || ny < 0.5 || !free(x, z, 1)) return false;
     col.setHSL(y < -70 ? 0.83 + rnd() * 0.06 : 0.5 + rnd() * 0.05, 0.75, 0.66);
     add(lists.crystal, x, y - 0.05, z, 0.6 + rnd() * 1.1, col.getHex(), rnd() * TAU, (rnd() - 0.5) * 0.5);
     return true;
   });
   // мелкие светящиеся грибочки
-  scatter(110, W.HOLE + 1, W.R - 4, (x, y, z, ny) => {
+  scatter(110, W.PIT + 1, W.R - 4, (x, y, z, ny) => {
     if (y > -9 || ny < 0.9) return false;
     col.setHSL(y < -66 ? 0.8 : 0.48 + rnd() * 0.08, 0.7, 0.68);
     add(lists.small, x, y, z, 0.7 + rnd() * 1.4, col.getHex());
