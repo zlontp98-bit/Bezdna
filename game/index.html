@@ -138,6 +138,23 @@
   #talkProg { height: 10px; border-radius: 6px; background: rgba(255,255,255,.15); overflow: hidden; margin: -4px 0 12px; }
   #talkProg[hidden] { display: none; }
   #talkProg div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd978, #ffb02e); }
+  /* крафт: кнопка под счётчиком искр и окно с рецептами */
+  #craftBtn { position: absolute; top: max(130px, calc(env(safe-area-inset-top) + 116px)); left: max(14px, env(safe-area-inset-left));
+    width: 44px; height: 44px; border-radius: 12px; font-size: 22px; }
+  #craftBtn.on { background: var(--accent); }
+  #craft { position: absolute; top: max(130px, calc(env(safe-area-inset-top) + 116px)); left: max(66px, calc(env(safe-area-inset-left) + 52px));
+    width: min(330px, 80vw); padding: 12px; border-radius: 16px; display: none; }
+  #craft.show { display: block; }
+  #craft h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
+  #craftList .none { font-size: 14px; opacity: .8; line-height: 1.35; }
+  .rc { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 12px; background: rgba(255,255,255,.08); margin-bottom: 6px; }
+  .rc .ic { font-size: 26px; }
+  .rc .nm { font-weight: 800; font-size: 14px; }
+  .rc .nd { font-size: 12px; opacity: .85; margin-top: 2px; }
+  .rc .body { flex: 1; }
+  .rc button { padding: 8px 10px; border-radius: 10px; background: var(--accent); color: #3a2500; font-weight: 800; font-size: 13px; }
+  .rc button:disabled { filter: grayscale(.8); opacity: .55; }
+  @media (max-height: 470px) { #craft { top: max(84px, calc(env(safe-area-inset-top) + 70px)); } }
   /* кошелёк: искры — местная валюта */
   #coins { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
     padding: 6px 12px; border-radius: 12px; font-size: 16px; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
@@ -178,6 +195,8 @@
     <div><div id="depth">0 м</div></div>
   </div>
   <div id="coins" class="glass">✨ <span id="coinN">0</span></div>
+  <button id="craftBtn" class="glass" aria-label="Крафт">🛠️</button>
+  <div id="craft" class="glass"><h3>Крафт</h3><div id="craftList"></div></div>
   <button id="gear" class="glass" aria-label="Меню">☰</button>
   <div id="fps"></div>
   <div id="panel" class="glass">
@@ -227,7 +246,7 @@
     <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button>
     <div id="ver" class="hint" hidden></div>
     <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · кнопка с рукой — схватиться за стену и лезть</div>
-    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · F — рубить дерево / поговорить · мышь — обзор · V — вид</div>
+    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · F — действие (рубить, подобрать, поговорить, изучить) · C — крафт · мышь — обзор · V — вид</div>
   </div>
 </div>
 <div id="loading"><div id="loadText">Загрузка мира…</div><div id="loadBar"><div id="loadFill"></div></div><div id="loadPct">0%</div></div>

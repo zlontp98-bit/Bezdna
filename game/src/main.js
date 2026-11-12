@@ -15,6 +15,8 @@ import { groundAt } from './solids.js';
 import { Woodcutter } from './chop.js';
 import { World } from './world.js';
 import { Settlement } from './npc.js';
+import { Pickups } from './pickups.js';
+import { Crafting } from './craft.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -24,7 +26,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, craft;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -137,7 +139,13 @@ async function build() {
   });
   applyLook();
   // житель лагеря и дом, который он строит
+  craft = new Crafting(inv, world, toast);
+  craft.onChange = renderCraft;
+  inv.onCraft = renderCraft;
   town = new Settlement(scene, camp, player, inv, world, toast);
+  town.craft = craft;
+  picks = new Pickups(scene, flora.pebbles, flora.rockGeo, player, inv, world, toast);
+  renderCraft();
   setQuality(Q.mode);
   addEventListener('resize', onResize);
   onResize();
@@ -166,9 +174,9 @@ function updateHud(dt) {
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
-  act = town.near ? 'talk' : town.nearBoard ? 'board' : wood.target ? 'chop' : '';
+  act = town.near ? 'talk' : town.nearBoard ? 'board' : craft.heldBlueprint() ? 'learn' : picks.target ? 'pick' : wood.target ? 'chop' : '';
   setCls('chop', 'show', !!act);
-  if (act) setText('actIcon', act === 'talk' ? '💬' : act === 'board' ? '📜' : '🪓');
+  if (act) setText('actIcon', { talk: '💬', board: '📜', learn: '📖', pick: '✋', chop: '🪓' }[act]);
   if (talkOpen) { if (talkOpen !== act) closeTalk(); else showTalk(talkOpen); }
   setText('coinN', String(town.wallet));
   const d = Math.round(-y);
@@ -211,6 +219,27 @@ function showTalk(src) {
 function closeTalk() { talkOpen = ''; talkSig = ''; setCls('talk', 'show', false); }
 $('talkNo').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('talkNo').addEventListener('click', closeTalk);
+
+// окно крафта: перерисовывается при изменении инвентаря и рецептов
+let craftOpen = false;
+function renderCraft() {
+  if (!craft) return;
+  const box = $('craftList'), rows = craft.list();
+  box.textContent = '';
+  if (!rows.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'Крафты пока не изучены. Чертежи продаёт строитель в лагере.'; box.appendChild(d); return; }
+  for (const r of rows) {
+    const el = document.createElement('div'); el.className = 'rc';
+    el.innerHTML = `<div class="ic">${r.icon}</div><div class="body"><div class="nm">${r.name}</div><div class="nd">${r.need}</div></div>`;
+    const b = document.createElement('button');
+    b.textContent = r.have ? 'Есть' : 'Сделать'; b.disabled = !r.can;
+    b.addEventListener('pointerdown', (e) => e.stopPropagation());
+    b.addEventListener('click', () => craft.make(r.what));
+    el.appendChild(b); box.appendChild(el);
+  }
+}
+function toggleCraft(on = !craftOpen) { craftOpen = on; setCls('craft', 'show', on); setCls('craftBtn', 'on', on); if (on) renderCraft(); }
+$('craftBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
+$('craftBtn').addEventListener('click', () => toggleCraft());
 
 // короткая подпись над слотами: «+3 бревна» и т.п.
 let toastT = 0;
@@ -312,10 +341,12 @@ function frame(now) {
   if (!falling) {
     player.update(dt, inp, yaw);
     wood.update(dt, act === 'chop' && inp.chop);
+    picks.update(act === 'pick' && inp.chop && !actHeld);
     town.update(dt);
     // нажатие (не удержание) кнопки действия рядом с жителем или доской
     if (inp.chop && !actHeld) {
       if (act === 'talk' || act === 'board') { if (talkOpen) closeTalk(); else showTalk(act); }
+      else if (act === 'learn') craft.learn();
     }
     actHeld = inp.chop;
   }
@@ -373,6 +404,7 @@ $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') $('view').click();
+  if (e.code === 'KeyC' && craft) toggleCraft();
   if (e.code === 'KeyI' || e.code === 'Tab') { e.preventDefault(); $('bagBtn').click(); }
   if (e.code >= 'Digit1' && e.code <= 'Digit3' && inv) inv.tap(+e.code.slice(5) - 1);
 });
@@ -422,7 +454,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, wood, world, town, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, wood, world, town, picks, craft, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

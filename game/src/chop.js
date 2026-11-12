@@ -114,8 +114,11 @@ export class Woodcutter {
   drop(t) {
     const r = t.reward; t.reward = null;
     if (!r) return; // рубил не я — брёвна не мои
-    const n = r.log || 0, left = this.inv.add('log', n);
-    this.toast(left === 0 ? `+${n} 🪵 Бревно` : left < n ? `+${n - left} 🪵 — инвентарь полон` : 'Инвентарь полон');
+    const n = r.log || 0, left = this.inv.add('log', n), rl = this.inv.add('root', r.root || 0);
+    const got = [];
+    if (n - left > 0) got.push(`+${n - left} 🪵`);
+    if ((r.root || 0) - rl > 0) got.push(`+${(r.root || 0) - rl} 🌿`);
+    this.toast(got.length ? got.join('  ') + (left || rl ? ' — инвентарь полон' : '') : 'Инвентарь полон');
     for (let i = 0; i < n; i++) {
       const a = i * 2.1 + t.rot;
       this.flying.push({ t: -i * 0.07, x: t.x + t.dx * (0.6 + i * 0.5), y: t.y + 0.6, z: t.z + t.dz * (0.6 + i * 0.5), vx: Math.cos(a) * 1.6, vz: Math.sin(a) * 1.6, rot: a });

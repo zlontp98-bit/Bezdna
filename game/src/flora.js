@@ -361,6 +361,13 @@ export function buildFlora(scene) {
     blobs.push({ x, z, r: 2.6 * s, h: 2.4 * s });
     return true;
   });
+  // камушки, которые можно подобрать: на лугу и у края, по одному-два на полянку
+  const pebbles = [];
+  scatter(90, W.R + 3, W.MEADOW - 15, (x, y, z, ny) => {
+    if (ny < 0.9 || !free(x, z, 0.8)) return false;
+    pebbles.push({ x, y, z, s: 0.3 + rnd() * 0.12, rot: rnd() * TAU });
+    return true;
+  });
   // камни: везде, особенно у края
   scatter(250, W.PIT + 2, W.MEADOW + 40, (x, y, z, ny, r) => {
     if (ny < 0.8) return false;
@@ -443,7 +450,7 @@ export function buildFlora(scene) {
     im.matrixAutoUpdate = false;
     scene.add(im);
   }
-  return { colliders, blobs, spawn, trees };
+  return { colliders, blobs, spawn, trees, pebbles, rockGeo: geos.rock };
 }
 
 // Валун становится твёрдым: верх его настоящей модели запекается в карту высот

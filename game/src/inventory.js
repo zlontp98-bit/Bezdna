@@ -4,6 +4,11 @@
 export const ITEMS = {
   axe:    { name: 'Топор',   icon: '🪓', max: 1,  tip: 'Рубит деревья: возьми в руку и подойди к стволу' },
   log:    { name: 'Бревно',  icon: '🪵', max: 20, tip: 'Древесина. С одного дерева — три бревна' },
+  root:   { name: 'Корень',  icon: '🌿', max: 20, tip: 'Остаётся от срубленного дерева. Нужен для крафта' },
+  bpPick: { name: 'Чертёж: кирка', icon: '📜', max: 1, tip: 'Свёрток от строителя. Возьми в руку и нажми «Изучить»' },
+  bpSpear:{ name: 'Чертёж: копьё', icon: '📜', max: 1, tip: 'Свёрток от строителя. Возьми в руку и нажми «Изучить»' },
+  pickaxe:{ name: 'Кирка',   icon: '⛏️', max: 1,  tip: 'Сделана своими руками. Скоро ею можно будет добывать камень' },
+  spear:  { name: 'Копьё',   icon: '🔱', max: 1,  tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
   stone:  { name: 'Камень',  icon: '🪨', max: 20, tip: 'Материал для построек' },
   shroom: { name: 'Гриб',    icon: '🍄', max: 20, tip: 'Светится. Растёт на кольце' },
   crystal:{ name: 'Кристалл',icon: '💎', max: 10, tip: 'Редкая находка из глубины' },
@@ -38,7 +43,7 @@ export class Inventory {
     this.store.set('bezdna.axe', '1');
   }
   save() { this.store.set('bezdna.inv', JSON.stringify({ slots: this.slots, active: this.active })); }
-  changed() { this.save(); if (this.onChange) this.onChange(); }
+  changed() { this.save(); if (this.onChange) this.onChange(); if (this.onCraft) this.onCraft(); }
 
   // Положить n предметов; возвращает, сколько не поместилось
   add(id, n = 1) {
