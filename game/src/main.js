@@ -2,11 +2,12 @@ import * as THREE from '../vendor/three.min.js';
 import { U, setStyle } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
-import { W, buildTerrain, bakeShadows, heightAt } from './terrain.js';
+import { W, SOURCES, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks } from './stacks.js';
+import { buildWaterfalls } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
@@ -20,7 +21,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, spray, inv;
+let renderer, scene, camera, player, input, grass, motes, clouds, spray, inv, falls;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -34,7 +35,7 @@ const Q = {
 function applyRes() {
   renderer.setPixelRatio(Q.maxPR * Q.scale);
   renderer.setSize(innerWidth, innerHeight, false);
-  if (motes) motes.uniforms.uPx.value = spray.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
+  if (motes) motes.uniforms.uPx.value = spray.uniforms.uPx.value = falls.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
 }
 function setQuality(mode) {
   Q.mode = mode; store.set('bezdna.q', mode);
@@ -88,6 +89,7 @@ function build() {
   clouds = buildClouds(scene);
   buildStreams(scene);
   spray = buildPools(scene);
+  falls = buildWaterfalls(scene);
   buildMist(scene);
   buildShafts(scene);
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
@@ -144,6 +146,7 @@ function updateHud(dt) {
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
   let z = ZONES.find((q) => y > q[0])[1];
   if (y > 14 && Math.hypot(player.pos.x - W.CRAG.x, player.pos.z - W.CRAG.z) > 14) z = 'Склоны гор';
+  if (SOURCES.some((s) => Math.hypot(player.pos.x - s.x, player.pos.z - s.z) < 30 && y > s.base - 4)) z = 'Исток ручья';
   if (z !== zoneName) {
     zoneName = z; zoneT = 3.2;
     setText('zone', z); setText('zoneBig', z);

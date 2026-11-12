@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
-import { mulberry32, SEED } from './noise.js';
+import { mulberry32, SEED, smoothstep } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, heightAt, normalAt, waterAt, POOLS } from './terrain.js';
+import { W, SRC, SOURCES, heightAt, normalAt, waterAt, POOLS } from './terrain.js';
 import { part, merge, T } from './flora.js';
 
 const TAU = Math.PI * 2;
@@ -202,26 +202,36 @@ export function buildStreams(scene) {
         float foam = smoothstep(0.74, 0.9, n2) * (0.35 - dk*0.28) + steep * (0.55 + 0.45*n1);
         foam += smoothstep(0.84, 1.0, abs(u)) * 0.35 * (1.0 - steep*0.5);
         c = mix(c, vec3(0.94,0.98,1.0), clamp(foam, 0.0, 1.0));
-        // блики неба на спокойной воде
+        // отражение неба и солнечные блики на ряби — по ним глаз и узнаёт воду
         vec3 vd = normalize(cameraPosition - vW);
         float fres = pow(1.0 - max(vd.y, 0.0), 3.0) * (1.0 - steep);
-        c = mix(c, uFogCol*1.05, fres*0.55);
-        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*shadowAt(vW.xz));
-        float a = mix(0.9, 1.0, max(steep, dk)) * smoothstep(1.0, 0.86, abs(u));
+        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, fres*0.4);
+        float sh = shadowAt(vW.xz);
+        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*sh);
+        vec3 nw = normalize(vec3((n1 - 0.5)*0.35, 1.0, (n2 - 0.5)*0.35));
+        float spec = pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * (1.0 - steep) * sh;
+        c += uSunCol * spec * 1.4;
+        float a = mix(0.9, 1.0, max(steep, dk)) * smoothstep(1.0, 0.86, abs(u)) * smoothstep(0.0, 1.2, vU.y);
         gl_FragColor = vec4(applyFog(c, vW), a);
       }`,
   });
   const n = new THREE.Vector3();
-  for (const th of W.STREAMS) {
+  // ручей: от чаши под истоком к провалу; ущелье: от родника к кромке водопада
+  // последнее число — с какой «длины» начинается лента: у родника вода проявляется постепенно
+  const runs = W.STREAMS.map((th) => [th, W.SRC_R - SRC.POOL + 0.2, W.PIT - 6, 3.5, 5]);
+  for (const s of SOURCES) runs.push([s.tw, W.SRC_R + SRC.GORGE, W.SRC_R + s.lipA - 0.1, 2.5, 0]);
+  for (const [th, rFrom, rTo, half, len0] of runs) {
     const cx = Math.cos(th), cz = Math.sin(th), tx = -cz, tz = cx;
     const pos = [], uvs = [], idx = [];
-    let len = 0, prev = null, i = 0;
-    const half = 3.5, K = 5; // пять точек поперёк: середина глубокая, края мелкие
-    for (let r = 229; r > W.PIT - 6; r -= 0.5, i++) {
+    let len = len0, prev = null, i = 0;
+    const K = 5; // пять точек поперёк: середина глубокая, края мелкие
+    for (let r = rFrom; r > rTo; r -= 0.5, i++) {
       const row = [];
       normalAt(cx * r, cz * r, n, 0.5);
-      const steep = 1 - Math.min(1, Math.max(0, (n.y - 0.35) / 0.5));
       const wmid = waterAt(cx * r, cz * r);
+      // пороги: крутизну берём и по самой воде — на ступеньке она пенится
+      const wslope = Math.abs(waterAt(cx * (r - 0.5), cz * (r - 0.5)) - wmid) / 0.5;
+      const steep = Math.max(1 - Math.min(1, Math.max(0, (n.y - 0.35) / 0.5)), wmid > -1e8 ? smoothstep(0.2, 0.7, wslope) : 0);
       for (let k = 0; k < K; k++) {
         const u = -1 + (2 * k) / (K - 1);
         const x = cx * r + tx * half * u, z = cz * r + tz * half * u;
@@ -274,7 +284,13 @@ export function buildPools(scene) {
         float foam = smoothstep(0.42, 0.05, dh) + smoothstep(0.6, 0.85, vnoise(vW.xz*3.0 - uTime*0.4)) * 0.35
                    + smoothstep(0.86, 1.0, r) * 0.6;
         c = mix(c, vec3(0.97,1.0,1.0), clamp(foam, 0.0, 1.0));
-        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*shadowAt(vW.xz));
+        float sh = shadowAt(vW.xz);
+        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*sh);
+        vec3 vd = normalize(cameraPosition - vW);
+        float n2 = vnoise(vW.xz*2.3 - uTime*0.35);
+        vec3 nw = normalize(vec3((n - 0.5)*0.4, 1.0, (n2 - 0.5)*0.4));
+        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, pow(1.0 - max(vd.y, 0.0), 3.0) * 0.35 * (1.0 - foam));
+        c += uSunCol * pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * 1.4 * sh * (1.0 - clamp(foam, 0.0, 1.0));
         gl_FragColor = vec4(applyFog(c, vW), 0.95 * smoothstep(1.0, 0.94, r));
       }`,
     uniforms: { uHit: { value: new THREE.Vector2() } },
@@ -301,19 +317,20 @@ export function buildPools(scene) {
   const disc = new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2);
   for (const p of POOLS) {
     const m = water.clone();
-    m.uniforms = { ...water.uniforms, uHit: { value: new THREE.Vector2(-p.dx * 0.55, -p.dz * 0.55) } };
+    const k = p.hit / p.rad;
+    m.uniforms = { ...water.uniforms, uHit: { value: new THREE.Vector2(-p.dx * k, -p.dz * k) } };
     const mesh = new THREE.Mesh(disc, m);
     mesh.position.set(p.x, p.level, p.z);
-    mesh.scale.set(5.4, 1, 5.4);
+    mesh.scale.set(p.rad, 1, p.rad);
     mesh.renderOrder = 3;
     scene.add(mesh);
-    // брызги у подножия
-    const N = 26, pos = new Float32Array(N * 3), aS = new Float32Array(N * 4);
-    const hx = p.x - p.dx * 3.0, hz = p.z - p.dz * 3.0;
+    // брызги у подножия: под истоком струя шире
+    const N = p.src ? 50 : 26, spread = p.src ? 7.5 : 3.2, pos = new Float32Array(N * 3), aS = new Float32Array(N * 4);
+    const hx = p.x - p.dx * p.hit, hz = p.z - p.dz * p.hit;
     for (let i = 0; i < N; i++) {
-      pos[i * 3] = hx + (Math.random() - 0.5) * 3.2 * Math.abs(p.dz) + (Math.random() - 0.5) * 0.6;
+      pos[i * 3] = hx + (Math.random() - 0.5) * spread * Math.abs(p.dz) + (Math.random() - 0.5) * 0.6;
       pos[i * 3 + 1] = p.level + 0.1;
-      pos[i * 3 + 2] = hz + (Math.random() - 0.5) * 3.2 * Math.abs(p.dx) + (Math.random() - 0.5) * 0.6;
+      pos[i * 3 + 2] = hz + (Math.random() - 0.5) * spread * Math.abs(p.dx) + (Math.random() - 0.5) * 0.6;
       aS[i * 4] = Math.random() - 0.5 + p.dx * 0.6; aS[i * 4 + 1] = Math.random() - 0.5 + p.dz * 0.6;
       aS[i * 4 + 2] = Math.random(); aS[i * 4 + 3] = Math.random();
     }

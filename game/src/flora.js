@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, heightAt, normalAt, streamAt, pathAt, POOLS } from './terrain.js';
+import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
 import { STACKS } from './stacks.js';
 import { addMeshTop } from './solids.js';
 
@@ -222,7 +222,8 @@ export function buildFlora(scene) {
       const y = heightAt(x, z);
       normalAt(x, z, n, 0.8);
       if (streamAt(x, z) > 0.01 || pathAt(x, z) > 0.05) continue;
-      if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < 7)) continue;
+      if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < p.rad + (p.src ? 5 : 1.6))) continue;
+      if (waterAt(x, z) > -1e8) continue;
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
       if (fn(x, y, z, n.y, r)) placed++;
     }
@@ -232,8 +233,8 @@ export function buildFlora(scene) {
 
   // валуны вокруг чаш под водопадами и по бокам от уступа, с которого падает вода
   for (const p of POOLS) {
-    for (let i = 0; i < 13; i++) {
-      const a = (i / 13) * TAU + rnd() * 0.25, rr = 5.2 + rnd() * 0.9;
+    for (let i = 0; i < (p.src ? 18 : 13); i++) {
+      const a = (i / (p.src ? 18 : 13)) * TAU + rnd() * 0.25, rr = p.src ? p.rad + 0.3 + rnd() * 2.5 : 5.2 + rnd() * 0.9;
       const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
       if (streamAt(x, z) > 0.35) continue; // не перекрываем сток и сам водопад
       if (heightAt(x, z) > p.level + 1.0) continue; // и не вешаем камни на стену
@@ -241,10 +242,19 @@ export function buildFlora(scene) {
       add(lists.rock, x, heightAt(x, z) - 0.1, z, s, col.setRGB(g * 1.08, g * 1.02, g * 0.95).getHex(), rnd() * TAU, rnd() * 0.4);
       taken.push({ x, z, r: s });
     }
-    for (const side of [-1, 1]) {
+    for (const side of p.src ? [] : [-1, 1]) {
       const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;
       add(lists.rock, x, heightAt(x, z) - 0.2, z, 1.7, 0x8f8a82, rnd() * TAU, 0.2);
       taken.push({ x, z, r: 1.7 });
+    }
+  }
+  // родник в верховье ущелья: вода выходит из-под камней
+  for (const s of SOURCES) {
+    for (const [da, l, sc] of [[1.4, 0, 1.9], [0.4, -2.2, 1.4], [0.6, 2.4, 1.6], [-1.2, -2.7, 1.0], [2.8, 1.2, 1.5]]) {
+      const a = SRC.GORGE + da, r = W.SRC_R + a, th = s.tw + l / r, x = Math.cos(th) * r, z = Math.sin(th) * r;
+      const g = 0.46 + rnd() * 0.1;
+      add(lists.rock, x, heightAt(x, z) - 0.25, z, sc, col.setRGB(g * 0.95, g, g * 0.92).getHex(), rnd() * TAU, rnd() * 0.3);
+      taken.push({ x, z, r: sc });
     }
   }
   // кусты: много, по лугу и кольцу

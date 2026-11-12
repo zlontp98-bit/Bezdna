@@ -19,6 +19,7 @@ export const W = {
   OUTER: 340,   // край мира
   EXT: 232,     // половина стороны квадрата, покрытого текстурами высот/теней
   STREAMS: [2.155, 4.25], // углы, под которыми текут ручьи (сразу за началом пандусов)
+  SRC_R: 213,   // радиус чаши под водопадом-истоком у подножия гор
   CRAG: { th: 0.42, r: 141, top: 24, w: 6.5 }, // утёс-смотровая у лагеря: на него лезут по стене
 };
 W.CRAG.x = Math.cos(W.CRAG.th) * W.CRAG.r; W.CRAG.z = Math.sin(W.CRAG.th) * W.CRAG.r;
@@ -33,14 +34,14 @@ const angDiff = (a, b) => {
 // 0..1 — насколько точка внутри русла ручья
 export function streamAt(x, z) {
   const r = Math.hypot(x, z);
-  if (r > 232 || r < 4) return 0;
+  if (r > W.SRC_R - 1 || r < 4) return 0;
   const th = Math.atan2(z, x);
   let c = 0;
   for (const tw of W.STREAMS) {
     const d = Math.abs(angDiff(th, tw)) * r;
     c = Math.max(c, smoothstep(3.4, 1.3, d));
   }
-  return c;
+  return c * smoothstep(W.SRC_R - 1, W.SRC_R - 5, r);
 }
 
 // то же, но шире: участок стены, который делаем отвесным под водопад
@@ -104,6 +105,57 @@ export function shelfAt(th) {
   t /= W.SHELF[1];
   if (t < -0.03 || t > 1.15) return null;
   return -W.DROP - (W.LOW - W.DROP) * clamp(t, 0, 1);
+}
+
+// ---- истоки ручьёв: водопад со скалы у подножия гор ----
+// Локальные координаты истока: a — от центра чаши наружу (к горам), l — поперёк ручья.
+// RC — радиус скальной чаши, H — высота скалы, POOL — радиус пруда, GORGE — длина ущелья
+// над водопадом; A0..A1, L — прямоугольник, где рельеф хранится подробно (CELL м).
+export const SRC = { RC: 8.5, H: 24, POOL: 6.4, GORGE: 38, A0: -26, A1: 54, L: 37, CELL: 0.7 };
+SRC.NA = Math.floor((SRC.A1 - SRC.A0) / SRC.CELL) + 1;
+SRC.NL = Math.floor((2 * SRC.L) / SRC.CELL) + 1;
+SRC.LR = ((SRC.NL - 1) * SRC.CELL) / 2;
+SRC.AR = SRC.A0 + (SRC.NA - 1) * SRC.CELL;
+export const SOURCES = W.STREAMS.map((tw) => ({ tw, base: 0, lipA: 6.5, x: Math.cos(tw) * W.SRC_R, z: Math.sin(tw) * W.SRC_R }));
+let srcOn = false;
+// дно ущелья: от кромки водопада поднимается в горы ступенями-перекатами
+export function gorgeBed(s, a) {
+  const t = Math.max(0, a - s.lipA) / 4, k = Math.floor(t);
+  // перекат не круче ~37°: вверх по руслу можно пройти пешком
+  return s.base + SRC.H - 1.4 + (k + smoothstep(0.55, 1.0, t - k)) * 0.9;
+}
+const srcEdge = (x, z) => SRC.RC + fbm(x * 0.22 + 3, z * 0.22, 2) * 1.1;
+function shapeSource(h, x, z, a, l, s) {
+  const { H, POOL, GORGE } = SRC, base = s.base, al = Math.abs(l);
+  // план: прямая скальная стена поперёк ручья (концы чуть выгнуты к лугу) и полукруглая ниша под водопадом
+  const line = -2 - 0.02 * Math.max(0, al - 8.5) ** 2;
+  const dc = Math.hypot(a + 2, l);
+  const edge = srcEdge(x, z);
+  const inside = Math.max(smoothstep(edge + 0.9, edge - 0.1, dc), smoothstep(0.9, -0.1, a - line + (edge - SRC.RC) * 0.6));
+  // за стеной — плато, к концам стены оно сходит на нет и сливается со склонами
+  const side = smoothstep(30, 19, al), far = smoothstep(95, 60, a);
+  const top = base + H * side + Math.max(0, a - line) * 0.22 + fbm(x * 0.12 + 5, z * 0.12, 3) * 1.6;
+  let out = h + Math.max(0, top - h) * smoothstep(31, 21, al) * far;
+  // русло по плато к кромке водопада
+  if (a > s.lipA - 1.5 && a < GORGE + 6) {
+    const g = gorgeBed(s, a) + Math.max(0, al - 2.6) * 1.1;
+    out += (Math.min(out, g) - out) * smoothstep(GORGE + 6, GORGE + 1, a);
+  }
+  // перед стеной: ровная галечная площадка, к лугу и к концам стены — естественный рельеф; в нише пруд
+  let floor = base + (h - base) * Math.max(smoothstep(-12, -24, a), smoothstep(20, 30, al));
+  const pd = Math.hypot(a * 1.05, l);
+  floor -= 0.35 * smoothstep(POOL + 5, POOL, pd) + 1.9 * smoothstep(POOL + 0.6, POOL - 2.4, pd);
+  return floor * inside + out * (1 - inside);
+}
+function applySources(h, x, z, r, th) {
+  if (!srcOn) return h;
+  const a = r - W.SRC_R;
+  if (a < SRC.A0 - 10 || a > 95) return h;
+  for (const s of SOURCES) {
+    const l = angDiff(th, s.tw) * r;
+    if (Math.abs(l) < 40) h = shapeSource(h, x, z, a, l, s);
+  }
+  return h;
 }
 
 // Аналитическая высота — источник правды, из неё строится сетка
@@ -181,8 +233,8 @@ function rawHeight(x, z) {
       h += (low - h) * wall;
     }
   }
-  for (const p of POOLS) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
-  return h;
+  for (const p of POOLS) if (!p.src) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
+  return applySources(h, x, z, r, th);
 }
 
 // ---- полярная сетка: густая на стенах, редкая в горах ----
@@ -223,9 +275,39 @@ const BAND = 12;
 // Высота земли в любой точке. Очень дёшево: читает готовую сетку.
 // Этим же пользуется физика, поэтому ноги всегда совпадают с картинкой.
 export function heightAt(x, z) {
-  let h = sampleGrid(HG, x, z);
+  if (PATCHES.length) {
+    const v = patchAt(x, z);
+    if (v !== null) return v;
+  }
+  return applyChannel(sampleGrid(HG, x, z), x, z);
+}
+// Возле истоков рельеф хранится подробно (сетка 0.7 м) — иначе отвесную скалу и пруд не нарисовать
+const PATCHES = [];
+function patchAt(x, z) {
+  const r = Math.sqrt(x * x + z * z), a = r - W.SRC_R;
+  if (a < SRC.A0 || a > SRC.AR) return null;
+  const th = Math.atan2(z, x);
+  for (const P of PATCHES) {
+    const l = angDiff(th, P.tw) * r;
+    if (l < -SRC.LR || l > SRC.LR) continue;
+    return sampleRect(P.F, (a - SRC.A0) / SRC.CELL, (l + SRC.LR) / SRC.CELL);
+  }
+  return null;
+}
+// те же два треугольника на клетку, что и в сетке заплатки (диагональ (i,j+1)–(i+1,j))
+function sampleRect(F, fa, fl) {
+  const NL = SRC.NL;
+  let i = Math.floor(fa), j = Math.floor(fl);
+  if (i > SRC.NA - 2) i = SRC.NA - 2;
+  if (j > NL - 2) j = NL - 2;
+  const tx = fa - i, tz = fl - j, k = i * NL + j;
+  const c00 = F[k], c01 = F[k + 1], c10 = F[k + NL], c11 = F[k + NL + 1];
+  if (tx + tz <= 1) return c00 + (c10 - c00) * tx + (c01 - c00) * tz;
+  return c11 + (c01 - c11) * (1 - tx) + (c10 - c11) * (1 - tz);
+}
+function applyChannel(h, x, z) {
   const r = Math.sqrt(x * x + z * z);
-  if (r < W.PIT - 8 || r > 229) return h;
+  if (r < W.PIT - 8 || r > W.SRC_R - 3) return h;
   const th = Math.atan2(z, x);
   let d = 1e9;
   for (const tw of W.STREAMS) d = Math.min(d, Math.abs(angDiff(th, tw)) * r);
@@ -242,10 +324,16 @@ export function heightAt(x, z) {
 export function waterAt(x, z) {
   let w = -1e9;
   const r = Math.hypot(x, z);
-  if (r > W.PIT - 5 && r < 228 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
+  if (r > W.PIT - 5 && r < W.SRC_R - 3 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
   for (const p of POOLS) {
     const dx = x - p.x, dz = z - p.z;
-    if (dx * dx + dz * dz < 29) w = Math.max(w, p.level);
+    if (dx * dx + dz * dz < p.rad * p.rad) w = Math.max(w, p.level);
+  }
+  // ручей в ущелье над водопадом: неглубокий, по щиколотку
+  const a = r - W.SRC_R;
+  if (a > 3 && a < SRC.GORGE + 0.5) {
+    const th = Math.atan2(z, x);
+    for (const s of SOURCES) if (a > s.lipA - 0.2 && Math.abs(angDiff(th, s.tw) * r) < 3.1) w = Math.max(w, gorgeBed(s, a) + 0.3);
   }
   return w;
 }
@@ -379,9 +467,17 @@ function bakeHeightTexture() {
         m = smoothstep(0.84, 0.94, n.y) * smoothstep(236, 222, r);
       }
       const pth = pathAt(x, z);
-      for (const p of POOLS) m *= smoothstep(4.6, 5.6, Math.hypot(x - p.x, z - p.z));
-      const wl = waterAt(x, z);
+      let beach = -2;
+      for (const p of POOLS) {
+        const d = Math.hypot(x - p.x, z - p.z);
+        if (!p.src) { m *= smoothstep(p.rad - 0.8, p.rad + 0.2, d); continue; }
+        // у пруда под истоком — широкий галечный берег
+        m *= smoothstep(p.rad + 2.5, p.rad + 4.5, d);
+        beach = Math.max(beach, -0.45 + 0.4 * smoothstep(p.rad + 4.5, p.rad + 1, d));
+      }
+      let wl = waterAt(x, z);
       m *= smoothstep(-0.3, -0.9, wl - h); // у воды — галька, не трава
+      if (wl < -1e8 && beach > -2) wl = h + beach;
       const o = (j * N + i) * 4;
       data[o] = toHalf(h);
       data[o + 1] = toHalf(m * (1 - pth));
@@ -407,7 +503,7 @@ function carveStreams() {
   //  depth — глубина от кромки: в последние 4.5 м перед обрывом мелеет в перекат,
   //  cut  — сила врезки: ещё 3 м после пологого участка, чтобы срезать каменный гребень
   //         на кромке водопада (иначе вода «перелезала» через горку).
-  const R0 = W.PIT - 20, R1 = 245, NA = Math.round((R1 - R0) / 0.5) + 1, prof = {};
+  const R0 = W.PIT - 20, R1 = W.SRC_R - SRC.POOL - 0.5, NA = Math.round((R1 - R0) / 0.5) + 1, prof = {};
   for (const tw of W.STREAMS) {
     const cx = Math.cos(tw), cz = Math.sin(tw), px = -cz, pz = cx, e = 1.2;
     const flat = new Float32Array(NA), lvl = new Float32Array(NA), depth = new Float32Array(NA), cut = new Float32Array(NA);
@@ -439,8 +535,7 @@ function carveStreams() {
   const at = (arr, r) => arr[Math.max(0, Math.min(NA - 1, Math.round((r - R0) / 0.5)))];
   for (let ri = 0; ri < ROWS; ri++) {
     const r = radii[ri];
-    if (r < W.PIT - 12 || r > 240) continue;
-    const spacing = (TAU * r) / COLS;
+    if (r < W.PIT - 12 || r > W.SRC_R) continue;
     for (let c = 0; c < COLS; c++) {
       const th = (c / COLS) * TAU;
       let tw = W.STREAMS[0], best = 1e9;
@@ -470,7 +565,7 @@ function carveStreams() {
   // вода: на пологом — гладь на уровне, на крутом — плёнка поверх уже прорезанного дна
   for (let ri = 0; ri < ROWS; ri++) {
     const r = radii[ri];
-    if (r < W.PIT - 12 || r > 240) continue;
+    if (r < W.PIT - 12 || r > W.SRC_R) continue;
     for (let c = 0; c < COLS; c++) {
       const th = (c / COLS) * TAU;
       let tw = W.STREAMS[0], best = 1e9;
@@ -491,13 +586,97 @@ function carveStreams() {
   }
 }
 const STRIP = 8; // полуширина ленты русла
-const SR0 = 229, SDR = 0.8, SN = Math.floor((229 - (W.PIT - 7)) / 0.8) + 1; // ряды ленты вдоль ручья
+// ряды ленты вдоль ручья: от края подробной заплатки истока до шахты
+const SR0 = W.SRC_R + SRC.A0, SDR = 0.8, SN = Math.floor((SR0 - (W.PIT - 7)) / 0.8) + 1;
 const STRIP_ON = {};
 // лента закрывает радиус r: оба соседних ряда существуют
 function stripCovers(tw, r) {
   const f = (SR0 - r) / SDR, k = Math.floor(f);
   if (k < 0 || k + 1 >= SN) return false;
   return STRIP_ON[tw][k] === 1 && STRIP_ON[tw][k + 1] === 1;
+}
+
+// Уровень дна у чаши (берём луг перед ней), кромка водопада и сам пруд
+function setupSources() {
+  for (const s of SOURCES) {
+    const cx = Math.cos(s.tw), cz = Math.sin(s.tw);
+    s.base = rawHeight(cx * (W.SRC_R - 14), cz * (W.SRC_R - 14)) - 0.3;
+    // кромка: внешний край верха скалы на оси ручья
+    let a = 0;
+    for (; a < 14; a += 0.05) {
+      const x = cx * (W.SRC_R + a), z = cz * (W.SRC_R + a);
+      if (a + 2 >= srcEdge(x, z) + 0.9) break;
+    }
+    s.lipA = a;
+    const fallH = SRC.H - 1.4 + 0.3 + 0.6, T = Math.sqrt((2 * fallH) / 9.8);
+    s.hitA = a - 1.4 * T; // куда бьёт струя
+    POOLS.push({ x: s.x, z: s.z, level: s.base - 0.6, dx: -cx, dz: -cz, rad: SRC.POOL + 0.1, hit: s.hitA, src: true, s });
+  }
+  srcOn = true;
+}
+function buildPatches() {
+  const { NA, NL, CELL, A0, AR, LR } = SRC;
+  for (const s of SOURCES) {
+    const F = new Float32Array(NA * NL);
+    for (let i = 0; i < NA; i++) {
+      const a = A0 + i * CELL, r = W.SRC_R + a;
+      for (let j = 0; j < NL; j++) {
+        const l = -LR + j * CELL, th = s.tw + l / r, x = Math.cos(th) * r, z = Math.sin(th) * r;
+        const coarse = applyChannel(sampleGrid(HG, x, z), x, z);
+        const fine = applyChannel(rawHeight(x, z), x, z);
+        // у краёв заплатка сходится с общей сеткой, чтобы не было ступеньки
+        const w = smoothstep(0, 6, Math.min(a - A0, AR - a, LR - Math.abs(l)));
+        F[i * NL + j] = coarse + (fine - coarse) * w;
+      }
+    }
+    PATCHES.push({ tw: s.tw, F });
+  }
+  // общую сетку под заплаткой прячем: каждый её узел ниже самой низкой точки заплатки
+  // в радиусе 8 м — тогда её крупные треугольники нигде не проткнут подробный рельеф
+  const reach = Math.ceil(8 / CELL);
+  for (let ri = 0; ri < ROWS; ri++) {
+    const r = radii[ri], a = r - W.SRC_R;
+    if (a < A0 || a > AR) continue;
+    for (let c = 0; c < COLS; c++) {
+      const th = (c / COLS) * TAU;
+      for (const P of PATCHES) {
+        const l = angDiff(th, P.tw) * r;
+        if (Math.abs(l) > LR) continue;
+        const ia = Math.round((a - A0) / CELL), il = Math.round((l + LR) / CELL);
+        let mn = 1e9;
+        for (let i = Math.max(0, ia - reach); i <= Math.min(NA - 1, ia + reach); i++)
+          for (let j = Math.max(0, il - reach); j <= Math.min(NL - 1, il + reach); j++) mn = Math.min(mn, P.F[i * NL + j]);
+        const k = ri * COLS + c, sink = smoothstep(0.5, 6, Math.min(a - A0, AR - a, LR - Math.abs(l)));
+        MG[k] += (Math.min(MG[k], mn - 1.0) - MG[k]) * sink;
+      }
+    }
+  }
+}
+function buildPatchMesh(scene, material, P) {
+  const { NA, NL, CELL, A0, LR } = SRC, n = new THREE.Vector3();
+  const pos = new Float32Array(NA * NL * 3), nor = new Float32Array(NA * NL * 3), idx = [];
+  for (let i = 0; i < NA; i++) {
+    const r = W.SRC_R + A0 + i * CELL;
+    for (let j = 0; j < NL; j++) {
+      const th = P.tw + (-LR + j * CELL) / r, x = Math.cos(th) * r, z = Math.sin(th) * r, k = (i * NL + j) * 3;
+      // чуть выше общей сетки, чтобы у краёв не мерцали две поверхности
+      pos[k] = x; pos[k + 1] = P.F[i * NL + j] + 0.03; pos[k + 2] = z;
+      normalAt(x, z, n, 0.35);
+      nor[k] = n.x; nor[k + 1] = n.y; nor[k + 2] = n.z;
+    }
+  }
+  for (let i = 0; i < NA - 1; i++)
+    for (let j = 0; j < NL - 1; j++) {
+      const v00 = i * NL + j, v01 = v00 + 1, v10 = v00 + NL, v11 = v10 + 1;
+      idx.push(v00, v01, v10, v01, v11, v10);
+    }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setIndex(idx);
+  const mesh = new THREE.Mesh(g, material);
+  mesh.matrixAutoUpdate = false;
+  scene.add(mesh);
 }
 
 // Заплатка под утёс: мелкая круговая сетка по точной высоте, полярная сетка под ней притоплена
@@ -620,7 +799,8 @@ const terrainMat = () => mat({
       float cr = vnoise(vec2(u*0.5, vW.y*0.055 + vnoise(vec2(u*0.2, vW.y*0.1))*0.6));
       float crack = smoothstep(0.035, 0.0, abs(cr - 0.5)) * wall * lf;
       // слои породы — только вблизи, вдали они превращаются в рябь
-      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), lf);
+      // на пологих склонах полосы превращаются в «изолинии», поэтому только на крутых стенах
+      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), lf * (0.2 + 0.8*wall));
       float ledge = smoothstep(0.88, 0.95, fract(y*0.33)) * lf;
 
       // палитра камня: тёплая охра наверху, холодный сланец в глубине
@@ -687,8 +867,9 @@ export function buildTerrain(scene) {
     let r = W.R + 2;
     while (r > W.HOLE + 8 && rawHeight(cx * r, cz * r) > -11.5) r -= 0.25;
     const pr = r - 3.4;
-    POOLS.push({ x: cx * pr, z: cz * pr, level: 0, dx: -cx, dz: -cz, rTop: r + 5.5 });
+    POOLS.push({ x: cx * pr, z: cz * pr, level: 0, dx: -cx, dz: -cz, rTop: r + 5.5, rad: 5.4, hit: 3 });
   }
+  setupSources();
   for (let ri = 0; ri < ROWS; ri++) {
     const r = radii[ri];
     for (let c = 0; c < COLS; c++) {
@@ -702,6 +883,7 @@ export function buildTerrain(scene) {
 
   // уровень воды в чаше — чуть ниже самого низкого берега
   for (const p of POOLS) {
+    if (p.src) continue;
     let lo = 1e9;
     for (let a = 0; a < 16; a++) {
       const x = p.x + Math.cos(a * 0.3927) * 5.3, z = p.z + Math.sin(a * 0.3927) * 5.3;
@@ -709,6 +891,8 @@ export function buildTerrain(scene) {
     }
     p.level = lo - 0.12;
   }
+
+  buildPatches();
 
   const material = rockMat = terrainMat();
   const SECT = 8, per = COLS / SECT;
@@ -746,6 +930,7 @@ export function buildTerrain(scene) {
   }
   buildChannelStrips(scene, material);
   buildCragPatch(scene, material);
+  for (const P of PATCHES) buildPatchMesh(scene, material, P);
   bakeHeightTexture();
 }
 
