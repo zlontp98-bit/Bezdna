@@ -6,6 +6,8 @@ import { STACKS } from './stacks.js';
 import { addMeshTop } from './solids.js';
 
 const TAU = Math.PI * 2;
+// камни-ступени, поставленные вручную (для проверки маршрутов)
+export const STONES = [];
 
 // ---------- сборка моделей из простых форм ----------
 // Каждая часть: геометрия + цвет + свечение + «качается ли на ветру».
@@ -69,12 +71,14 @@ export function propMaterial() {
     vertexColors: true,
     vertexShader: /* glsl */ `
       attribute vec3 aFx;
-      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL;
+      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL; varying float vProp;
       void main(){
         mat4 mm = modelMatrix;
         vec3 tint = vec3(1.0);
+        vProp = 0.0;
         #ifdef USE_INSTANCING
           mm = modelMatrix * instanceMatrix;
+          vProp = 1.0;
         #endif
         #ifdef USE_INSTANCING_COLOR
           tint = instanceColor;
@@ -92,8 +96,15 @@ export function propMaterial() {
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */ `
-      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL;
+      varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vSh; varying float vGlow; varying float vStone; varying vec3 vL; varying float vProp;
       void main(){
+        // Гриб, крона или куст вплотную к камере тают «в сеточку»: камера проходит сквозь них,
+        // а не застревает внутри шляпки и не закрывает героя
+        float cd = distance(vW, cameraPosition);
+        if (vProp > 0.5 && cd < 2.4) {
+          float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+          if (dth > smoothstep(0.9, 2.4, cd)) discard;
+        }
         vec3 n = normalize(vN);
         vec3 v = normalize(cameraPosition - vW);
         vec3 alb = vC;
@@ -231,18 +242,62 @@ export function buildFlora(scene) {
   const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) =>
     list.push({ x, y, z, s, color, rot, tilt });
 
-  // валуны вокруг чаш под водопадами и по бокам от уступа, с которого падает вода
+  // ---- камни у водопадов: каждый поставлен вручную ----
+  // Не кольцо одинаковых валунов, а маршрут: по камням через чашу, по выступам в стене
+  // за пелену водопада и вверх на смотровой камень. top — высота верха камня (по ней
+  // рассчитаны прыжки: герой прыгает на 1.6 м вверх и на 3.5–6 м в длину).
+  const grey = (g, warm = 1) => col.setRGB(g * (1 + 0.06 * warm), g * 1.01, g * (1 - 0.04 * warm)).getHex();
+  const stone = (x, z, o) => {
+    if (o.top !== undefined) STONES.push({ x, z, top: o.top, s: o.s, hang: !!o.hang });
+    add(lists.rock, x, o.top !== undefined ? o.top : heightAt(x, z) - (o.sink ?? 0.12), z, o.s, grey(o.g ?? 0.54, o.warm ?? 1), o.rot ?? 0, o.tilt ?? 0);
+    Object.assign(lists.rock[lists.rock.length - 1], { sy: o.sy ?? 0.8, sz: o.sz ?? 1, top: o.top, hang: !!o.hang });
+    taken.push({ x, z, r: o.s });
+    if (!o.hang && o.s > 0.8) blobs.push({ x, z, r: o.s * 1.5, h: o.s * 0.5 });
+  };
   for (const p of POOLS) {
-    for (let i = 0; i < (p.src ? 18 : 13); i++) {
-      const a = (i / (p.src ? 18 : 13)) * TAU + rnd() * 0.25, rr = p.src ? p.rad + 0.3 + rnd() * 2.5 : 5.2 + rnd() * 0.9;
-      const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
-      if (streamAt(x, z) > 0.35 || waterAt(x, z) > -1e8) continue; // камни — на берегу, не в воде
-      if (heightAt(x, z) > p.level + 1.0) continue; // и не вешаем камни на стену
-      const s = 0.75 + rnd() * 0.85, g = 0.5 + rnd() * 0.12;
-      add(lists.rock, x, heightAt(x, z) - 0.1, z, s, col.setRGB(g * 1.08, g * 1.02, g * 0.95).getHex(), rnd() * TAU, rnd() * 0.4);
-      taken.push({ x, z, r: s });
+    if (p.src) {
+      const s = p.s, B = s.base, wl = p.level;
+      const at = (a, l) => { const r = W.SRC_R + a, th = s.tw + l / r; return [Math.cos(th) * r, Math.sin(th) * r]; };
+      // 1) брод: пять камней через чашу перед самой пеленой, шаг 3–3.5 м, высота «лесенкой»
+      for (const [a, l, sz, up, rot] of [[-3.6, -6.9, 1.25, 0.55, 0.4], [-2.4, -3.7, 1.05, 0.85, 2.1], [-4.3, -0.5, 1.35, 0.6, 3.3], [-2.2, 2.7, 1.0, 0.95, 5.0], [-3.8, 6.2, 1.3, 0.5, 1.2]]) {
+        const [x, z] = at(s.pc + a + 1.5, l);
+        stone(x, z, { s: sz, sy: 2.3, sz: 0.9, top: wl + up, rot, g: 0.5, warm: 0 });
+      }
+      // 2) выступы в стене ниши: слева по дуге, за пеленой водопада и вверх направо.
+      //    Центр ниши — (a = −2, l = 0); камень наполовину сидит в скале
+      const ledge = (deg, up, sz, o = {}) => {
+        const ph = (deg * Math.PI) / 180;
+        let rho = 6;
+        while (rho < 15) { const [x, z] = at(-2 + Math.cos(ph) * rho, Math.sin(ph) * rho); if (heightAt(x, z) > B + up + 1.5) break; rho += 0.1; }
+        rho -= sz * 0.42;
+        const [x, z] = at(-2 + Math.cos(ph) * rho, Math.sin(ph) * rho);
+        stone(x, z, { s: sz, sy: 0.62, top: B + up, hang: true, rot: deg * 0.13, tilt: 0.06, g: 0.47, warm: 0, ...o });
+      };
+      [[-80, 1.0, 1.5], [-64, 2.0, 1.4], [-48, 3.1, 1.55], [-32, 4.1, 1.4], [-16, 5.2, 1.6], [1, 6.2, 1.45],
+        [18, 7.3, 1.5], [35, 8.4, 1.4], [52, 9.5, 1.55]].forEach(([deg, up, sz]) => ledge(deg, up, sz));
+      ledge(70, 10.4, 2.5, { sy: 0.5, g: 0.5 }); // смотровой камень над чашей
+      // 3) берег: камни разного размера, группами, а не через равные промежутки
+      for (const [a, l, sz, sy, rot, tilt] of [[-7.5, -11.6, 1.7, 0.75, 0.7, 0.15], [-9.3, -13.4, 0.75, 0.8, 2.2, 0.3], [-5.4, -13.8, 0.5, 0.9, 4.0, 0.2],
+        [-6.2, 12.4, 2.0, 0.7, 1.9, 0.1], [-9.0, 14.3, 0.95, 0.85, 3.6, 0.35], [-16.0, -6.4, 1.15, 0.7, 5.2, 0.2], [-17.6, 7.0, 0.85, 0.8, 0.3, 0.25],
+        [-15.0, 8.6, 0.5, 1.0, 2.8, 0.1], [-3.2, 15.5, 1.3, 0.9, 4.4, 0.2]]) {
+        const [x, z] = at(s.pc + a, l);
+        stone(x, z, { s: sz, sy, rot, tilt, g: 0.5 + sz * 0.03 });
+      }
+      continue;
     }
-    for (const side of p.src ? [] : [-1, 1]) {
+    // чаша на первом кольце: u — вниз по течению от центра чаши, v — поперёк
+    const at = (u, v) => [p.x + p.dx * u - p.dz * v, p.z + p.dz * u + p.dx * v];
+    for (const [u, v, sz, up, rot] of [[1.4, -3.3, 1.0, 0.5, 0.9], [2.3, -0.2, 1.15, 0.8, 2.6], [1.2, 3.1, 0.95, 0.55, 4.1]]) {
+      const [x, z] = at(u, v);
+      stone(x, z, { s: sz, sy: 2.0, sz: 0.9, top: p.level + up, rot, g: 0.5, warm: 0 });
+    }
+    for (const [u, v, sz, sy, rot, tilt] of [[-0.6, -6.8, 1.6, 0.75, 1.3, 0.15], [2.4, -7.3, 0.7, 0.85, 3.0, 0.3], [0.2, 6.6, 1.25, 0.8, 5.1, 0.2],
+      [3.4, 6.4, 0.6, 0.9, 0.8, 0.25], [5.9, -5.2, 0.9, 0.7, 2.0, 0.2]]) {
+      const [x, z] = at(u, v);
+      if (waterAt(x, z) > -1e8 || heightAt(x, z) > p.level + 1.2) continue;
+      stone(x, z, { s: sz, sy, rot, tilt });
+    }
+    for (const side of [-1, 1]) {
       const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;
       add(lists.rock, x, heightAt(x, z) - 0.2, z, 1.7, 0x8f8a82, rnd() * TAU, 0.2);
       taken.push({ x, z, r: 1.7 });
@@ -361,8 +416,19 @@ export function buildFlora(scene) {
       dummy.position.set(t.x, t.y, t.z);
       dummy.rotation.set(t.tilt, t.rot, t.tilt * 0.6);
       dummy.scale.setScalar(t.s);
-      if (key === 'rock') dummy.scale.set(t.s, t.s * (0.7 + (i % 5) * 0.1), t.s * (0.8 + (i % 3) * 0.15));
+      if (key === 'rock') {
+        if (t.sy) dummy.scale.set(t.s, t.s * t.sy, t.s * t.sz);
+        else dummy.scale.set(t.s, t.s * (0.7 + (i % 5) * 0.1), t.s * (0.8 + (i % 3) * 0.15));
+      }
       dummy.updateMatrix();
+      if (t.top !== undefined) {
+        // камень с заданной высотой верха: меряем готовую модель и ставим её верх ровно на top
+        let hi = -1e9;
+        const P = geos.rock.attributes.position;
+        for (let v = 0; v < P.count; v++) hi = Math.max(hi, _v.fromBufferAttribute(P, v).applyMatrix4(dummy.matrix).y);
+        dummy.position.y += t.top - hi;
+        dummy.updateMatrix();
+      }
       if (key === 'rock') rockSolid(geos.rock, dummy.matrix, t);
       im.setMatrixAt(i, dummy.matrix);
       im.setColorAt(i, col.setHex(t.color));
@@ -384,7 +450,7 @@ function rockSolid(geo, m, t) {
     _v.fromBufferAttribute(P, i).applyMatrix4(m);
     tris[i * 3] = _v.x; tris[i * 3 + 1] = _v.y; tris[i * 3 + 2] = _v.z;
   }
-  addMeshTop(tris, Math.min(0.3, t.s * 0.15));
+  addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, hang: !!t.hang });
 }
 
 // ---------- трава и цветы: «ковёр», который ездит за игроком ----------

@@ -22,7 +22,7 @@ const store = {
 };
 
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls;
-let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
+let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
 
@@ -166,29 +166,41 @@ function updateCamera(dt, inp) {
     camera.lookAt(target.x + fx, target.y + fy, target.z + fz);
     return;
   }
-  // Камера не заходит в скалы, камни и руины. Луч «толстый»: проверяем и середину,
-  // и точки по бокам — края кадра тоже не должны цеплять стену.
-  const solidH = (x, y, z) => Math.max(heightAt(x, z), groundAt(x, z, y));
-  // ширина «луча» — половина ближней плоскости кадра (≈0.3 м): шире не надо, иначе у стен
-  // камера без нужды прижимается к герою
+  // Камера на «пружинной штанге». Преграды для неё — рельеф, крупные валуны и руины;
+  // грибы, кроны, кусты и мелкие камни не в счёт (вблизи камеры они просто тают, см. flora.js).
+  // Низкую преграду (бугор, склон за спиной, валун) камера плавно перелетает, приподнимаясь,
+  // и только перед настоящей стеной подъезжает к герою — без рывков и застреваний.
+  // Луч «толстый»: кроме середины проверяем точки по бокам (половина ближней плоскости кадра).
   const rx = Math.cos(yaw) * 0.32, rz = -Math.sin(yaw) * 0.32;
-  const clear = (x, y, z) => y > solidH(x, y, z) + 0.35
-    && y > solidH(x + rx, y, z + rz) + 0.15 && y > solidH(x - rx, y, z - rz) + 0.15;
-  let want = camDist;
-  const N = 18;
+  // насколько точка ниже допустимого (≤ 0 — свободна)
+  const need = (x, y, z) => Math.max(groundAt(x, z, y, true) + 0.35, groundAt(x + rx, z + rz, y, true) + 0.15, groundAt(x - rx, z - rz, y, true) + 0.15) - y;
+  const N = 18, KMAX = 0.7;
+  let want = camDist, kWant = 0;
   for (let i = 1; i <= N; i++) {
     const t = (i / N) * camDist;
-    if (!clear(target.x - fx * t, target.y - fy * t, target.z - fz * t)) { want = Math.max(0.35, t - camDist / N - 0.15); break; }
+    const x = target.x - fx * t, y = target.y - fy * t, z = target.z - fz * t;
+    // во сколько нужно задрать луч, чтобы пройти над преградой в этой точке
+    const k = (need(x, y + camLift * t, z) + camLift * t) / t;
+    if (k > KMAX) { want = Math.max(0.35, t - camDist / N - 0.15); break; }
+    if (k > kWant) kWant = k;
   }
-  // упёрлись — приближаемся сразу (иначе несколько кадров камера внутри камня), освободилось — отъезжаем плавно
-  camCur = want < camCur ? want : Math.min(want, camCur + dt * 4);
-  // итоговую точку проверяем отдельно (она лежит между пробами луча) и при нужде доводим ближе
-  for (let k = 0; k < 40 && camCur > 0.35; k++) {
-    if (clear(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur)) break;
-    camCur = Math.max(0.35, camCur - 0.1);
+  // к герою — быстро, но не скачком; обратно — не спеша
+  camCur = want < camCur ? Math.max(want, camCur - dt * 40) : Math.min(want, camCur + dt * 4);
+  camLift += Math.max(-dt * 1.2, Math.min(dt * 10, kWant - camLift));
+  const at = (d, k) => camPos.set(target.x - fx * d, target.y - fy * d + k * d, target.z - fz * d);
+  // итоговую точку проверяем отдельно: если сглаживание не успело — сразу ставим как надо
+  at(camCur, camLift);
+  if (need(camPos.x, camPos.y, camPos.z) > 0) {
+    camLift = Math.max(camLift, kWant);
+    camCur = Math.min(camCur, want);
+    for (let k = 0; k < 40 && camCur > 0.35; k++) {
+      at(camCur, camLift);
+      if (need(camPos.x, camPos.y, camPos.z) <= 0) break;
+      camCur = Math.max(0.35, camCur - 0.1);
+    }
+    at(camCur, camLift);
   }
-  camPos.set(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur);
-  const gh = solidH(camPos.x, camPos.y, camPos.z) + 0.3;
+  const gh = groundAt(camPos.x, camPos.z, camPos.y, true) + 0.3;
   if (camPos.y < gh) camPos.y = gh;
   camera.position.copy(camPos);
   camera.lookAt(target);

@@ -20,11 +20,14 @@ export function addCyl(x, z, r, top, bottom = -1e9) {
 // Верх произвольной модели (валун, островок): треугольники в мире растеризуются
 // в маленькую карту высот, поэтому опора совпадает с картинкой по построению.
 // tris — плоский массив x,y,z по три вершины на треугольник.
-export function addMeshTop(tris, cell = 0.25) {
-  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+// soft — мелочь, которую камера не считает преградой (перелетает, а не упирается);
+// hang — модель висит (камень, торчащий из стены): под ней можно пройти
+export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false } = {}) {
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y0 = 1e9;
   for (let i = 0; i < tris.length; i += 3) {
     x0 = Math.min(x0, tris[i]); x1 = Math.max(x1, tris[i]);
     z0 = Math.min(z0, tris[i + 2]); z1 = Math.max(z1, tris[i + 2]);
+    y0 = Math.min(y0, tris[i + 1]);
   }
   const nx = Math.ceil((x1 - x0) / cell) + 1, nz = Math.ceil((z1 - z0) / cell) + 1;
   const f = new Float32Array(nx * nz).fill(-1e9);
@@ -50,7 +53,7 @@ export function addMeshTop(tris, cell = 0.25) {
     }
   }
   const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  insert({ x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: -1e9 }, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
+  insert({ x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: hang ? y0 : -1e9, soft }, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
 }
 function fieldAt(s, x, z) {
   const fx = (x - s.x0) / s.cell, fz = (z - s.z0) / s.cell;
@@ -68,12 +71,13 @@ export function addBox(x, z, hx, hz, rot, top, bottom = -1e9) {
 }
 
 // Высота опоры под точкой для героя, чьи ноги на высоте y
-export function groundAt(x, z, y) {
+export function groundAt(x, z, y, forCamera = false) {
   let h = heightAt(x, z);
   hitSolid = false; ceiling = 1e9;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return h;
   for (const s of list) {
+    if (forCamera && s.soft) continue;
     const dx = x - s.x, dz = z - s.z;
     let top = s.top;
     if (s.field) {

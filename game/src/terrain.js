@@ -109,36 +109,39 @@ export function shelfAt(th) {
 
 // ---- истоки ручьёв: водопад со скалы у подножия гор ----
 // Локальные координаты истока: a — от центра чаши наружу (к горам), l — поперёк ручья.
-// RC — радиус скальной чаши, H — высота скалы, POOL — радиус пруда, GORGE — длина ущелья
-// над водопадом; A0..A1, L — прямоугольник, где рельеф хранится подробно (CELL м).
-export const SRC = { RC: 11.5, H: 48, POOL: 8, GORGE: 22, A0: -26, A1: 58, L: 40, CELL: 0.7, VH: 1.6 };
+// RC — радиус скальной чаши, POOL — радиус пруда, GORGE — длина ущелья над водопадом;
+// A0..A1, L — прямоугольник, где рельеф хранится подробно (CELL м).
+// Высота стены у каждого истока своя (s.H): кромка водопада стоит на уровне гребня хребта
+// за ним, так что вода срывается с самого верха гор, а не из середины скалы.
+export const SRC = { RC: 11.5, POOL: 8, GORGE: 30, A0: -26, A1: 58, L: 76, CELL: 0.7, VH: 1.6, WING: 74 };
 SRC.NA = Math.floor((SRC.A1 - SRC.A0) / SRC.CELL) + 1;
 SRC.NL = Math.floor((2 * SRC.L) / SRC.CELL) + 1;
 SRC.LR = ((SRC.NL - 1) * SRC.CELL) / 2;
 SRC.AR = SRC.A0 + (SRC.NA - 1) * SRC.CELL;
-export const SOURCES = W.STREAMS.map((tw) => ({ tw, base: 0, lipA: 6.5, x: Math.cos(tw) * W.SRC_R, z: Math.sin(tw) * W.SRC_R }));
+export const SOURCES = W.STREAMS.map((tw) => ({ tw, base: 0, H: 100, lipA: 6.5, x: Math.cos(tw) * W.SRC_R, z: Math.sin(tw) * W.SRC_R }));
 let srcOn = false;
 // дно ущелья: от кромки водопада поднимается в горы ступенями-перекатами
 export function gorgeBed(s, a) {
-  const t = Math.max(0, a - s.lipA) / 4, k = Math.floor(t);
-  // перекат не круче ~37°: вверх по руслу можно пройти пешком
-  return s.base + SRC.H - 1.4 + (k + smoothstep(0.55, 1.0, t - k)) * 0.9;
+  const t = Math.max(0, a - s.lipA) / 5, k = Math.floor(t);
+  // пологие перекаты: вверх по руслу можно пройти пешком
+  return s.base + s.H - 2.2 + (k + smoothstep(0.55, 1.0, t - k)) * 0.5;
 }
 const srcEdge = (x, z) => SRC.RC + fbm(x * 0.22 + 3, z * 0.22, 2) * 1.1;
 // «расстояние» от центра заводи: вниз по течению вытянута, чтобы перейти в русло
 const basinDist = (s, a, l) => Math.hypot((a - s.pc) * (a < s.pc ? 0.55 : 1.3), l);
 function shapeSource(h, x, z, a, l, s) {
-  const { H, POOL, GORGE } = SRC, base = s.base, al = Math.abs(l);
+  const { POOL, GORGE, WING } = SRC, H = s.H, base = s.base, al = Math.abs(l);
   // план: прямая скальная стена поперёк ручья (концы чуть выгнуты к лугу) и полукруглая ниша под водопадом
-  const line = -2 - 0.02 * Math.max(0, al - 8.5) ** 2;
+  const line = -2 - 0.02 * Math.min(26, Math.max(0, al - 8.5)) ** 2;
   const dc = Math.hypot(a + 2, l);
   const edge = srcEdge(x, z);
   const inside = Math.max(smoothstep(edge + 0.9, edge - 0.1, dc), smoothstep(0.9, -0.1, a - line + (edge - SRC.RC) * 0.6));
   // за стеной — плато, к концам стены оно сходит на нет и сливается со склонами
   // вершина над водопадом сходит склонами-плечами в хребет
-  const side = smoothstep(34, 14, al) ** 1.3, far = smoothstep(110, 70, a);
-  const top = base + H * side + Math.max(0, a - line) * 0.3 + fbm(x * 0.12 + 5, z * 0.12, 3) * 2.2;
-  let out = h + Math.max(0, top - h) * smoothstep(36, 22, al) * far;
+  // стена — не отдельная скала, а отрог хребта: широкие плечи уходят в соседние склоны
+  const side = smoothstep(WING - 2, 22, al) ** 1.15, far = smoothstep(120, 80, a);
+  const top = base + H * side + Math.max(0, a - line) * 0.12 + fbm(x * 0.12 + 5, z * 0.12, 3) * 2.2 * (0.3 + 0.7 * smoothstep(5, 9, al));
+  let out = h + Math.max(0, top - h) * smoothstep(WING, WING - 24, al) * far;
   // русло по плато к кромке водопада
   if (a > s.lipA - 1.5 && a < GORGE + 6) {
     const g = gorgeBed(s, a) + Math.max(0, al - 4.2) * 1.1;
@@ -148,16 +151,16 @@ function shapeSource(h, x, z, a, l, s) {
   // Под водопадом ручей расширяется в заводь и дальше сужается в обычное русло
   let floor = base + (h - base) * Math.max(smoothstep(-12, -24, a), smoothstep(20, 30, al));
   const pd = basinDist(s, a, l);
-  floor -= 0.25 * smoothstep(POOL + 4, POOL, pd) + 1.9 * smoothstep(POOL + 0.6, POOL - 2.4, pd);
+  floor -= 0.25 * smoothstep(POOL + 4, POOL, pd) + 2.4 * smoothstep(POOL + 0.6, POOL - 4.4, pd);
   return floor * inside + out * (1 - inside);
 }
 function applySources(h, x, z, r, th) {
   if (!srcOn) return h;
   const a = r - W.SRC_R;
-  if (a < SRC.A0 - 10 || a > 95) return h;
+  if (a < SRC.A0 - 10 || a > 122) return h;
   for (const s of SOURCES) {
     const l = angDiff(th, s.tw) * r;
-    if (Math.abs(l) < 40) h = shapeSource(h, x, z, a, l, s);
+    if (Math.abs(l) < SRC.WING + 4) h = shapeSource(h, x, z, a, l, s);
   }
   return h;
 }
@@ -330,13 +333,8 @@ export function waterAt(x, z) {
   const r = Math.hypot(x, z);
   if (r > W.PIT - 5 && r < W.SRC_R - 1 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
   for (const p of POOLS) {
-    if (p.src) {
-      const th = Math.atan2(z, x), s = p.s;
-      if (basinDist(s, r - W.SRC_R, angDiff(th, s.tw) * r) < SRC.POOL + 0.1) w = Math.max(w, p.level);
-      continue;
-    }
-    const dx = x - p.x, dz = z - p.z;
-    if (dx * dx + dz * dz < p.rad * p.rad) w = Math.max(w, p.level);
+    // в чаше одна ровная гладь: уровень чаши, а не ручья, который через неё течёт
+    if (poolDist(p, x, z) < 1.01) w = p.src ? p.level : Math.max(w, p.level);
   }
   // ручей в ущелье над водопадом: неглубокий, по щиколотку
   const a = r - W.SRC_R;
@@ -345,6 +343,12 @@ export function waterAt(x, z) {
     for (const s of SOURCES) if (a > s.lipA - 0.2 && Math.abs(angDiff(th, s.tw) * r) < 4.6) w = Math.max(w, gorgeBed(s, a) + 0.3);
   }
   return w;
+}
+// 0 — центр чаши, 1 — её берег (чаша под истоком вытянута вниз по течению)
+export function poolDist(p, x, z) {
+  if (!p.src) return Math.hypot(x - p.x, z - p.z) / p.rad;
+  const r = Math.hypot(x, z);
+  return basinDist(p.s, r - W.SRC_R, angDiff(Math.atan2(z, x), p.s.tw) * r) / SRC.POOL;
 }
 function sampleGrid(G, x, z) {
   const r = Math.sqrt(x * x + z * z);
@@ -512,7 +516,7 @@ function carveStreams() {
   //  depth — глубина от кромки: в последние 4.5 м перед обрывом мелеет в перекат,
   //  cut  — сила врезки: ещё 3 м после пологого участка, чтобы срезать каменный гребень
   //         на кромке водопада (иначе вода «перелезала» через горку).
-  const R0 = W.PIT - 20, R1 = W.SRC_R - SRC.POOL - 0.5, NA = Math.round((R1 - R0) / 0.5) + 1, prof = {};
+  const R0 = W.PIT - 20, R1 = W.SRC_R - 15, NA = Math.round((R1 - R0) / 0.5) + 1, prof = {};
   for (const tw of W.STREAMS) {
     const cx = Math.cos(tw), cz = Math.sin(tw), px = -cz, pz = cx, e = 1.2;
     const flat = new Float32Array(NA), lvl = new Float32Array(NA), depth = new Float32Array(NA), cut = new Float32Array(NA);
@@ -610,6 +614,11 @@ function setupSources() {
   for (const s of SOURCES) {
     const cx = Math.cos(s.tw), cz = Math.sin(s.tw);
     s.base = rawHeight(cx * (W.SRC_R - 14), cz * (W.SRC_R - 14)) - 0.3;
+    // гребень хребта за истоком: самая высокая точка гор в створе ручья
+    let ridge = 0;
+    for (let r = W.SRC_R + 20; r < W.OUTER - 10; r += 4)
+      for (let l = -24; l <= 24; l += 8) ridge = Math.max(ridge, rawHeight(Math.cos(s.tw + l / r) * r, Math.sin(s.tw + l / r) * r));
+    s.H = clamp(ridge - s.base - 6, 80, 108);
     // кромка: внешний край верха скалы на оси ручья
     let a = 0;
     for (; a < 14; a += 0.05) {
@@ -617,7 +626,7 @@ function setupSources() {
       if (a + 2 >= srcEdge(x, z) + 0.9) break;
     }
     s.lipA = a;
-    const fallH = SRC.H - 0.65, T = Math.sqrt((2 * fallH) / 9.8);
+    const fallH = s.H - 2.2, T = Math.sqrt((2 * fallH) / 9.8);
     s.hitA = a - SRC.VH * T; // куда бьёт струя
     s.pc = s.hitA - 0.5;     // центр заводи
     const r = W.SRC_R + s.pc;
@@ -894,7 +903,13 @@ export function buildTerrain(scene) {
 
   // уровень воды в чаше — чуть ниже самого низкого берега
   for (const p of POOLS) {
-    if (p.src) continue;
+    if (p.src) {
+      // пруд под истоком — расширение ручья: уровень тот же, что у русла на выходе из него,
+      // поэтому между прудом и ручьём нет ни ступеньки, ни двух плоскостей воды
+      const r = W.SRC_R + p.s.pc - SRC.POOL / 0.55 - 0.6;
+      p.level = sampleGrid(WG, Math.cos(p.s.tw) * r, Math.sin(p.s.tw) * r);
+      continue;
+    }
     let lo = 1e9;
     for (let a = 0; a < 16; a++) {
       const x = p.x + Math.cos(a * 0.3927) * 5.3, z = p.z + Math.sin(a * 0.3927) * 5.3;

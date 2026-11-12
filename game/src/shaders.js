@@ -89,8 +89,9 @@ vec3 applyFog(vec3 c, vec3 w){
   float deep = smoothstep(-18.0, -70.0, w.y);
   // тёплый свет фонарика: в темноте подсвечивает всё вокруг героя
   float ld = distance(w, uLure.xyz);
-  float ll = uLure.w / (1.0 + ld*ld*0.07) * smoothstep(18.0, 7.0, ld);
-  c += (c*2.6 + 0.10) * vec3(1.0, 0.83, 0.52) * ll;
+  // мягкий и приглушённый: небольшой круг света без пересвета вблизи героя
+  float ll = uLure.w / (1.0 + ld*ld*0.16) * smoothstep(11.0, 3.0, ld);
+  c += (c*1.05 + 0.035) * vec3(1.0, 0.83, 0.52) * ll;
   // высоко над лугом воздух прозрачнее — горы не тонут в дымке
   float den = uFogDen * (1.0 - 0.45*smoothstep(10.0, 60.0, w.y));
   float f = 1.0 - exp(-d * (den + deep*0.012));

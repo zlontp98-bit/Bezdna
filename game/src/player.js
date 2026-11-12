@@ -141,10 +141,10 @@ function haloMat() {
     uniforms: { uPx: { value: 1 } },
     vertexShader: `uniform float uPx;
       void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = min(uPx * 700.0 * (0.25 + 0.35 * uLure.w) / max(-mv.z, 0.3), 600.0);
+        gl_PointSize = min(uPx * 700.0 * (0.20 + 0.16 * uLure.w) / max(-mv.z, 0.3), 320.0);
         gl_Position = projectionMatrix * mv; }`,
     fragmentShader: `void main(){ float r = length(gl_PointCoord - 0.5) * 2.0;
-      float a = (exp(-r * r * 9.0) * 0.9 + exp(-r * r * 2.5) * 0.35) * (0.2 + 0.8 * uLure.w) * (1.0 - smoothstep(0.85, 1.0, r));
+      float a = (exp(-r * r * 9.0) * 0.38 + exp(-r * r * 2.5) * 0.13) * (0.25 + 0.75 * uLure.w) * (1.0 - smoothstep(0.85, 1.0, r));
       gl_FragColor = vec4(vec3(1.0, 0.85, 0.55) * a, 1.0); }`,
   });
 }
@@ -167,6 +167,9 @@ const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
 const MAX_SLOPE = 0.9;
 const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
 const CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
+// толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
+const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
+const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
 export class Player {
   constructor(scene, spawn, colliders) {
@@ -229,6 +232,26 @@ export class Player {
       return h <= p.y + 0.3;
     };
     let nx = p.x + dx, nz = p.z + dz;
+    // У героя есть толщина: перед отвесной стеной или боком валуна он останавливается
+    // на BODY от неё, а не входит в камень по пояс. Щупаем вперёд и чуть в стороны.
+    const wall = (x, z, ux, uz) => {
+      for (const [c, s] of FEEL) {
+        const qx = x + (ux * c - uz * s) * BODY, qz = z + (uz * c + ux * s) * BODY;
+        if (this.G(qx, qz) - p.y > WALL_H) return true;
+      }
+      return false;
+    };
+    if (wall(nx, nz, dx / step, dz / step)) {
+      // в стену — нет, вдоль неё — да: поворачиваем шаг, пока он не пойдёт по касательной
+      let done = false;
+      for (const [c, s] of TURN) {
+        const tx = (dx * c - dz * s) * c, tz = (dz * c + dx * s) * c, tl = Math.hypot(tx, tz);
+        if (wall(p.x + tx, p.z + tz, tx / tl, tz / tl) || !ok(p.x + tx, p.z + tz)) continue;
+        nx = p.x + tx; nz = p.z + tz; done = true;
+        break;
+      }
+      if (!done) { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
+    }
     if (!ok(nx, nz)) {
       // Упёрлись: скользим вдоль склона/стены по горизонтали. Обходной шаг не должен
       // набирать высоту — иначе герой «лесенкой» вползал туда, куда прямо не пускает.
@@ -296,7 +319,13 @@ export class Player {
       return;
     }
     const ux = -n.x / hl, uz = -n.z / hl; // вверх по склону (в плане)
-    const mvx = ux * inp.my * n.y - uz * inp.mx, mvz = uz * inp.my * n.y + ux * inp.mx;
+    // Скорость вдоль самой поверхности постоянная. Наклон меряем прямо под рукой, в сторону движения:
+    // усреднённая нормаль на полке посреди отвесной стены «видит» стену, и герой полз по полке
+    // секундами, будто застрял
+    const sg = inp.my < 0 ? -1 : 1, e = 0.06 * sg;
+    const sl = (this.G(p.x + ux * e, p.z + uz * e) - p.y) / e;
+    const fwd = Math.max(n.y * 0.5, 1 / Math.hypot(1, sl));
+    const mvx = ux * inp.my * fwd - uz * inp.mx, mvz = uz * inp.my * fwd + ux * inp.mx;
     const amt = Math.min(1, Math.hypot(inp.mx, inp.my));
     p.x += mvx * CLIMB * dt; p.z += mvz * CLIMB * dt;
     this.collide();
@@ -521,7 +550,8 @@ export class Player {
       m.armL.rotation.z = -0.22 - Math.max(0, -a) * 0.15; m.armR.rotation.z = 0.22 + Math.max(0, a) * 0.15;
       m.legL.rotation.x = -0.8 - a * 0.6; m.legR.rotation.x = -0.8 + a * 0.6;
       rig.rotation.set(this.climbLean, 0, a * 0.1);
-      rig.position.set(0, Math.abs(b) * 0.07 * (this.climbAmt || 0), -0.26);
+      // тело держим перед стеной: чем она отвеснее, тем дальше, иначе голова уходит в камень
+      rig.position.set(0, Math.abs(b) * 0.07 * (this.climbAmt || 0), -0.26 - 0.2 * Math.cos(this.climbLean));
       rig.scale.set(1, 1, 1);
       m.head.rotation.x = -0.4; m.head.rotation.z = -a * 0.12;
       this.waddle = a * 0.1;

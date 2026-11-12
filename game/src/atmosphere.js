@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, smoothstep } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, SRC, SOURCES, heightAt, normalAt, waterAt } from './terrain.js';
+import { W, SRC, SOURCES, POOLS, poolDist, heightAt, normalAt, waterAt } from './terrain.js';
 import { part, merge, T } from './flora.js';
 
 const TAU = Math.PI * 2;
@@ -185,14 +185,14 @@ export function buildStreams(scene) {
   const m = mat({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     vertexShader: /* glsl */ `
-      attribute vec4 aUvs; attribute float aFoam;
-      varying vec3 vW; varying vec4 vU; varying float vFoam;
+      attribute vec4 aUvs; attribute vec2 aFoam;
+      varying vec3 vW; varying vec4 vU; varying float vFoam; varying float vFade;
       void main(){
-        vW = position; vU = aUvs; vFoam = aFoam;
+        vW = position; vU = aUvs; vFoam = aFoam.x; vFade = aFoam.y;
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: /* glsl */ `
-      varying vec3 vW; varying vec4 vU; varying float vFoam;
+      varying vec3 vW; varying vec4 vU; varying float vFoam; varying float vFade;
       void main(){
         float steep = vU.z, u = vU.x, depth = vU.w;
         float spd = mix(0.9, 5.0, max(steep, vFoam * 0.6));
@@ -218,7 +218,7 @@ export function buildStreams(scene) {
         vec3 nw = normalize(vec3((n1 - 0.5)*0.35, 1.0, (n2 - 0.5)*0.35));
         float spec = pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh;
         c += uSunCol * spec * 1.4;
-        float a = mix(0.9, 1.0, max(max(steep, dk), clamp(foam, 0.0, 1.0))) * smoothstep(1.0, 0.86, abs(u)) * smoothstep(0.0, 1.2, vU.y);
+        float a = mix(0.9, 1.0, max(max(steep, dk), clamp(foam, 0.0, 1.0))) * smoothstep(1.0, 0.86, abs(u)) * smoothstep(0.0, 1.2, vU.y) * vFade;
         gl_FragColor = vec4(applyFog(c, vW), a);
       }`,
   });
@@ -282,7 +282,11 @@ export function buildStreams(scene) {
           // гладь ровная поперёк: где берег выше воды, он её закрывает
           row.push(x, wmid, z);
           uvs.push(u, len, steep, Math.max(0, wmid - heightAt(x, z)));
-          foam.push(foamAt[k]);
+          // в чаше ленты нет: там своя гладь (waterfall.js), на её берегу они плавно сменяют друг друга —
+          // две плоскости воды нигде не лежат одна на другой
+          let dn = 9;
+          for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
+          foam.push(foamAt[k], smoothstep(0.8, 1.0, dn));
         }
         if (prev) len += Math.abs(r - R[k - 1]) + Math.abs(wmid - lvl[k - 1]);
         if (prev) for (let q = 0; q < K - 1; q++) idx.push(vi - K + q, vi + q, vi - K + q + 1, vi - K + q + 1, vi + q, vi + q + 1);
@@ -292,7 +296,7 @@ export function buildStreams(scene) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('aUvs', new THREE.Float32BufferAttribute(uvs, 4));
-    g.setAttribute('aFoam', new THREE.Float32BufferAttribute(foam, 1));
+    g.setAttribute('aFoam', new THREE.Float32BufferAttribute(foam, 2));
     g.setIndex(idx);
     const mesh = new THREE.Mesh(g, m);
     mesh.frustumCulled = false;
