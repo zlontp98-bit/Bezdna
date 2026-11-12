@@ -24,6 +24,7 @@ const isMobile = matchMedia('(pointer: coarse)').matches;
 const store = {
   get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (_) { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
+  del(k) { try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, craft;
@@ -387,12 +388,32 @@ function start() {
   yaw = player.facing + Math.PI; // камера встаёт за спину героя
 }
 $('play').addEventListener('click', start);
+// есть ли что терять: сводка прогресса на главном экране
+function hasProgress() { return inv.count('log') > 0 || town.wallet > 0 || town.state !== 'none' || craft.known.length > 0; }
+function showSave() {
+  const el = $('save'), parts = [];
+  if (town.wallet) parts.push(`✨ ${town.wallet}`);
+  if (inv.count('log')) parts.push(`🪵 ${inv.count('log')}`);
+  if (town.state !== 'none') parts.push(town.state === 'built' ? '🏠 дом' : '🏗️ стройка');
+  if (craft.known.length) parts.push(`📖 ${craft.known.length}`);
+  el.hidden = !parts.length;
+  el.innerHTML = parts.map((t) => `<span>${t}</span>`).join('');
+}
+// Новая игра: стираем всё, что игрок изменил в мире, и строим его заново.
+// Мир строится из зерна, поэтому «чистый» — это тот же мир без следов прошлой игры
+$('newgame').addEventListener('click', () => $('confirm').classList.add('show'));
+$('wipeNo').addEventListener('click', () => $('confirm').classList.remove('show'));
+$('wipe').addEventListener('click', () => {
+  for (const k of ['bezdna.inv', 'bezdna.world', 'bezdna.axe', 'bezdna.me']) store.del(k);
+  location.reload();
+});
 $('tomenu').addEventListener('click', () => {
   running = false;
   $('panel').classList.remove('show');
   $('hud').classList.remove('show');
   $('menu').classList.remove('hide');
-  $('play').textContent = 'Продолжить';
+  $('playText').textContent = 'Продолжить';
+  showSave();
   if (document.exitPointerLock) document.exitPointerLock();
 });
 $('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
@@ -451,7 +472,8 @@ requestAnimationFrame(() => setTimeout(async () => {
     camera.position.set(s.x + 6, s.y + 3, s.z - 3);
     player.facing = 1.9; // на заставке герой стоит лицом к лагерю и зрителю
     $('play').disabled = false;
-    $('play').textContent = 'Играть';
+    $('playText').textContent = hasProgress() ? 'Продолжить' : 'Играть';
+    showSave();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
     window.__game = { player, camera, inv, scene, wood, world, town, picks, craft, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };

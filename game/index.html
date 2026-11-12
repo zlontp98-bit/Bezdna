@@ -13,33 +13,69 @@
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   button { font: inherit; color: inherit; border: 0; cursor: pointer; }
 
-  /* главное меню */
+  /* главное меню: колонка слева (на вертикальном экране — снизу), герой справа.
+     Без backdrop-filter: под меню всё время рисуется 3D-сцена, размытие на телефоне дорогое */
   #menu { position: fixed; inset: 0; display: flex; align-items: center; overflow-y: auto;
-    padding: max(20px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(30px, env(safe-area-inset-left));
-    background: linear-gradient(90deg, rgba(10,24,44,.72) 0%, rgba(10,24,44,.35) 42%, rgba(10,24,44,0) 68%);
+    padding: max(18px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+    background: radial-gradient(120% 140% at 0% 50%, rgba(18,12,46,.9) 0%, rgba(24,16,58,.62) 34%, rgba(24,16,58,.12) 58%, rgba(24,16,58,0) 72%);
     transition: opacity .5s; touch-action: pan-y; }
   #menu.hide { opacity: 0; pointer-events: none; }
-  .mcol { width: min(360px, 100%); display: flex; flex-direction: column; gap: 12px; margin: auto 0; }
-  h1 { margin: 0; font-size: clamp(40px, 8vw, 76px); letter-spacing: .12em; font-weight: 800; line-height: 1;
-    text-shadow: 0 4px 30px rgba(10,30,60,.5); }
-  .sub { margin: -4px 0 6px; font-size: 15px; opacity: .9; letter-spacing: .04em; }
-  #play { padding: 15px 20px; font-size: 21px; font-weight: 800; border-radius: 18px; color: #3a2500;
-    background: linear-gradient(180deg, #ffd978, #ffb02e); box-shadow: 0 6px 0 #c97d10, 0 14px 30px rgba(0,0,0,.28); }
-  #play:active { transform: translateY(4px); box-shadow: 0 2px 0 #c97d10; }
-  #play:disabled { filter: grayscale(.7); opacity: .8; }
-  .card { padding: 14px; border-radius: 18px; margin-top: 4px; }
-  .card h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .8; font-weight: 700; }
+  .mcol { width: min(372px, 100%); display: flex; flex-direction: column; gap: 10px; margin: auto 0; }
+  .brand { display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px; }
+  .eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .32em; color: #c9b8ff; opacity: .9; }
+  h1 { margin: 0; font-size: clamp(42px, 7.4vw, 74px); letter-spacing: .1em; font-weight: 900; line-height: .95;
+    background: linear-gradient(180deg, #ffffff 30%, #cdbbff 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 6px 24px rgba(120,80,255,.45)); }
+  .sub { margin: 2px 0 0; font-size: 14px; opacity: .78; letter-spacing: .03em; }
+  /* сводка сохранения: что уже есть у игрока */
+  #save { display: flex; gap: 6px; flex-wrap: wrap; }
+  #save[hidden] { display: none; }
+  #save span { padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 800; background: rgba(255,255,255,.1);
+    border: 1px solid rgba(255,255,255,.14); font-variant-numeric: tabular-nums; }
+  .mbtn { display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 16px; font-weight: 800; transition: transform .12s, filter .12s; }
+  .mbtn:active { transform: scale(.97); }
+  .mbtn .i { font-size: .95em; }
+  #play { padding: 14px 20px; font-size: 21px; color: #2b1a00;
+    background: linear-gradient(180deg, #ffe08a 0%, #ffbd3b 55%, #ff9f1c 100%);
+    box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 10px 28px rgba(255,160,40,.35), 0 4px 0 #c97710; }
+  #play:active { transform: translateY(3px) scale(.99); box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 6px 18px rgba(255,160,40,.3), 0 1px 0 #c97710; }
+  #play:disabled { filter: grayscale(.6); opacity: .75; }
+  .mrow { display: flex; gap: 8px; }
+  .mrow > * { flex: 1; }
+  .ghost { padding: 11px 12px; font-size: 15px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2); }
+  .ghost:hover { background: rgba(255,255,255,.14); }
+  #upd.new { background: linear-gradient(180deg, #a98bff, #7b5cff); border-color: transparent; box-shadow: 0 6px 20px rgba(123,92,255,.45); }
+  #upd.busy { opacity: .7; }
+  #upd[hidden] { display: none; }
+  .card { padding: 12px 14px; border-radius: 18px; background: rgba(20,14,48,.55); border: 1px solid rgba(255,255,255,.12); }
+  .card h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; opacity: .7; font-weight: 800; }
   .card .seg { margin: 0; }
-  .card #colors { margin-bottom: 14px; }
-  #upd { padding: 12px 18px; font-size: 16px; font-weight: 800; border-radius: 16px; text-align: center; }
-  #upd.new { background: rgba(255,194,71,.92); color: #3a2500; }
-  #upd.busy { opacity: .75; }
-  .hint { font-size: 12.5px; opacity: .8; line-height: 1.35; }
-  @media (max-height: 470px) { h1 { font-size: 40px; } .sub { display: none; } .mcol { gap: 9px; } #play { padding: 11px 20px; } .card { padding: 11px 14px; } .card #colors { margin-bottom: 10px; } }
+  .card #colors { margin-bottom: 12px; }
+  #menu #colors button { border-width: 2px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+  #menu #colors button.on { border-color: #fff; transform: scale(1.12); box-shadow: 0 0 0 3px rgba(255,255,255,.18), 0 2px 8px rgba(0,0,0,.4); }
+  #menu .seg button { background: rgba(255,255,255,.08); }
+  #menu .seg button.on { background: linear-gradient(180deg, #ffe08a, #ffb02e); color: #2b1a00; }
+  .foot { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .hint { font-size: 12px; opacity: .62; line-height: 1.35; }
+  #ver { white-space: nowrap; }
+  /* окно «Начать заново?» */
+  #confirm { position: fixed; inset: 0; z-index: 30; display: none; place-items: center; background: rgba(10,6,30,.6); padding: 20px; }
+  #confirm.show { display: grid; }
+  #confirm .box { width: min(380px, 100%); padding: 18px; border-radius: 20px; background: #221a4a; border: 1px solid rgba(255,255,255,.16);
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  #confirm h2 { margin: 0 0 8px; font-size: 20px; }
+  #confirm p { margin: 0 0 16px; font-size: 14px; line-height: 1.4; opacity: .85; }
+  #wipe { padding: 11px 12px; font-size: 15px; background: linear-gradient(180deg, #ff7a6b, #e5483a); color: #fff; box-shadow: 0 6px 18px rgba(229,72,58,.35); }
+  @media (max-height: 470px) {
+    h1 { font-size: 40px; } .sub, .hint.mob, .hint.desk { display: none; } .mcol { gap: 7px; }
+    #play { padding: 10px 20px; font-size: 19px; } .ghost { padding: 8px 10px; font-size: 14px; }
+    .card { padding: 9px 12px; } .card #colors { margin-bottom: 8px; } .card h3 { margin-bottom: 5px; }
+    #menu #colors button { max-height: 30px; } #menu .seg button { padding: 7px 4px; }
+  }
   @media (max-aspect-ratio: 1/1) {
-    #menu { align-items: flex-end; background: linear-gradient(180deg, rgba(10,24,44,0) 30%, rgba(10,24,44,.5) 52%, rgba(10,24,44,.82) 100%); }
+    #menu { align-items: flex-end; background: linear-gradient(180deg, rgba(24,16,58,0) 28%, rgba(24,16,58,.55) 50%, rgba(18,12,46,.92) 100%); }
     .mcol { margin: 0 auto; }
-    h1 { text-align: center; } .sub { text-align: center; }
+    .brand, .sub { text-align: center; } #save { justify-content: center; }
   }
   /* экран загрузки: картинка на весь экран, внизу подпись и полоса прогресса */
   #loading { position: fixed; inset: 0; z-index: 20; background: #1b1338 url(./assets/loading.jpg) center 22% / cover no-repeat;
@@ -234,19 +270,35 @@
 
 <div id="menu">
   <div class="mcol">
-    <h1>БЕЗДНА</h1>
-    <p class="sub">Лагерь на краю провала</p>
-    <button id="play" disabled>Загрузка…</button>
-    <div class="card glass">
+    <div class="brand">
+      <div class="eyebrow">ПРИКЛЮЧЕНИЕ НА КРАЮ</div>
+      <h1>БЕЗДНА</h1>
+      <p class="sub">Лагерь на краю провала</p>
+    </div>
+    <div id="save" hidden></div>
+    <button id="play" class="mbtn" disabled><span class="i">▶</span><span id="playText">Загрузка…</span></button>
+    <div class="mrow">
+      <button id="newgame" class="mbtn ghost"><span class="i">⟲</span>Новая игра</button>
+      <button id="upd" class="mbtn ghost" hidden><span id="updIcon">📦</span><span id="updText">Обновить</span></button>
+    </div>
+    <div class="card">
       <h3>Цвет героя</h3>
       <div id="colors"></div>
       <h3>Графика</h3>
       <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
     </div>
-    <button id="upd" class="glass" hidden><span id="updIcon">📦</span> <span id="updText">Обновить</span></button>
-    <div id="ver" class="hint" hidden></div>
-    <div class="hint mob">Слева — идти (сильно отклони — бег) · справа — осматриваться · кнопка с рукой — схватиться за стену и лезть</div>
-    <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — схватиться за стену / отпустить · F — действие (рубить, подобрать, поговорить, изучить) · C — крафт · мышь — обзор · V — вид</div>
+    <div class="foot">
+      <div class="hint mob">Слева — идти · справа — обзор · кнопка с рукой — лезть по стене</div>
+      <div class="hint desk">WASD — идти · Shift — бег · Пробел — прыжок · E — лезть · F — действие · C — крафт · V — вид</div>
+      <div id="ver" class="hint" hidden></div>
+    </div>
+  </div>
+</div>
+<div id="confirm">
+  <div class="box">
+    <h2>Начать заново?</h2>
+    <p>Новый чистый мир: инвентарь, искры, дом, казна, изученные чертежи и срубленные деревья пропадут. Цвет героя и настройки графики останутся.</p>
+    <div class="mrow"><button id="wipeNo" class="mbtn ghost">Отмена</button><button id="wipe" class="mbtn">Начать заново</button></div>
   </div>
 </div>
 <div id="loading"><div id="loadText">Загрузка мира…</div><div id="loadBar"><div id="loadFill"></div></div><div id="loadPct">0%</div></div>
