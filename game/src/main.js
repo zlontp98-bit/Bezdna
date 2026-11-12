@@ -13,6 +13,7 @@ import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
 import { groundAt } from './solids.js';
 import { Woodcutter } from './chop.js';
+import { World } from './world.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -22,7 +23,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -98,7 +99,9 @@ function build() {
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
   inv = new Inventory(store);
   bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
-  wood = new Woodcutter(scene, flora.trees, player, inv, toast);
+  // общий мир: всё, что игроки меняют (пока — в памяти телефона, потом — на сервере)
+  world = new World(store);
+  wood = new Woodcutter(scene, flora.trees, player, inv, toast, world);
   // облик героя: цвет и пробная броня, выбор запоминается
   const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]) };
   if (!SKIN_COLORS.includes(look.color)) look.color = SKIN_COLORS[0];
@@ -345,7 +348,7 @@ requestAnimationFrame(() => setTimeout(() => {
     $('play').textContent = 'Играть';
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, wood, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { player, camera, inv, scene, wood, world, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loading').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

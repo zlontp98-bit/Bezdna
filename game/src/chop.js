@@ -1,21 +1,26 @@
 import * as THREE from '../vendor/three.min.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { SWING } from './player.js';
+import { objId, RULES } from './world.js';
 
 // Рубка деревьев. С топором в руке у ствола — несколько ударов, дерево валится,
 // выпадают три бревна и летят к герою. Остаётся пенёк; через пару минут дерево вырастает снова.
+// Сама игра ничего не решает: последний удар — это просьба к миру (world.send), а падение,
+// брёвна и рост — ответ мира. Поэтому то же самое заработает и с сервером, и для чужих рубок.
 // Всё дёшево: двигаем матрицу одного экземпляра в уже существующей сетке деревьев,
 // пеньки и брёвна — по одной сетке на все.
-const HITS = 4, LOGS = 3, REACH = 1.7, REGROW = [100, 150], FALL = 0.95, GROW = 2.6, FLY = 0.75;
+const HITS = 4, LOGS = 3, REACH = 1.7, FALL = 0.95, GROW = 2.6, FLY = 0.75;
 const CELL = 8;
 
 export class Woodcutter {
-  constructor(scene, trees, player, inv, toast) {
-    this.trees = trees; this.player = player; this.inv = inv; this.toast = toast;
+  constructor(scene, trees, player, inv, toast, world) {
+    this.trees = trees; this.player = player; this.inv = inv; this.toast = toast; this.world = world;
     this.target = null; this.cd = 0; this.busy = []; // деревья с идущей анимацией или ждущие роста
-    this.cells = new Map();
+    this.cells = new Map(); this.byId = new Map();
     trees.forEach((t) => {
       t.hp = HITS; t.state = 'idle'; t.t = 0; t.dx = 1; t.dz = 0;
+      t.id = objId('tree', t.x, t.z);
+      this.byId.set(t.id, t);
       const k = Math.floor(t.x / CELL) + ',' + Math.floor(t.z / CELL);
       (this.cells.get(k) || this.cells.set(k, []).get(k)).push(t);
     });
@@ -31,7 +36,7 @@ export class Woodcutter {
       part(new THREE.CircleGeometry(0.13, 6), 0xd9b98a, { m: new THREE.Matrix4().makeRotationY(Math.PI / 2).setPosition(0.31, 0, 0) }),
       part(new THREE.CircleGeometry(0.13, 6), 0xd9b98a, { m: new THREE.Matrix4().makeRotationY(-Math.PI / 2).setPosition(-0.31, 0, 0) }),
     ]);
-    this.logs = new THREE.InstancedMesh(logGeo, M, LOGS * 3);
+    this.logs = new THREE.InstancedMesh(logGeo, M, LOGS * 3); // одновременно летящих брёвен
     this.flying = [];
     const white = new THREE.Color(1, 1, 1);
     for (const im of [this.stumps, this.logs]) {
@@ -39,6 +44,27 @@ export class Woodcutter {
       im.frustumCulled = false; im.matrixAutoUpdate = false;
       scene.add(im);
     }
+    // срубленные раньше (этим или другими игроками) — сразу пеньки
+    const snap = world.snapshot();
+    for (const id in snap.cut) { const t = this.byId.get(id); if (t) this.setCut(t, snap.cut[id], false); }
+    world.on((ev) => {
+      if (ev.type !== 'chopped') return;
+      const t = this.byId.get(ev.id);
+      if (!t) return;
+      if (ev.by === world.me) t.reward = ev.reward; // брёвна отдадим, когда дерево упадёт
+      this.setCut(t, ev.at, true);
+    });
+  }
+
+  // дерево срублено в момент at: animate — уронить (видно, как падает), иначе сразу пенёк
+  setCut(t, at, animate) {
+    t.cutAt = at;
+    if (t.col && t.r0 === undefined) t.r0 = t.col.r;
+    if (t.col) t.col.r = -10; // ствол больше не мешает пройти
+    this.stump(t, true);
+    if (animate && (t.state === 'idle' || t.state === 'shake')) { t.state = 'fall'; t.t = 0; }
+    else { t.state = 'gone'; this.place(t, 0, 0); }
+    if (!this.busy.includes(t)) this.busy.push(t);
   }
 
   // ближайшее стоящее дерево, до ствола которого можно дотянуться
@@ -80,18 +106,17 @@ export class Woodcutter {
   land({ t, dx, dz }) {
     if (t.state !== 'idle' && t.state !== 'shake') return;
     t.dx = dx; t.dz = dz; t.t = 0;
-    if (--t.hp > 0) { t.state = 'shake'; }
-    else {
-      t.state = 'fall';
-      if (t.col) { t.r0 = t.col.r; t.col.r = -10; } // ствол больше не мешает пройти
-      this.stump(t, true);
-    }
+    t.state = 'shake';
     if (!this.busy.includes(t)) this.busy.push(t);
+    // последний удар: просим мир срубить дерево; ответ (setCut) уронит его
+    if (--t.hp <= 0) { t.hp = HITS; this.world.send({ type: 'chop', id: t.id }); }
   }
   drop(t) {
-    const left = this.inv.add('log', LOGS);
-    this.toast(left === 0 ? `+${LOGS} 🪵 Бревно` : left < LOGS ? `+${LOGS - left} 🪵 — инвентарь полон` : 'Инвентарь полон');
-    for (let i = 0; i < LOGS; i++) {
+    const r = t.reward; t.reward = null;
+    if (!r) return; // рубил не я — брёвна не мои
+    const n = r.log || 0, left = this.inv.add('log', n);
+    this.toast(left === 0 ? `+${n} 🪵 Бревно` : left < n ? `+${n - left} 🪵 — инвентарь полон` : 'Инвентарь полон');
+    for (let i = 0; i < n; i++) {
       const a = i * 2.1 + t.rot;
       this.flying.push({ t: -i * 0.07, x: t.x + t.dx * (0.6 + i * 0.5), y: t.y + 0.6, z: t.z + t.dz * (0.6 + i * 0.5), vx: Math.cos(a) * 1.6, vz: Math.sin(a) * 1.6, rot: a });
     }
@@ -117,10 +142,10 @@ export class Woodcutter {
         // падает от героя, ускоряясь; у земли съёживается и пропадает
         const k = Math.min(1, t.t / FALL);
         this.place(t, 1.5 * k * k, 1 - Math.max(0, (k - 0.75) / 0.25) ** 2);
-        if (k === 1) { t.state = 'gone'; t.t = 0; t.wait = REGROW[0] + Math.random() * (REGROW[1] - REGROW[0]); this.place(t, 0, 0); this.drop(t); }
+        if (k === 1) { t.state = 'gone'; this.place(t, 0, 0); this.drop(t); }
       } else if (t.state === 'gone') {
-        // ждёт; не вырастает прямо на герое
-        if (t.t > t.wait && Math.hypot(t.x - pl.pos.x, t.z - pl.pos.z) > 2.5) { t.state = 'grow'; t.t = 0; }
+        // вырастает по общим часам мира — у всех игроков в один момент; не прямо на герое
+        if (this.world.now() - t.cutAt > RULES.tree.regrowMs(t.id) && Math.hypot(t.x - pl.pos.x, t.z - pl.pos.z) > 2.5) { t.state = 'grow'; t.t = 0; }
       } else if (t.state === 'grow') {
         // саженец вытягивается из пенька с лёгким «пружинящим» перелётом
         const k = Math.min(1, t.t / GROW), e = 1 - (1 - k) ** 3;
@@ -128,6 +153,7 @@ export class Woodcutter {
         if (k === 1) {
           t.state = 'idle'; t.hp = HITS;
           if (t.col) t.col.r = t.r0;
+          t.cutAt = undefined;
           this.stump(t, false);
           this.busy.splice(n, 1);
         }
