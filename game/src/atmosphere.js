@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, smoothstep } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, SRC, SOURCES, heightAt, normalAt, waterAt, POOLS } from './terrain.js';
+import { W, SRC, SOURCES, heightAt, normalAt, waterAt } from './terrain.js';
 import { part, merge, T } from './flora.js';
 
 const TAU = Math.PI * 2;
@@ -174,23 +174,28 @@ export function buildMotes(scene, count) {
   return m;
 }
 
-// ---------- ручьи-каскады ----------
-// Лента воды идёт от гор через луг и падает по каждому уступу до самого колодца.
+// ---------- вода ----------
+// Каждый ручей — одна линия от родника в горах до шахты. Ровные участки (русло, заводи)
+// рисуются лентой-гладью, а там, где вода падает с уступа, лента прерывается и начинается
+// водопад-пелена (waterfall.js). У обоих один цвет и одна пена — вода везде одного стиля.
+const DROP = 0.6;  // падение воды на 0.5 м пути, с которого начинается перепад
+const FALL = 2.0;  // перепад ниже этого — каскад, вода остаётся лентой
+
 export function buildStreams(scene) {
   const m = mat({
-    transparent: true, depthWrite: false,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
     vertexShader: /* glsl */ `
-      attribute vec4 aUvs;
-      varying vec3 vW; varying vec4 vU;
+      attribute vec4 aUvs; attribute float aFoam;
+      varying vec3 vW; varying vec4 vU; varying float vFoam;
       void main(){
-        vW = position; vU = aUvs;
+        vW = position; vU = aUvs; vFoam = aFoam;
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: /* glsl */ `
-      varying vec3 vW; varying vec4 vU;
+      varying vec3 vW; varying vec4 vU; varying float vFoam;
       void main(){
         float steep = vU.z, u = vU.x, depth = vU.w;
-        float spd = mix(0.9, 7.0, steep);
+        float spd = mix(0.9, 5.0, max(steep, vFoam * 0.6));
         float v = vU.y - uTime*spd;
         float n1 = vnoise(vec2(u*2.5, v*mix(0.35,0.22,steep)));
         float n2 = vnoise(vec2(u*7.0 + 3.0, v*mix(0.9,0.4,steep)));
@@ -200,148 +205,101 @@ export function buildStreams(scene) {
         vec3 deepC = mix(vec3(0.04,0.17,0.22), vec3(0.07,0.26,0.30), n1);
         vec3 c = mix(shallow, deepC, dk);
         float foam = smoothstep(0.74, 0.9, n2) * (0.35 - dk*0.28) + steep * (0.55 + 0.45*n1);
-        foam += smoothstep(0.84, 1.0, abs(u)) * 0.35 * (1.0 - steep*0.5);
+        // под водопадом вода кипит пеной, ниже по течению пена расходится полосами
+        foam += vFoam * smoothstep(0.25 + 0.5*(1.0 - vFoam), 0.9, n1*0.6 + n2*0.5);
         c = mix(c, vec3(0.94,0.98,1.0), clamp(foam, 0.0, 1.0));
         // отражение неба и солнечные блики на ряби — по ним глаз и узнаёт воду
         vec3 vd = normalize(cameraPosition - vW);
-        float fres = pow(1.0 - max(vd.y, 0.0), 3.0) * (1.0 - steep);
+        float calm = (1.0 - steep) * (1.0 - vFoam);
+        float fres = pow(1.0 - max(vd.y, 0.0), 3.0) * calm;
         c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, fres*0.4);
         float sh = shadowAt(vW.xz);
         c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*sh);
         vec3 nw = normalize(vec3((n1 - 0.5)*0.35, 1.0, (n2 - 0.5)*0.35));
-        float spec = pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * (1.0 - steep) * sh;
+        float spec = pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh;
         c += uSunCol * spec * 1.4;
-        float a = mix(0.9, 1.0, max(steep, dk)) * smoothstep(1.0, 0.86, abs(u)) * smoothstep(0.0, 1.2, vU.y);
+        float a = mix(0.9, 1.0, max(max(steep, dk), clamp(foam, 0.0, 1.0))) * smoothstep(1.0, 0.86, abs(u)) * smoothstep(0.0, 1.2, vU.y);
         gl_FragColor = vec4(applyFog(c, vW), a);
       }`,
   });
-  const n = new THREE.Vector3();
-  // ручей: от чаши под истоком к провалу; ущелье: от родника к кромке водопада
-  // последнее число — с какой «длины» начинается лента: у родника вода проявляется постепенно
-  const runs = W.STREAMS.map((th) => [th, W.SRC_R - SRC.POOL + 0.2, W.PIT - 6, 3.5, 5]);
-  for (const s of SOURCES) runs.push([s.tw, W.SRC_R + SRC.GORGE, W.SRC_R + s.lipA - 0.1, 2.5, 0]);
-  for (const [th, rFrom, rTo, half, len0] of runs) {
-    const cx = Math.cos(th), cz = Math.sin(th), tx = -cz, tz = cx;
-    const pos = [], uvs = [], idx = [];
-    let len = len0, prev = null, i = 0;
-    const K = 5; // пять точек поперёк: середина глубокая, края мелкие
-    for (let r = rFrom; r > rTo; r -= 0.5, i++) {
-      const row = [];
-      normalAt(cx * r, cz * r, n, 0.5);
-      const wmid = waterAt(cx * r, cz * r);
-      // пороги: крутизну берём и по самой воде — на ступеньке она пенится
-      const wslope = Math.abs(waterAt(cx * (r - 0.5), cz * (r - 0.5)) - wmid) / 0.5;
-      const steep = Math.max(1 - Math.min(1, Math.max(0, (n.y - 0.35) / 0.5)), wmid > -1e8 ? smoothstep(0.2, 0.7, wslope) : 0);
-      for (let k = 0; k < K; k++) {
-        const u = -1 + (2 * k) / (K - 1);
-        const x = cx * r + tx * half * u, z = cz * r + tz * half * u;
-        const y = heightAt(x, z);
-        normalAt(x, z, n, 0.5);
-        // на крутом участке вода лежит на камне, на пологом — ровной гладью
-        let wy = wmid > -1e8 ? wmid : y + 0.3;
-        wy = Math.max(wy, y + n.y * 0.3 + 0.04 - steep * 0.1);
-        row.push(x, wy, z);
-        uvs.push(u, len, steep, Math.max(0, wy - y));
+  const falls = [];
+  for (const s of SOURCES) {
+    const th = s.tw, cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
+    const R = [];
+    for (let r = W.SRC_R + SRC.GORGE; r > W.PIT - 6; r -= 0.5) R.push(r);
+    const lvl = R.map((r) => { const w = waterAt(cx * r, cz * r); return w > -1e8 ? w : heightAt(cx * r, cz * r) + 0.2; });
+    // ширина воды на ряду: насколько далеко в стороны от оси есть вода
+    const halfAt = (k) => {
+      const r = R[k];
+      let hw = 0;
+      for (const sg of [-1, 1]) {
+        let l = 0.5;
+        while (l < 12 && waterAt(cx * r + px * l * sg, cz * r + pz * l * sg) > -1e8) l += 0.5;
+        hw = Math.max(hw, l);
       }
-      if (prev) len += Math.hypot(row[6] - prev[6], row[7] - prev[7], row[8] - prev[8]);
-      prev = row;
-      pos.push(...row);
-      if (i > 0) {
-        const a = (i - 1) * K, b = i * K;
-        for (let k = 0; k < K - 1; k++) idx.push(a + k, b + k, a + k + 1, a + k + 1, b + k, b + k + 1);
+      return Math.max(2.5, hw + 0.4);
+    };
+    // разбиваем на ровные участки и водопады
+    const segs = [], foamAt = new Float32Array(R.length);
+    let start = 0, i = 0, open = false;
+    while (i < R.length - 1) {
+      if (lvl[i] - lvl[i + 1] < DROP) { i++; continue; }
+      let j = i + 1;
+      const calm = (k) => Math.abs(lvl[k] - lvl[k + 1]) < 0.15 && Math.abs(lvl[k + 1] - lvl[k + 2]) < 0.15 && Math.abs(lvl[k + 2] - lvl[k + 3]) < 0.15;
+      while (j < R.length - 4 && !calm(j)) j++;
+      open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода уходит в туман
+      if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: лента
+      segs.push([start, i]);
+      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? -110 : lvl[j], open, half: halfAt(i) - 0.6, src: R[i] > W.SRC_R };
+      falls.push(f);
+      if (open) break;
+      // пена ниже места удара струи
+      for (let k = j; k < R.length; k++) foamAt[k] = Math.max(foamAt[k], smoothstep(12, 0, R[j] - R[k]) * (f.src ? 1 : 0.75));
+      start = j; i = j;
+    }
+    if (!open) segs.push([start, R.length - 1]);
+    // перед кромкой вода разгоняется и светлеет
+    for (const f of falls) if (f.th === th) for (let k = 0; k < R.length; k++) {
+      const d = R[k] - f.lipR;
+      if (d >= 0 && d < 3) foamAt[k] = Math.max(foamAt[k], 0.35 * (1 - d / 3));
+    }
+
+    const pos = [], uvs = [], foam = [], idx = [];
+    const K = 7;
+    let len = 0, vi = 0;
+    const n = new THREE.Vector3();
+    for (const [a, b] of segs) {
+      let prev = null;
+      for (let k = a; k <= b; k++) {
+        const r = R[k], wmid = lvl[k], half = halfAt(k);
+        normalAt(cx * r, cz * r, n, 0.5);
+        const wslope = k + 1 < R.length ? Math.abs(lvl[k] - lvl[k + 1]) / 0.5 : 0;
+        const steep = smoothstep(0.2, 0.7, wslope);
+        const row = [];
+        for (let q = 0; q < K; q++) {
+          const u = -1 + (2 * q) / (K - 1);
+          const x = cx * r + px * half * u, z = cz * r + pz * half * u;
+          // гладь ровная поперёк: где берег выше воды, он её закрывает
+          row.push(x, wmid, z);
+          uvs.push(u, len, steep, Math.max(0, wmid - heightAt(x, z)));
+          foam.push(foamAt[k]);
+        }
+        if (prev) len += Math.abs(r - R[k - 1]) + Math.abs(wmid - lvl[k - 1]);
+        if (prev) for (let q = 0; q < K - 1; q++) idx.push(vi - K + q, vi + q, vi - K + q + 1, vi - K + q + 1, vi + q, vi + q + 1);
+        pos.push(...row); vi += K; prev = row;
       }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('aUvs', new THREE.Float32BufferAttribute(uvs, 4));
+    g.setAttribute('aFoam', new THREE.Float32BufferAttribute(foam, 1));
     g.setIndex(idx);
     const mesh = new THREE.Mesh(g, m);
-    m.side = THREE.DoubleSide;
+    mesh.frustumCulled = false;
     mesh.renderOrder = 2;
     scene.add(mesh);
   }
-}
-
-// ---------- чаши под водопадами: гладь воды, пена и брызги ----------
-export function buildPools(scene) {
-  const water = mat({
-    transparent: true, depthWrite: false,
-    vertexShader: /* glsl */ `
-      varying vec3 vW; varying vec2 vP;
-      void main(){ vP = position.xz; vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp; }`,
-    fragmentShader: /* glsl */ `
-      uniform vec2 uHit;
-      varying vec3 vW; varying vec2 vP;
-      void main(){
-        float r = length(vP);
-        float dh = length(vP - uHit);
-        // круги от падающей воды
-        float ring = sin(dh*22.0 - uTime*6.0) * 0.5 + 0.5;
-        float n = vnoise(vW.xz*1.6 + uTime*0.25);
-        vec3 c = mix(vec3(0.06,0.26,0.34), vec3(0.22,0.58,0.66), n*0.6 + ring*0.25*smoothstep(0.75,0.1,dh));
-        c = mix(c, vec3(0.30,0.66,0.72), smoothstep(0.7, 1.0, r)*0.6);
-        float foam = smoothstep(0.42, 0.05, dh) + smoothstep(0.6, 0.85, vnoise(vW.xz*3.0 - uTime*0.4)) * 0.35
-                   + smoothstep(0.86, 1.0, r) * 0.6;
-        c = mix(c, vec3(0.97,1.0,1.0), clamp(foam, 0.0, 1.0));
-        float sh = shadowAt(vW.xz);
-        c = shade(c, vec3(0.0,1.0,0.0), 0.6 + 0.4*sh);
-        vec3 vd = normalize(cameraPosition - vW);
-        float n2 = vnoise(vW.xz*2.3 - uTime*0.35);
-        vec3 nw = normalize(vec3((n - 0.5)*0.4, 1.0, (n2 - 0.5)*0.4));
-        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, pow(1.0 - max(vd.y, 0.0), 3.0) * 0.35 * (1.0 - foam));
-        c += uSunCol * pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * 1.4 * sh * (1.0 - clamp(foam, 0.0, 1.0));
-        gl_FragColor = vec4(applyFog(c, vW), 0.95 * smoothstep(1.0, 0.94, r));
-      }`,
-    uniforms: { uHit: { value: new THREE.Vector2() } },
-  });
-  const spray = mat({
-    transparent: true, depthWrite: false,
-    uniforms: { uPx: { value: 1 } },
-    vertexShader: /* glsl */ `
-      uniform float uPx; attribute vec4 aS; varying float vA;
-      void main(){
-        float t = fract(uTime*(0.35 + aS.w*0.3) + aS.z);
-        vec3 p = position + vec3(aS.x, 0.0, aS.y) * (0.4 + t*1.6);
-        p.y += t*(2.6 + aS.w*1.5) - t*t*2.2;
-        vA = (1.0 - t) * 0.5 * smoothstep(0.0, 0.12, t);
-        vec4 mv = viewMatrix * vec4(p, 1.0);
-        gl_PointSize = uPx * (70.0 + 80.0*t) / max(-mv.z, 1.0);
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: /* glsl */ `
-      varying float vA;
-      void main(){ float d = length(gl_PointCoord - 0.5);
-        gl_FragColor = vec4(grade(mix(uFogCol, vec3(1.0), 0.75)), vA * smoothstep(0.5, 0.1, d)); }`,
-  });
-  const disc = new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2);
-  for (const p of POOLS) {
-    const m = water.clone();
-    const k = p.hit / p.rad;
-    m.uniforms = { ...water.uniforms, uHit: { value: new THREE.Vector2(-p.dx * k, -p.dz * k) } };
-    const mesh = new THREE.Mesh(disc, m);
-    mesh.position.set(p.x, p.level, p.z);
-    mesh.scale.set(p.rad, 1, p.rad);
-    mesh.renderOrder = 3;
-    scene.add(mesh);
-    // брызги у подножия: под истоком струя шире
-    const N = p.src ? 50 : 26, spread = p.src ? 7.5 : 3.2, pos = new Float32Array(N * 3), aS = new Float32Array(N * 4);
-    const hx = p.x - p.dx * p.hit, hz = p.z - p.dz * p.hit;
-    for (let i = 0; i < N; i++) {
-      pos[i * 3] = hx + (Math.random() - 0.5) * spread * Math.abs(p.dz) + (Math.random() - 0.5) * 0.6;
-      pos[i * 3 + 1] = p.level + 0.1;
-      pos[i * 3 + 2] = hz + (Math.random() - 0.5) * spread * Math.abs(p.dx) + (Math.random() - 0.5) * 0.6;
-      aS[i * 4] = Math.random() - 0.5 + p.dx * 0.6; aS[i * 4 + 1] = Math.random() - 0.5 + p.dz * 0.6;
-      aS[i * 4 + 2] = Math.random(); aS[i * 4 + 3] = Math.random();
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('aS', new THREE.BufferAttribute(aS, 4));
-    const pts = new THREE.Points(g, spray);
-    pts.frustumCulled = false; pts.renderOrder = 7;
-    scene.add(pts);
-  }
-  return spray;
+  return falls;
 }
 
 // ---------- лучи света, падающие в провал ----------

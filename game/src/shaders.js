@@ -23,6 +23,7 @@ export const U = {
   uCenter: { value: new THREE.Vector3() },
   uPlayer: { value: new THREE.Vector3() },
   uNoise: { value: null },
+  uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
 };
 
 // Шум для шейдеров: заранее посчитанная гладкая шумовая текстура с мип-уровнями.
@@ -59,6 +60,7 @@ export const COMMON = /* glsl */ `
 uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
+uniform vec4 uLure;
 uniform sampler2D uShadow, uNoise;
 
 // общая цветокоррекция стиля
@@ -85,6 +87,10 @@ vec3 applyFog(vec3 c, vec3 w){
   // чем глубже, тем темнее: свет сверху туда почти не доходит
   c *= mix(1.0, 0.62, smoothstep(-12.0, -60.0, w.y));
   float deep = smoothstep(-18.0, -70.0, w.y);
+  // тёплый свет фонарика: в темноте подсвечивает всё вокруг героя
+  float ld = distance(w, uLure.xyz);
+  float ll = uLure.w / (1.0 + ld*ld*0.07) * smoothstep(18.0, 7.0, ld);
+  c += (c*2.6 + 0.10) * vec3(1.0, 0.83, 0.52) * ll;
   // высоко над лугом воздух прозрачнее — горы не тонут в дымке
   float den = uFogDen * (1.0 - 0.45*smoothstep(10.0, 60.0, w.y));
   float f = 1.0 - exp(-d * (den + deep*0.012));

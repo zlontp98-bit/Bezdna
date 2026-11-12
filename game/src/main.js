@@ -4,7 +4,7 @@ setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
-import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildPools, buildShafts } from './atmosphere.js';
+import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks } from './stacks.js';
 import { buildWaterfalls } from './waterfall.js';
@@ -21,7 +21,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* без сохранения */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, spray, inv, falls;
+let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3();
@@ -35,7 +35,7 @@ const Q = {
 function applyRes() {
   renderer.setPixelRatio(Q.maxPR * Q.scale);
   renderer.setSize(innerWidth, innerHeight, false);
-  if (motes) motes.uniforms.uPx.value = spray.uniforms.uPx.value = falls.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
+  if (motes) motes.uniforms.uPx.value = falls.uniforms.uPx.value = player.halo.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
 }
 function setQuality(mode) {
   Q.mode = mode; store.set('bezdna.q', mode);
@@ -87,9 +87,7 @@ function build() {
   bakeShadows(flora.blobs.concat(camp.blobs, ruins));
   buildSky(scene);
   clouds = buildClouds(scene);
-  buildStreams(scene);
-  spray = buildPools(scene);
-  falls = buildWaterfalls(scene);
+  falls = buildWaterfalls(scene, buildStreams(scene));
   buildMist(scene);
   buildShafts(scene);
   grass = buildGrass(scene, isMobile ? 16000 : 30000);
@@ -242,6 +240,7 @@ function frame(now) {
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
   player.m.root.visible = !firstPerson && (camCur > 0.7 || !!debugCam);
+  player.haloPts.visible = player.m.root.visible;
 
   U.uCenter.value.copy(player.pos);
   U.uPlayer.value.copy(player.pos);

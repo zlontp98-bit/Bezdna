@@ -111,7 +111,7 @@ export function shelfAt(th) {
 // Локальные координаты истока: a — от центра чаши наружу (к горам), l — поперёк ручья.
 // RC — радиус скальной чаши, H — высота скалы, POOL — радиус пруда, GORGE — длина ущелья
 // над водопадом; A0..A1, L — прямоугольник, где рельеф хранится подробно (CELL м).
-export const SRC = { RC: 8.5, H: 24, POOL: 6.4, GORGE: 38, A0: -26, A1: 54, L: 37, CELL: 0.7 };
+export const SRC = { RC: 11.5, H: 48, POOL: 8, GORGE: 22, A0: -26, A1: 58, L: 40, CELL: 0.7, VH: 1.6 };
 SRC.NA = Math.floor((SRC.A1 - SRC.A0) / SRC.CELL) + 1;
 SRC.NL = Math.floor((2 * SRC.L) / SRC.CELL) + 1;
 SRC.LR = ((SRC.NL - 1) * SRC.CELL) / 2;
@@ -125,6 +125,8 @@ export function gorgeBed(s, a) {
   return s.base + SRC.H - 1.4 + (k + smoothstep(0.55, 1.0, t - k)) * 0.9;
 }
 const srcEdge = (x, z) => SRC.RC + fbm(x * 0.22 + 3, z * 0.22, 2) * 1.1;
+// «расстояние» от центра заводи: вниз по течению вытянута, чтобы перейти в русло
+const basinDist = (s, a, l) => Math.hypot((a - s.pc) * (a < s.pc ? 0.55 : 1.3), l);
 function shapeSource(h, x, z, a, l, s) {
   const { H, POOL, GORGE } = SRC, base = s.base, al = Math.abs(l);
   // план: прямая скальная стена поперёк ручья (концы чуть выгнуты к лугу) и полукруглая ниша под водопадом
@@ -133,18 +135,20 @@ function shapeSource(h, x, z, a, l, s) {
   const edge = srcEdge(x, z);
   const inside = Math.max(smoothstep(edge + 0.9, edge - 0.1, dc), smoothstep(0.9, -0.1, a - line + (edge - SRC.RC) * 0.6));
   // за стеной — плато, к концам стены оно сходит на нет и сливается со склонами
-  const side = smoothstep(30, 19, al), far = smoothstep(95, 60, a);
-  const top = base + H * side + Math.max(0, a - line) * 0.22 + fbm(x * 0.12 + 5, z * 0.12, 3) * 1.6;
-  let out = h + Math.max(0, top - h) * smoothstep(31, 21, al) * far;
+  // вершина над водопадом сходит склонами-плечами в хребет
+  const side = smoothstep(34, 14, al) ** 1.3, far = smoothstep(110, 70, a);
+  const top = base + H * side + Math.max(0, a - line) * 0.3 + fbm(x * 0.12 + 5, z * 0.12, 3) * 2.2;
+  let out = h + Math.max(0, top - h) * smoothstep(36, 22, al) * far;
   // русло по плато к кромке водопада
   if (a > s.lipA - 1.5 && a < GORGE + 6) {
-    const g = gorgeBed(s, a) + Math.max(0, al - 2.6) * 1.1;
+    const g = gorgeBed(s, a) + Math.max(0, al - 4.2) * 1.1;
     out += (Math.min(out, g) - out) * smoothstep(GORGE + 6, GORGE + 1, a);
   }
-  // перед стеной: ровная галечная площадка, к лугу и к концам стены — естественный рельеф; в нише пруд
+  // перед стеной: ровная галечная площадка, к лугу и к концам стены — естественный рельеф.
+  // Под водопадом ручей расширяется в заводь и дальше сужается в обычное русло
   let floor = base + (h - base) * Math.max(smoothstep(-12, -24, a), smoothstep(20, 30, al));
-  const pd = Math.hypot(a * 1.05, l);
-  floor -= 0.35 * smoothstep(POOL + 5, POOL, pd) + 1.9 * smoothstep(POOL + 0.6, POOL - 2.4, pd);
+  const pd = basinDist(s, a, l);
+  floor -= 0.25 * smoothstep(POOL + 4, POOL, pd) + 1.9 * smoothstep(POOL + 0.6, POOL - 2.4, pd);
   return floor * inside + out * (1 - inside);
 }
 function applySources(h, x, z, r, th) {
@@ -324,8 +328,13 @@ function applyChannel(h, x, z) {
 export function waterAt(x, z) {
   let w = -1e9;
   const r = Math.hypot(x, z);
-  if (r > W.PIT - 5 && r < W.SRC_R - 3 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
+  if (r > W.PIT - 5 && r < W.SRC_R - 1 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
   for (const p of POOLS) {
+    if (p.src) {
+      const th = Math.atan2(z, x), s = p.s;
+      if (basinDist(s, r - W.SRC_R, angDiff(th, s.tw) * r) < SRC.POOL + 0.1) w = Math.max(w, p.level);
+      continue;
+    }
     const dx = x - p.x, dz = z - p.z;
     if (dx * dx + dz * dz < p.rad * p.rad) w = Math.max(w, p.level);
   }
@@ -333,7 +342,7 @@ export function waterAt(x, z) {
   const a = r - W.SRC_R;
   if (a > 3 && a < SRC.GORGE + 0.5) {
     const th = Math.atan2(z, x);
-    for (const s of SOURCES) if (a > s.lipA - 0.2 && Math.abs(angDiff(th, s.tw) * r) < 3.1) w = Math.max(w, gorgeBed(s, a) + 0.3);
+    for (const s of SOURCES) if (a > s.lipA - 0.2 && Math.abs(angDiff(th, s.tw) * r) < 4.6) w = Math.max(w, gorgeBed(s, a) + 0.3);
   }
   return w;
 }
@@ -608,9 +617,11 @@ function setupSources() {
       if (a + 2 >= srcEdge(x, z) + 0.9) break;
     }
     s.lipA = a;
-    const fallH = SRC.H - 1.4 + 0.3 + 0.6, T = Math.sqrt((2 * fallH) / 9.8);
-    s.hitA = a - 1.4 * T; // куда бьёт струя
-    POOLS.push({ x: s.x, z: s.z, level: s.base - 0.6, dx: -cx, dz: -cz, rad: SRC.POOL + 0.1, hit: s.hitA, src: true, s });
+    const fallH = SRC.H - 0.65, T = Math.sqrt((2 * fallH) / 9.8);
+    s.hitA = a - SRC.VH * T; // куда бьёт струя
+    s.pc = s.hitA - 0.5;     // центр заводи
+    const r = W.SRC_R + s.pc;
+    POOLS.push({ x: cx * r, z: cz * r, level: s.base - 0.45, dx: -cx, dz: -cz, rad: SRC.POOL, src: true, s });
   }
   srcOn = true;
 }

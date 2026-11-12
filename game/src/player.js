@@ -2,7 +2,8 @@ import * as THREE from '../vendor/three.min.js';
 import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
 import { groundAt, hitSolid, ceiling } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
-import { mat } from './shaders.js';
+import { mat, U } from './shaders.js';
+const _lp = new THREE.Vector3();
 
 // ---------- герой: «глубинник» ----------
 // Большая голова, выпученные глаза разного размера, один зуб, фонарик-удочка на макушке,
@@ -133,6 +134,21 @@ function buildModel(look) {
   return { root, rig, body: torsoM, head, eyes, pupils, lure, armL, armR, legL, legR };
 }
 
+// мягкое свечение: точка, всегда повёрнутая к камере, складывается со сценой
+function haloMat() {
+  return mat({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uPx: { value: 1 } },
+    vertexShader: `uniform float uPx;
+      void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = min(uPx * 700.0 * (0.25 + 0.35 * uLure.w) / max(-mv.z, 0.3), 600.0);
+        gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `void main(){ float r = length(gl_PointCoord - 0.5) * 2.0;
+      float a = (exp(-r * r * 9.0) * 0.9 + exp(-r * r * 2.5) * 0.35) * (0.2 + 0.8 * uLure.w) * (1.0 - smoothstep(0.85, 1.0, r));
+      gl_FragColor = vec4(vec3(1.0, 0.85, 0.55) * a, 1.0); }`,
+  });
+}
+
 function blobShadow() {
   const m = mat({
     transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
@@ -176,6 +192,13 @@ export class Player {
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
     this.shadow = blobShadow();
     scene.add(this.shadow);
+    // ореол вокруг лампочки фонарика; яркость — U.uLure.w
+    this.halo = haloMat();
+    this.haloPts = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3)), this.halo);
+    this.haloPts.frustumCulled = false;
+    this.haloPts.renderOrder = 10;
+    scene.add(this.haloPts);
+    this.lureGlow = 0;
     this.n = new THREE.Vector3(); this._n2 = new THREE.Vector3();
     // сетка для быстрых столкновений со стволами и валунами
     this.cells = new Map();
@@ -546,6 +569,14 @@ export class Player {
     this.lureB = Math.max(-0.9, Math.min(0.9, this.lureB + this.lureBV * dt));
     m.lure.rotation.x = this.lureA;
     m.lure.rotation.z = this.lureB;
+    // фонарик светит тем ярче, чем темнее вокруг (глубже в провале)
+    const dark = 0.12 + 0.88 * Math.max(0, Math.min(1, (-8 - p.y) / 32));
+    this.lureGlow += (dark - this.lureGlow) * Math.min(1, dt * 2);
+    m.root.updateMatrixWorld(true);
+    _lp.set(0, 0.27, 0.22);
+    m.lure.localToWorld(_lp);
+    this.haloPts.position.copy(_lp);
+    U.uLure.value.set(_lp.x, _lp.y, _lp.z, this.lureGlow);
 
     // глаза: моргают, зрачки отстают от движения и иногда косятся по сторонам
     this.blinkT -= dt;

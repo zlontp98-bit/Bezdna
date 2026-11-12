@@ -236,7 +236,7 @@ export function buildFlora(scene) {
     for (let i = 0; i < (p.src ? 18 : 13); i++) {
       const a = (i / (p.src ? 18 : 13)) * TAU + rnd() * 0.25, rr = p.src ? p.rad + 0.3 + rnd() * 2.5 : 5.2 + rnd() * 0.9;
       const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
-      if (streamAt(x, z) > 0.35) continue; // не перекрываем сток и сам водопад
+      if (streamAt(x, z) > 0.35 || waterAt(x, z) > -1e8) continue; // камни — на берегу, не в воде
       if (heightAt(x, z) > p.level + 1.0) continue; // и не вешаем камни на стену
       const s = 0.75 + rnd() * 0.85, g = 0.5 + rnd() * 0.12;
       add(lists.rock, x, heightAt(x, z) - 0.1, z, s, col.setRGB(g * 1.08, g * 1.02, g * 0.95).getHex(), rnd() * TAU, rnd() * 0.4);
