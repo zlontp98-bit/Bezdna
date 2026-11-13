@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm } from './noise.js';
-import { rockMat } from './terrain.js';
+import { rockMat, heightAt } from './terrain.js';
 import { addMeshTop, groundAt } from './solids.js';
 import { mulberry32, SEED } from './noise.js';
 
@@ -12,9 +12,9 @@ import { mulberry32, SEED } from './noise.js';
 export const STACKS = [
   { th: 0.50, r: 37, w: 6.5, top: -13.0, trees: 2 }, // к нему ведёт разрушенный мост
   { th: 1.40, r: 35, w: 4.2, top: -17, trees: 1 },
-  { th: 2.75, r: 36, w: 3.8, top: -24, trees: 1 },
-  { th: 3.55, r: 33, w: 5.5, top: -26, trees: 2 },
-  { th: 4.85, r: 36, w: 3.6, top: -23, trees: 1 },
+  { th: 2.75, r: 36, w: 3.8, top: -20, trees: 1 },
+  { th: 3.55, r: 33, w: 5.5, top: -24, trees: 2 },
+  { th: 4.85, r: 36, w: 3.6, top: -19, trees: 1 },
   { th: 5.55, r: 33, w: 4.8, top: -18, trees: 2 },
   { th: 0, r: 0, w: 11, top: -22, trees: 6, big: true }, // большой остров в центре шахты
 ];
@@ -23,6 +23,10 @@ const LINKS = [
   [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], // по кольцу
   [6, 1], [6, 2], [6, 3], [6, 4], [6, 5],          // к центру (с острова у моста — через соседей)
 ];
+// Входы с кольца (−13 м) прямо на острова — с других сторон, не только по мосту.
+// th — откуда с кольца начинается цепочка, to — на какой остров. Угол 4.40 выбран так,
+// чтобы цепочка не перегородила карниз-спуск по стене (он начинается с 4.5 рад)
+const ENTRIES = [{ th: 2.75, to: 2 }, { th: 4.40, to: 4 }];
 // столбы для прыжков: { x, z, w, top, th, r }
 export const PILLARS = [];
 // цепочки целиком: край острова, столбы, край другого острова (для проверок и подсказок)
@@ -74,6 +78,7 @@ const RISE = 0.9;
 
 // край острова в направлении (dx,dz): дальняя точка, где под ногами ещё его вершина
 function edgeOf(s, dx, dz) {
+  if (s.ring) return 0; // точка на краю кольца — уже край
   let e = 0;
   for (let d = 0; d < s.w * 2; d += 0.1) {
     if (groundAt(s.x + dx * d, s.z + dz * d, s.top + 5) > s.top - 0.35) e = d; else if (d > s.w * 0.6) break;
@@ -128,6 +133,14 @@ export function buildStacks(scene) {
   // столбы ставим, когда острова уже твёрдые: края меряем по настоящей вершине
   const rnd = mulberry32(SEED + 404);
   for (const [a, b] of LINKS) planChain(STACKS[a], STACKS[b], rnd);
+  // входы с кольца: идём от кольца к острову, пока земля не оборвётся
+  for (const e of ENTRIES) {
+    const B = STACKS[e.to], cx = Math.cos(e.th), cz = Math.sin(e.th), ring = heightAt(cx * 76, cz * 76);
+    let r = 76;
+    while (r > 60 && heightAt(cx * r, cz * r) > ring - 0.5) r -= 0.1;
+    r += 0.6;
+    planChain({ ring: true, x: cx * r, z: cz * r, top: heightAt(cx * r, cz * r), w: 0 }, B, rnd);
+  }
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);

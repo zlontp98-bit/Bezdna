@@ -51,7 +51,9 @@ export const RULES = {
   build: { house: { cost: { log: 40 }, ms: 30000 } },
   // местная валюта — искры ✨. Строитель покупает брёвна; казна лагеря платит за них больше,
   // но принимает только до цели следующего улучшения
-  trade: { logPrice: 1 },
+  trade: { logPrice: 1, price: { log: 1, berry: 1 } },
+  // ягодные кусты: собрал — через 2.5–4 минуты ягоды снова висят; ягоды не на каждом кусте
+  bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
   treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Мастерская' },
 };
 
@@ -82,7 +84,7 @@ class LocalAuthority {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
     for (const id in this.mined) if (now - this.mined[id] > RULES.boulder.respawnMs(id) + 60000) delete this.mined[id];
-    for (const id in this.picked) if (now - this.picked[id] > RULES.pebble.respawnMs(id) + 60000) delete this.picked[id];
+    for (const id in this.picked) if (now - this.picked[id] > (id.startsWith('bush:') ? RULES.bush : RULES.pebble).respawnMs(id) + 60000) delete this.picked[id];
     this.save();
     return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined } };
   }
@@ -107,12 +109,14 @@ class LocalAuthority {
       this.save();
       emit({ type: 'mined', id: ev.id, at: now, by: this.me, reward: { stone: RULES.boulder.stones(ev.s) } }); // размер сервер возьмёт из своей копии мира
     }
+    // подобрать с земли или с куста: камушек — камень, ягодный куст — ягоды
     if (ev.type === 'pick') {
+      const bush = ev.id.startsWith('bush:'), rule = bush ? RULES.bush : RULES.pebble;
       const at = this.picked[ev.id];
-      if (at !== undefined && now - at < RULES.pebble.respawnMs(ev.id)) return; // уже подобран
+      if (at !== undefined && now - at < rule.respawnMs(ev.id)) return; // уже собрано
       this.picked[ev.id] = now;
       this.save();
-      emit({ type: 'picked', id: ev.id, at: now, by: this.me, reward: { stone: RULES.pebble.stones } });
+      emit({ type: 'picked', id: ev.id, at: now, by: this.me, reward: bush ? { berry: RULES.bush.berries } : { stone: RULES.pebble.stones } });
     }
     // Чертежи, изучение, крафт. Игра сама проверяет инвентарь; сервер потом будет проверять его у себя
     if (ev.type === 'buyBlueprint' && RULES.blueprints[ev.what]) {
@@ -133,9 +137,9 @@ class LocalAuthority {
     // Продажа и казна. Брёвна игра снимает, только получив ответ, и ровно столько, сколько принято.
     const pay = (coins) => (this.wallets[this.me] = (this.wallets[this.me] || 0) + coins);
     if (ev.type === 'sell' && ev.n > 0) {
-      const coins = ev.n * RULES.trade.logPrice;
+      const item = ev.item || 'log', coins = ev.n * (RULES.trade.price[item] || 0);
       pay(coins); this.save();
-      emit({ type: 'paid', by: this.me, n: ev.n, coins, wallet: this.wallets[this.me] });
+      emit({ type: 'paid', by: this.me, item, n: ev.n, coins, wallet: this.wallets[this.me] });
     }
     if (ev.type === 'deposit' && ev.n > 0) {
       const T = RULES.treasury, n = Math.min(ev.n, T.goal - this.treasury.logs);

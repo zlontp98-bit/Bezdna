@@ -2,8 +2,9 @@ import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
-import { STACKS } from './stacks.js';
+import { STACKS, PILLARS } from './stacks.js';
 import { addMeshTop } from './solids.js';
+import { objId, idRand, RULES } from './world.js';
 
 const TAU = Math.PI * 2;
 // камни-ступени, поставленные вручную (для проверки маршрутов)
@@ -181,6 +182,20 @@ function bushGeo() {
     part(new THREE.OctahedronGeometry(0.07, 0), 0xfff3c4, { glow: 0.5, m: T(0.75, 0.6, -0.3) }),
   ]);
 }
+// грозди черники на ягодном кусте: лежат на поверхности кроны и качаются вместе с ней
+function berryGeo() {
+  const parts = [], g = new THREE.IcosahedronGeometry(0.1, 0);
+  const cols = [0x2f3fbf, 0x4a37b0, 0x26339a];
+  for (let i = 0; i < 8; i++) {
+    const a = i * 0.785 + 0.4, dy = 0.2 + (i % 3) * 0.2, h = Math.sqrt(1 - dy * dy);
+    const x = Math.cos(a) * h * 0.9, y = 0.5 + dy * 0.74, z = Math.sin(a) * h * 0.9;
+    for (let k = 0; k < 3; k++) {
+      const ox = [0, 0.12, -0.07][k], oy = [0, -0.05, -0.09][k], oz = [0, 0.04, 0.11][k];
+      parts.push(part(g, cols[(i + k) % 3], { sway: 0.6, glow: 0.18, m: T(x + ox, y + oy, z + oz) }));
+    }
+  }
+  return merge(parts);
+}
 function rockGeo() {
   const g = new THREE.IcosahedronGeometry(1, 1);
   const P = g.attributes.position;
@@ -216,7 +231,7 @@ export function buildFlora(scene) {
   const dummy = new THREE.Object3D();
   const col = new THREE.Color();
 
-  const trees = [], boulders = [];
+  const trees = [], boulders = [], berryBushes = [];
   const lists = { leaf: [], pine: [], shroom: [], rock: [], crystal: [], small: [], bush: [] };
   const spawn = { x: W.R + 10, z: 8 };
   const taken = [];
@@ -236,6 +251,7 @@ export function buildFlora(scene) {
       if (streamAt(x, z) > 0.01 || pathAt(x, z) > 0.05) continue;
       if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < p.rad + (p.src ? 5 : 1.6))) continue;
       if (waterAt(x, z) > -1e8) continue;
+      if (r < 72 && PILLARS.some((p) => Math.hypot(x - p.x, z - p.z) < p.w + 1.8)) continue; // не под столбами паркура
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
       if (Math.hypot(x - spawn.x - 9.5, z - spawn.z + 3) < 8) continue; // место под дом в лагере
       if (fn(x, y, z, n.y, r)) placed++;
@@ -439,6 +455,8 @@ export function buildFlora(scene) {
         dummy.position.y += t.top - hi;
         dummy.updateMatrix();
       }
+      // ягодные кусты: не на каждом, и выбор одинаковый у всех игроков (по месту куста)
+      if (key === 'bush' && idRand(objId('bush', t.x, t.z)) < RULES.bush.share) berryBushes.push({ x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone() });
       if (key === 'rock') {
         const solid = rockSolid(geos.rock, dummy.matrix, t);
         // крупные валуны луга и уступов можно разбить киркой (камни паркура и берега — нет)
@@ -455,7 +473,7 @@ export function buildFlora(scene) {
     im.matrixAutoUpdate = false;
     scene.add(im);
   }
-  return { colliders, blobs, spawn, trees, pebbles, boulders, rockGeo: geos.rock };
+  return { colliders, blobs, spawn, trees, pebbles, boulders, rockGeo: geos.rock, berryBushes, berryGeo: berryGeo() };
 }
 
 // Валун становится твёрдым: верх его настоящей модели запекается в карту высот

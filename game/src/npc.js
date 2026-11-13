@@ -53,9 +53,10 @@ export class Settlement {
       if (ev.type === 'deposited') this.treasury = ev.treasury;
       if (ev.type === 'boughtBlueprint' && ev.by === world.me) this.wallet = ev.wallet;
       if ((ev.type === 'paid' || ev.type === 'deposited') && ev.by === world.me) {
-        this.inv.remove('log', ev.n);
+        const item = ev.item || 'log';
+        this.inv.remove(item, ev.n);
         this.wallet = ev.wallet;
-        this.toast(ev.done ? `🎉 Казна собрана! +${ev.coins} ✨` : `−${ev.n} 🪵  +${ev.coins} ✨`);
+        this.toast(ev.done ? `🎉 Казна собрана! +${ev.coins} ✨` : `−${ev.n} ${item === 'berry' ? '🫐' : '🪵'}  +${ev.coins} ✨`);
       }
     });
   }
@@ -178,7 +179,9 @@ export class Settlement {
       acts.push({ label: `Построить дом: ${cost} 🪵 (есть ${have})`, can: have >= cost, run: () => this.accept() });
     } else if (this.state === 'building') text = `Строю, не отвлекай! Осталось ${this.left()} с. Брёвна куплю, если есть.`;
     else text = `Дом готов. Брёвна покупаю по ${price} ✨. А в казну лагеря на доске заданий за них дают больше.`;
-    acts.push({ label: have ? `Продать ${have} 🪵 за ${have * price} ✨` : 'Продать брёвна — нет брёвен', can: have > 0, run: () => this.world.send({ type: 'sell', n: have }) });
+    acts.push({ label: have ? `Продать ${have} 🪵 за ${have * price} ✨` : 'Продать брёвна — нет брёвен', can: have > 0, run: () => this.world.send({ type: 'sell', item: 'log', n: have }) });
+    const bn = this.inv.count('berry'), bp = RULES.trade.price.berry;
+    if (bn) acts.push({ label: `Продать ${bn} 🫐 за ${bn * bp} ✨`, can: true, run: () => this.world.send({ type: 'sell', item: 'berry', n: bn }) });
     // чертежи: по одному, пока не изучен
     for (const what in RULES.blueprints) {
       const bp = RULES.blueprints[what], r = RULES.recipes[what];
