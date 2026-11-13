@@ -52,6 +52,9 @@ export const RULES = {
   // местная валюта — искры ✨. Строитель покупает брёвна; казна лагеря платит за них больше,
   // но принимает только до цели следующего улучшения
   trade: { logPrice: 1, price: { log: 1, berry: 1 } },
+  // старый ящик на островках: стоит на случайном острове, внутри — кирка;
+  // открыли — через 3–5 минут появляется новый, на другом острове
+  chest: { loot: { pickaxe: 1 }, islands: 7, respawnMs: () => 180000 + Math.random() * 120000 },
   // ягодные кусты: собрал — через 2.5–4 минуты ягоды снова висят; ягоды не на каждом кусте
   bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
   treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Мастерская' },
@@ -67,6 +70,7 @@ class LocalAuthority {
     this.known = {}; // игрок → изученные рецепты
     this.picked = {}; // камушек → когда подобран
     this.mined = {}; // валун → когда разбит
+    this.chest = null; // { id, island, seed, opened, respawn } — где сейчас старый ящик
     this.treasury = { logs: 0 }; // казна лагеря: сколько брёвен внесено к следующему улучшению
     try {
       const d = JSON.parse(store.get('bezdna.world', 'null'));
@@ -76,17 +80,31 @@ class LocalAuthority {
       if (d && d.known) this.known = d.known;
       if (d && d.picked) this.picked = d.picked;
       if (d && d.mined) this.mined = d.mined;
+      if (d && d.chest) this.chest = d.chest;
       if (d && d.treasury) this.treasury = d.treasury;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, known: this.known, picked: this.picked, mined: this.mined })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, known: this.known, picked: this.picked, mined: this.mined, chest: this.chest })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
     for (const id in this.mined) if (now - this.mined[id] > RULES.boulder.respawnMs(id) + 60000) delete this.mined[id];
     for (const id in this.picked) if (now - this.picked[id] > (id.startsWith('bush:') ? RULES.bush : RULES.pebble).respawnMs(id) + 60000) delete this.picked[id];
+    this.ensureChest(now);
     this.save();
-    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined } };
+    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined }, chest: { ...this.chest } };
+  }
+  // Ящика нет или открытый простоял своё — ставим новый на другой остров.
+  // Мир выбирает только остров и «зерно»; точное место на острове игра выводит из них сама,
+  // одинаково у всех (см. chest.js). Возвращает true, если поставили новый.
+  ensureChest(now) {
+    const c = this.chest;
+    if (c && !(c.opened && now - c.opened > c.respawn)) return false;
+    let island;
+    do island = Math.floor(Math.random() * RULES.chest.islands); while (c && island === c.island);
+    this.chest = { id: 'chest:' + now, island, seed: (Math.random() * 1e9) | 0, opened: 0, respawn: 0 };
+    this.save();
+    return true;
   }
   handle(ev, now, emit) {
     if (ev.type === 'chop') {
@@ -101,6 +119,13 @@ class LocalAuthority {
       this.built[ev.what] = now;
       this.save();
       emit({ type: 'built', what: ev.what, at: now, by: this.me });
+    }
+    // время от времени игра спрашивает «что нового»: тут мир, например, ставит новый ящик
+    if (ev.type === 'tick' && this.ensureChest(now)) emit({ type: 'chestSpawned', chest: { ...this.chest } });
+    if (ev.type === 'openChest' && this.chest && this.chest.id === ev.id && !this.chest.opened) {
+      this.chest.opened = now; this.chest.respawn = RULES.chest.respawnMs();
+      this.save();
+      emit({ type: 'chestOpened', id: ev.id, at: now, by: this.me, loot: { ...RULES.chest.loot } });
     }
     if (ev.type === 'mine') {
       const at = this.mined[ev.id];
