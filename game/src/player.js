@@ -657,7 +657,8 @@ export class Player {
     m.lure.rotation.x = this.lureA;
     m.lure.rotation.z = this.lureB;
     // фонарик светит тем ярче, чем темнее вокруг (глубже в провале)
-    const dark = 0.12 + 0.88 * Math.max(0, Math.min(1, (-8 - p.y) / 32));
+    // днём на лугу — слабый тёплый свет (виден в тени), глубже — сильнее
+    const dark = 0.3 + 0.7 * Math.max(0, Math.min(1, (-6 - p.y) / 30));
     this.lureGlow += (dark - this.lureGlow) * Math.min(1, dt * 2);
     m.root.updateMatrixWorld(true);
     _lp.set(0, 0.27, 0.22);
