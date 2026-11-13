@@ -23,6 +23,7 @@ export const U = {
   uCenter: { value: new THREE.Vector3() },
   uPlayer: { value: new THREE.Vector3() },
   uNoise: { value: null },
+  uDetail: { value: null },
   uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
 };
 
@@ -56,12 +57,55 @@ export const U = {
   U.uNoise.value = tex;
 }
 
+// Текстура деталей грунта и камня: одна маленькая (256×256) повторяющаяся картинка,
+// в четырёх каналах — четыре разных рисунка, так что одна выборка даёт сразу всё:
+//  R — «камушки»: 1 в середине ячейки, 0 на границе;  G — расстояние до трещины между ячейками;
+//  B — мягкие пятна;  A — случайное число ячейки (у каждого камушка свой оттенок).
+// Рисунок строится по ячейкам с заворотом через край, поэтому швов при повторе нет.
+{
+  const N = 256, C = 16, S = N / C;
+  let a = 0x51ed270b;
+  const rnd = () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const px = new Float32Array(C * C), py = new Float32Array(C * C), id = new Float32Array(C * C);
+  for (let i = 0; i < C * C; i++) { px[i] = 0.15 + rnd() * 0.7; py[i] = 0.15 + rnd() * 0.7; id[i] = rnd(); }
+  const B = 8, lat = new Float32Array(B * B), lat2 = new Float32Array(B * B * 16);
+  for (let i = 0; i < lat.length; i++) lat[i] = rnd();
+  for (let i = 0; i < lat2.length; i++) lat2[i] = rnd();
+  const vn = (L, n, x, y) => {
+    const i0 = Math.floor(x), j0 = Math.floor(y), fx = x - i0, fy = y - j0, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    const g = (i, j) => L[((j % n + n) % n) * n + ((i % n + n) % n)];
+    return (g(i0, j0) * (1 - u) + g(i0 + 1, j0) * u) * (1 - v) + (g(i0, j0 + 1) * (1 - u) + g(i0 + 1, j0 + 1) * u) * v;
+  };
+  const data = new Uint8Array(N * N * 4);
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = (i + 0.5) / S, y = (j + 0.5) / S, cx = Math.floor(x), cy = Math.floor(y);
+    let f1 = 9, f2 = 9, who = 0;
+    for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      const k = ((cy + b + C) % C) * C + ((cx + c + C) % C);
+      const d = Math.hypot(cx + c + px[k] - x, cy + b + py[k] - y);
+      if (d < f1) { f2 = f1; f1 = d; who = k; } else if (d < f2) f2 = d;
+    }
+    const o = (j * N + i) * 4;
+    data[o] = Math.round(255 * Math.max(0, 1 - f1 * 1.5));
+    data[o + 1] = Math.round(255 * Math.min(1, (f2 - f1) * 1.6));
+    data[o + 2] = Math.round(255 * (vn(lat, B, x * B / C, y * B / C) * 0.65 + vn(lat2, B * 4, x * B * 4 / C, y * B * 4 / C) * 0.35));
+    data[o + 3] = Math.round(255 * id[who]);
+  }
+  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  U.uDetail.value = tex;
+}
+
 export const COMMON = /* glsl */ `
 uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
 uniform vec4 uLure;
-uniform sampler2D uShadow, uNoise;
+uniform sampler2D uShadow, uNoise, uDetail;
 
 // общая цветокоррекция стиля
 vec3 grade(vec3 c){ return mix(vec3(dot(c, vec3(0.3,0.59,0.11))), c, uSat); }
@@ -99,7 +143,7 @@ vec3 applyFog(vec3 c, vec3 w){
   vec3 over = max(lit - max(c, vec3(0.72)), 0.0);
   c = lit - over + over / (1.0 + over*2.5);
   // высоко над лугом воздух прозрачнее — горы не тонут в дымке
-  float den = uFogDen * (1.0 - 0.45*smoothstep(10.0, 60.0, w.y));
+  float den = uFogDen * (1.0 - 0.6*smoothstep(10.0, 70.0, w.y));
   float f = 1.0 - exp(-d * (den + deep*0.012));
   // и чем ниже под ногами, тем гуще туман сам по себе
   f = max(f, smoothstep(-55.0, -120.0, w.y));

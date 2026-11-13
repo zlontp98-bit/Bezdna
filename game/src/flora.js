@@ -431,6 +431,25 @@ export function buildFlora(scene) {
     return true;
   });
 
+  // сосны и кусты на скальных полках гор: рощицами, а не поодиночке
+  // (в конце списка, чтобы расстановка остального мира не сдвинулась)
+  scatter(150, W.MEADOW + 22, W.OUTER - 22, (x, y, z, ny) => {
+    if (ny < 0.88 || y < 16 || y > 92 || !free(x, z, 2.0)) return false;
+    if (fbm(x * 0.035 + 8, z * 0.035 - 3, 2) < -0.05) return false;
+    const s = 0.8 + rnd() * 0.9;
+    col.setHSL(0.35 + rnd() * 0.06, 0.4, 0.24 + rnd() * 0.07);
+    add(lists.pine, x, y - 0.15, z, s, col.getHex());
+    taken.push({ x, z, r: 1.6 });
+    colliders.push({ x, z, r: 0.36 * s });
+    return true;
+  });
+  scatter(90, W.MEADOW + 15, W.OUTER - 30, (x, y, z, ny) => {
+    if (ny < 0.86 || y < 12 || y > 85 || !free(x, z, 1.2)) return false;
+    col.setHSL(0.24 + rnd() * 0.08, 0.42, 0.33 + rnd() * 0.08);
+    add(lists.bush, x, y - 0.05, z, 0.7 + rnd() * 0.8, col.getHex());
+    return true;
+  });
+
   const geos = {
     leaf: leafTree(), pine: pineTree(), shroom: giantShroom(),
     rock: rockGeo(), crystal: crystalGeo(), small: smallShroom(), bush: bushGeo(),

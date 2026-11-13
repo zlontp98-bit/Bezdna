@@ -125,13 +125,44 @@ export function buildRuins(scene) {
     const [bx, bz] = P(br, th), ang = Math.atan2(tx, tz);
     const bank = Math.max(heightAt(bx + tx * 3.1, bz + tz * 3.1), heightAt(bx - tx * 3.1, bz - tz * 3.1));
     const top = bank + 0.3;
-    for (let i = 0; i < 9; i++) {
-      const o = -3.2 + i * 0.8;
-      g.add(new THREE.BoxGeometry(1.7, 0.1, 0.7), i % 2 ? WOOD : 0x9a6a46, bx + tx * o, top - 0.05, bz + tz * o, {}, [1, 1, 1], ang + (rnd() - 0.5) * 0.08);
+    // Старый дощатый мостик: всё одной моделью (один вызов отрисовки).
+    // Вдоль — две балки-лаги, поперёк — доски разной длины и тона, по бокам столбики
+    // с перилами из жердей, перевязанных верёвкой; под концами — подкосы к берегу.
+    const tones = [0x8a5d3c, 0x9a6a46, 0x7a5034, 0xa57850, 0x6e4a31];
+    const A = (geo, color, o, sd, y, ry = 0, rz = 0, opt = {}) =>
+      g.add(geo, color, bx + tx * o - tz * sd, y, bz + tz * o + tx * sd, opt, [1, 1, 1], ang + ry, rz);
+    const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+    // лаги
+    for (const sd of [-0.55, 0.55]) A(box(0.16, 0.2, 7.5), WOODD, 0, sd, top - 0.2);
+    // настил: 13 досок, у каждой своя длина, тон, лёгкий перекос; пара досок просела
+    for (let i = 0; i < 13; i++) {
+      const o = -3.36 + i * 0.56, len = 1.62 + rnd() * 0.26, sag = i === 4 || i === 9 ? 0.035 : 0;
+      A(box(len, 0.09, 0.5), tones[(i * 3 + (rnd() * 2 | 0)) % tones.length], o, (rnd() - 0.5) * 0.1, top - 0.045 - sag - rnd() * 0.012, (rnd() - 0.5) * 0.07, (rnd() - 0.5) * 0.02 + sag * 0.6);
     }
-    for (const s of [-0.75, 0.75]) {
-      g.add(new THREE.CylinderGeometry(0.11, 0.11, 7.2, 6, 1), WOODD, bx - tz * s, top - 0.2, bz + tx * s, {}, [1, 1, 1], ang - Math.PI / 2, Math.PI / 2);
+    // столбики (по три с каждой стороны), перила-жерди между ними и верёвочные обвязки
+    const posts = [-3.3, 0, 3.3];
+    for (const sd of [-0.92, 0.92]) {
+      posts.forEach((o, k) => {
+        const lean = (rnd() - 0.5) * 0.08, hgt = k === 1 ? 2.3 : 1.9;
+        A(new THREE.CylinderGeometry(0.075, 0.095, hgt, 6, 1), k === 1 ? WOOD : WOODD, o, sd, top + 1.0 - hgt / 2, 0, lean);
+        A(box(0.2, 0.09, 0.2), ROPE, o, sd, top + 0.84);
+        A(box(0.19, 0.07, 0.19), ROPE, o, sd, top + 0.02);
+      });
+      for (let k = 0; k < 2; k++) {
+        // жердь чуть провисает к середине пролёта и лежит неровно
+        const o = (posts[k] + posts[k + 1]) / 2, tilt = (k ? 1 : -1) * 0.012 + (rnd() - 0.5) * 0.02;
+        g.add(new THREE.CylinderGeometry(0.045, 0.055, 3.42, 5, 1).rotateX(Math.PI / 2), tones[k + (sd > 0 ? 2 : 0)],
+          bx + tx * o - tz * sd, top + 0.84 + (rnd() - 0.5) * 0.03, bz + tz * o + tx * sd, {}, [1, 1, 1], ang + tilt);
+        g.add(new THREE.CylinderGeometry(0.035, 0.035, 3.4, 5, 1).rotateX(Math.PI / 2), WOODG,
+          bx + tx * o - tz * sd, top + 0.42, bz + tz * o + tx * sd, {}, [1, 1, 1], ang - tilt);
+      }
     }
+    // подкосы под концами и поперечины, на которых лежат лаги
+    for (const o of [-3.3, 3.3]) {
+      A(box(2.0, 0.16, 0.18), WOODD, o, 0, top - 0.36);
+      for (const sd of [-0.75, 0.75]) g.add(box(0.12, 1.3, 0.12), WOODD, bx + tx * (o * 0.86) - tz * sd, top - 0.85, bz + tz * (o * 0.86) + tx * sd, {}, [1, 1, 1], ang, 0);
+    }
+    blobs.push({ x: bx, z: bz, r: 2.6, h: 0.6 });
     addBox(bx, bz, 0.85, 3.6, ang, top, top - 0.3); // под мостком можно проплыть
     g.done(scene);
   }
