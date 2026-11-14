@@ -892,6 +892,8 @@ const terrainMat = () => mat({
     float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
       vec3 n = normalize(vN);
+      // скала рисуется с обеих сторон, когда камера у стены (см. main.js): изнутри нормаль разворачиваем
+      if (!gl_FrontFacing) n = -n;
       float camD = distance(vW, cameraPosition);
       float rr = length(vW.xz);
       float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr)); // «горность»: форма, трава, снег

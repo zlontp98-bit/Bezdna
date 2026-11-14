@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.min.js';
 import { U, setStyle, loadTerrainTextures } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
-import { W, SOURCES, buildTerrain, bakeShadows, heightAt } from './terrain.js';
+import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
 import { buildFlora, buildGrass } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
@@ -323,6 +323,7 @@ function updateCamera(dt, inp) {
     camSmDt = 0;
     camera.position.copy(camSm);
     camera.lookAt(camSm.x + fx, camSm.y + fy, camSm.z + fz);
+    setNear(0.05); setRockSides(true);
     return;
   }
   const N = 18, KMAX = 0.7;
@@ -371,6 +372,26 @@ function updateCamera(dt, inp) {
   camSmDt = 0; // первый кадр прошёл — дальше фильтруем
   camera.position.copy(camSm);
   camera.lookAt(target);
+  // Вплотную к стене ближняя плоскость (20 см) отсекала кусок скалы, и сквозь срез было видно небо.
+  // Когда камера прижата к герою или к скале, плоскость подходит ближе; в открытом поле — как раньше
+  // (у далёких предметов точность глубины падает, когда плоскость слишком близко).
+  const tight = camCur < 1.8 || camLift > 0.25;
+  setNear(tight ? 0.05 : 0.2); setRockSides(tight);
+}
+
+// Рисование скалы с обеих сторон — страховка: если камера всё же оказалась у стены или в камне, мы увидим
+// камень изнутри, а не пустоту и мир «сквозь текстуры». Включаем, только когда это может понадобиться:
+// в открытом поле лишние задние грани не рисуются (дешевле).
+function setRockSides(both) {
+  const v = both ? THREE.DoubleSide : THREE.FrontSide;
+  if (rockMat && rockMat.side !== v) rockMat.side = v;
+}
+
+function setNear(v) {
+  if (Math.abs(camera.near - v) < 1e-4) return;
+  camera.near += (v - camera.near) * (v < camera.near ? 1 : 0.15); // ближе — сразу, дальше — плавно
+  if (Math.abs(camera.near - v) < 0.004) camera.near = v;
+  camera.updateProjectionMatrix();
 }
 
 // Главное меню: герой стоит перед камерой, она медленно ходит вокруг него
