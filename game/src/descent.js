@@ -22,7 +22,7 @@ const LANE = 4.0;                   // «дорожка» героя: расст
 const FLOOR = -(W.LOW + W.DEEP);    // дно шахты
 export const DESCENT = { spines: [], lobes: [], links: [], stats: {}, ready: false };
 export const DBG = {};
-const PICKED = [2, 6, 1];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
+const PICKED = [2, 13, 9];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
 
 const rwAt = (th) => pitR(Math.cos(th) * W.PIT, Math.sin(th) * W.PIT);
 const toWorld = (s, u, sp) => {
@@ -56,6 +56,12 @@ function makeSpine(rnd, ringY) {
     return l;
   };
   const yAt = (s0, gs0) => Y + gs0 * (s0 - S);
+  // повёрнутая лопасть-отрезок от точки (sA, uA) к (sB, uB): узкий гребень с наклоном вдоль себя
+  const seg = (sA, uA, yA, sB, uB, yB, half, o = {}) => {
+    const ds = sB - sA, du = uB - uA, len = Math.hypot(ds, du), rot = Math.atan2(du, ds), A = len / 2 + (o.ext ?? 1.0);
+    const cs2 = (sA + sB) / 2, cu = (uA + uB) / 2, es = Math.abs(A * Math.cos(rot)) + Math.abs(half * Math.sin(rot)), eu = Math.abs(A * Math.sin(rot)) + Math.abs(half * Math.cos(rot));
+    return lobe({ rot, cs: cs2, cu, A, B: half, s0: cs2 - es, s1: cs2 + es, u0: cu - eu, u1: cu + eu, sRef: sA, uRef: uA, dS: Math.cos(rot), dU: Math.sin(rot), yRef: yA, gs: (yB - yA) / len, gs0: o.gs0 ?? (yB - yA) / len, T: o.T ?? 3.5, n: 2.6, bump: 0.12, ...o });
+  };
 
   // вход: ровная площадка вровень с нижним уступом
   lobe({ s0: -3, s1: 11, u0: -2.5, u1: 9.5, sRef: 0, yRef: ringY - 0.05, gs: 0, bump: 0.1, T: 6 });
@@ -63,18 +69,20 @@ function makeSpine(rnd, ringY) {
   S = 10; Y = ringY - 0.05;
 
   const TEMPL = [
-    ['wide', 28], ['passage', 10], ['climb', 6], ['wall', 10], ['cliff', 16], ['jump', 8], ['bridge', 9], ['drop', 6], ['slide', 7], ['stones', 9], ['fork', 10],
+    ['wide', 20], ['passage', 5], ['tunnel', 6], ['climb', 5], ['wall', 14], ['cliff', 14], ['snake', 11], ['jump', 6], ['bridge', 7], ['drop', 4], ['slide', 6], ['stones', 8], ['fork', 9],
   ];
   const tot = TEMPL.reduce((a, t) => a + t[1], 0);
-  const need = ['cliff', 'fork', 'wall', 'stones', 'passage', 'cliff', 'fork', 'climb', 'slide', 'cliff', 'stones', 'bridge', 'wall', 'fork', 'cliff', 'passage', 'jump', 'drop', 'cliff'];
+  const need = ['snake', 'cliff', 'fork', 'wall', 'tunnel', 'snake', 'stones', 'cliff', 'fork', 'wall', 'climb', 'slide', 'snake', 'cliff', 'stones', 'tunnel', 'bridge', 'wall', 'fork', 'cliff', 'jump', 'drop'];
   for (let guard = 0; guard < 90 && Y > FLOOR + 14; guard++) {
     tm++;
     let q = rnd() * tot, kind = 'wide';
     for (const [k, w] of TEMPL) { q -= w; if (q <= 0) { kind = k; break; } }
     if (need.length && last === 'wide' && rnd() < 0.55) kind = need.shift();
     if (kind === last && kind !== 'wide') kind = 'wide';
+    if (kind === 'plateau' && last !== 'wall' && last !== 'cliff') kind = 'wide';
     if ((kind === 'climb' || kind === 'wall') && Y + 12 > ringY - 6) { need.unshift(kind); kind = 'wide'; }
     if (kind === 'wall' && last === 'climb') kind = 'wide';
+    if ((last === 'wall' || last === 'cliff') && rnd() < 0.45) kind = 'plateau';
     last = kind;
     const cs0 = cs;
     if (kind === 'wide') {
@@ -89,7 +97,7 @@ function makeSpine(rnd, ringY) {
       wide(L, gs, { u1: 9 });
       lobe({ s0: S + 0.9, s1: S + L - 0.9, u0: 4.7, u1: 10.5, sRef: S, yRef: Y + 4.2 + rnd() * 1.2, gs, gs0: gs, T: 10, n: 3.2, bump: 0.35 });
       const arch = rnd() < 0.5;
-      if (arch) lobe({ s0: S + L * 0.35, s1: S + L * 0.35 + 2.6 + rnd(), u0: -2.5, u1: 7.0, sRef: S, yRef: Y + 4.1, gs, gs0: gs, T: 2.2, n: 4, bump: 0.1 });
+      if (arch) lobe({ s0: S + L * 0.35, s1: S + L * 0.35 + 2.6 + rnd(), u0: -2.5, u1: 7.0, sRef: S, yRef: Y + 4.1, gs, gs0: gs, T: 2.2, n: 4, bump: 0.1, flat: true });
       const Y1 = Y + gs * L;
       link(arch ? 'arch' : 'passage', [[S, lane, Y], [S + L * 0.5, lane, Y + gs * L * 0.5], [S + L, lane, Y1]]);
       S += L; Y = Y1;
@@ -112,9 +120,13 @@ function makeSpine(rnd, ringY) {
       link('climb', wps);
       const gs = lobes[lobes.length - 1].gs; S += L; Y += gs * L;
     } else if (kind === 'wall') {
-      // отвесная стена высотой 5–11 м: на неё надо лезть (хват, вверх, вылезти на верх)
-      const H = 5 + rnd() * 6, Tm = (H + 3) / 0.75, s0 = S + 2.0, Lm = 12 + rnd() * 8, gs = -(0.05 + rnd() * 0.12);
+      // отвесная стена 6–14 м: лезть вверх; у высоких — на полпути уступ-полка, где можно перевести дух
+      const H = 6 + rnd() * 8, Tm = (H + 3) / 0.75, ledge = H > 9, s0 = S + (ledge ? 4.4 : 2.0), Lm = 12 + rnd() * 8, gs = -(0.05 + rnd() * 0.12);
       lobe({ s0, s1: s0 + Lm + 3, u0: -2.5, u1: 8.5 + rnd() * 3, sRef: s0, yRef: Y + H, gs, gs0: 0, T: Tm, bump: 0.25 });
+      if (ledge) {
+        const H1 = H * (0.42 + rnd() * 0.16);
+        lobe({ s0: S + 2.0, s1: s0 + 0.6, u0: -2.5, u1: 6.5 + rnd() * 2, sRef: S + 2, yRef: Y + H1, gs: 0, gs0: 0, T: (H1 + 3) / 0.75, n: 3.4, bump: 0.08 });
+      }
       cs = gs;
       link('wall', [[S - 3, LANE, Y - cs0 * 3], [S + 1.2, LANE, Y], [s0 + 3, LANE, Y + H + gs * 3]]);
       S = s0 + Lm; Y = Y + H + gs * Lm;
@@ -127,6 +139,51 @@ function makeSpine(rnd, ringY) {
       cs = gs2;
       link('cliff', [[S - 3, LANE, Y - cs0 * 3], [S + Lt - 1.6, LANE, Y], [s2 + 5, LANE, Y2 + gs2 * 5]]);
       S = s2 + L2; Y = Y2 + gs2 * L2;
+    } else if (kind === 'snake') {
+      // каменная змейка: узкий извилистый гребень уходит от стены над пропастью и возвращается
+      const n = 6 + Math.floor(rnd() * 4), amp = 4.5 + rnd() * 4.5, P = [];
+      let yy = Y + cs0 * 1.5, gsPrev = cs0;
+      for (let k = 0; k <= n; k++) {
+        const t = k / n, sk = S + 1.5 + k * (3.6 + rnd() * 1.2);
+        const uk = LANE + amp * Math.sin(Math.PI * t) + (k > 0 && k < n ? (rnd() - 0.5) * 1.6 : 0);
+        if (k > 0) yy += -(0.2 + rnd() * 0.9) + (rnd() < 0.2 ? 1.0 : 0);   // в основном вниз, иногда чуть вверх
+        P.push([sk, uk, yy]);
+      }
+      for (let k = 0; k < n; k++) {
+        const [a1, b1, c1] = P[k], [a2, b2, c2] = P[k + 1];
+        const l = seg(a1, b1, c1, a2, b2, c2, 1.25 + rnd() * 0.45, { gs0: gsPrev, T: 3 + rnd() * 2.5 });
+        gsPrev = l.gs;
+      }
+      const end = P[n];
+      S = end[0]; Y = end[2]; cs = gsPrev;
+      const L = 12 + rnd() * 6, gsN = -(0.06 + rnd() * 0.12);
+      wide(L, gsN);
+      link('snake', [[P[0][0] - 4, LANE, Y - (end[2] - P[0][2]) - cs0 * 4], ...P.map((p) => [p[0], p[1], p[2]]), [S + 3, LANE, Y + gsN * 3]]);
+      S += L; Y += gsN * L;
+    } else if (kind === 'tunnel') {
+      // тоннель: проход вдоль стены под каменной крышей, сбоку — высокая скала
+      const L = 12 + rnd() * 6, gs = -(0.03 + rnd() * 0.08), lane = 2.9;
+      wide(L, gs, { u1: 9, noRubble: true });
+      lobe({ s0: S + 0.6, s1: S + L - 0.6, u0: 4.7, u1: 10.5, sRef: S, yRef: Y + 4.6 + rnd() * 1.2, gs, gs0: gs, T: 10, n: 3.2, bump: 0.35 });
+      const nr = 2 + Math.floor(rnd() * 2), rl = (L - 3) / nr;
+      for (let k = 0; k < nr; k++) {
+        const a0 = S + 1.5 + k * rl;
+        lobe({ s0: a0 - 0.3, s1: a0 + rl + 0.3, u0: -2.5, u1: 7.4, sRef: S, yRef: Y + 4.9 + rnd() * 0.5, gs, gs0: gs, T: 2.1, n: 4, bump: 0.2, flat: true });
+      }
+      const Y1 = Y + gs * L;
+      link('tunnel', [[S, lane, Y], [S + L * 0.5, lane, Y + gs * L * 0.5], [S + L, lane, Y1]]);
+      S += L; Y = Y1;
+    } else if (kind === 'plateau') {
+      // большая площадка-передышка между подъёмами: широкая, почти ровная, с уступами-террасами
+      const L = 24 + rnd() * 12, gs = -(0.02 + rnd() * 0.05);
+      wide(L, gs, { u1: 12 + rnd() * 2.5, bump: 0.45 });
+      const nt = 1 + Math.floor(rnd() * 3);
+      for (let k = 0; k < nt; k++) {
+        const sc = S + 5 + rnd() * (L - 10), u = 8 + rnd() * 3, a = 2.5 + rnd() * 2.5, b = 1.6 + rnd() * 1.4;
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 1.1 + rnd() * 0.6, gs: 0, gs0: 0, T: 2.5, n: 2.8, bump: 0.15, rubble: true });
+      }
+      link('plateau', [[S, LANE, Y], [S + L * 0.5, LANE + 1.5, Y + gs * L * 0.5], [S + L, LANE, Y + gs * L]]);
+      S += L; Y += gs * L;
     } else if (kind === 'stones') {
       // россыпь маленьких камней над пропастью: прыжки с камня на камень
       const n = 5 + Math.floor(rnd() * 3), wps = [[S - 3, LANE, Y - cs0 * 3]];
@@ -212,7 +269,9 @@ function makeSpine(rnd, ringY) {
 
 // ---------- 2. геометрия лопасти ----------
 const topY = (l, s, u, bw = 1) => {
-  let y = l.yRef + (s < l.sRef && l.gs0 !== undefined ? l.gs0 : l.gs) * (s - l.sRef) + l.gu * (u - l.uc);
+  // наклон вдоль оси лопасти (у повёрнутых — вдоль их направления), до точки отсчёта — свой наклон gs0
+  const t = (s - l.sRef) * (l.dS ?? 1) + (u - (l.uRef ?? 0)) * (l.dU ?? 0);
+  let y = l.yRef + (t < 0 && l.gs0 !== undefined ? l.gs0 : l.gs) * t + l.gu * (u - l.uc);
   const ph = l.ph;
   y += bw * l.bump * (0.5 * Math.sin(s * 0.55 + ph[0]) * Math.cos(u * 0.7 + ph[1]) + 0.35 * Math.sin(s * 1.3 + u * 1.1 + ph[2]));
   if (l.arch) { const t = (s - l.sc) / l.a; y += l.arch * Math.max(0, 1 - t * t); }
@@ -220,7 +279,9 @@ const topY = (l, s, u, bw = 1) => {
 };
 
 function lobeMesh(l, sp, out, rnd) {
-  const SEG = l.T < 3 ? 10 : 14, sc = (l.s0 + l.s1) / 2, uc = (l.u0 + l.u1) / 2, a = (l.s1 - l.s0) / 2, b = (l.u1 - l.u0) / 2;
+  const SEG = l.T < 3 ? 10 : 14, rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
+  const sc = l.rot !== undefined ? l.cs : (l.s0 + l.s1) / 2, uc = l.rot !== undefined ? l.cu : (l.u0 + l.u1) / 2;
+  const a = l.rot !== undefined ? l.A : (l.s1 - l.s0) / 2, b = l.rot !== undefined ? l.B : (l.u1 - l.u0) / 2;
   l.sc = sc; l.uc = uc; l.a = a; l.b = b; l.ph = [rnd() * TAU, rnd() * TAU, rnd() * TAU];
   const h1 = 0.1 + rnd() * 0.12, h2 = 0.08 + rnd() * 0.1, h3 = 0.05 + rnd() * 0.08, p1 = rnd() * TAU, p2 = rnd() * TAU, p3 = rnd() * TAU;
   const mAt = (ang) => 0.97 + h1 * Math.sin(ang * 2 + p1) + h2 * Math.sin(ang * 3 + p2) + h3 * Math.sin(ang * 5 + p3);
@@ -235,7 +296,7 @@ function lobeMesh(l, sp, out, rnd) {
     for (let i = 0; i < SEG; i++) {
       const ang = (i / SEG) * TAU, m = mAt(ang) * (0.93 + 0.14 * hash(l.ph[0] + i, ri * 5.3));
       const e = 2 / l.n, ds = a * k * sh * (1 + (m - 1) * 0.12) * spow(Math.cos(ang), e), du = b * k * sh * m * spow(Math.sin(ang), e);
-      const s = sc + ds, u = uc + du;
+      const s = sc + ds * cr - du * sr, u = uc + ds * sr + du * cr;
       let y = topY(l, s, u, 1 - 0.85 * k * k);
       if (dy === 0 && k > 0.9) y -= 0.1;                                   // скруглённый край
       arr.push({ s, u, y: y - dy });
@@ -249,7 +310,7 @@ function lobeMesh(l, sp, out, rnd) {
     const arr = pts(1, d, sh, 10 + ri);
     return arr.map((p) => ({ ...p, y: p.y - (hash(p.s, ri) - 0.5) * 0.5 }));
   });
-  const apexP = { s: sc, u: uc, y: Math.min(...body[2].map((p) => p.y)) - l.T * 0.45 };
+  const apexP = { s: sc, u: uc, y: Math.min(...body[2].map((p) => p.y)) - (l.flat ? 0.3 : l.T * 0.45) };
   const W3 = (p) => wpt(p.s, p.u, p.y);
   const UP = [0, 1, 0], DN = [0, -1, 0];
   const tri = (A, B, C, hint) => {
@@ -448,7 +509,7 @@ export function buildDescent(scene) {
   const cry = [], oct = new THREE.OctahedronGeometry(1, 0), col = new THREE.Color(), r3 = mulberry32(SEED + 9003);
   best.spines.forEach((sp) => {
     for (const l of sp.plan.lobes) {
-      if (l.T < 4 || r3() < 0.5) continue;
+      if (l.T < 4 || l.rot !== undefined || l.flat || r3() < 0.5) continue;
       const c = 1 + (r3() < 0.4 ? 1 : 0);
       for (let k = 0; k < c; k++) {
         const s = l.s0 + 2 + r3() * (l.s1 - l.s0 - 4), u = Math.max(l.u1 - 1.4 - r3() * 2, 2.5);
