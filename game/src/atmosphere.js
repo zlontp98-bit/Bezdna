@@ -205,9 +205,9 @@ export function buildStreams(scene) {
         vec3 deepC = mix(vec3(0.04,0.17,0.22), vec3(0.07,0.26,0.30), n1);
         vec3 c = mix(shallow, deepC, dk);
         // нарисованная вода: переливы и блики; течёт вместе с ручьём (вдоль потока — по v)
-        vec3 wt = texture2D(uWater, vec2(u*0.55 + 0.13, v*0.085)).rgb;
+        vec3 wt = waterTex(vW.xz, 0.06 + 0.10*steep);
         float wl = dot(wt, vec3(0.30,0.59,0.11));
-        c = mix(c, c * (0.62 + 1.1*wl) + (wt - c)*0.18, (1.0 - steep) * 0.9);
+        c = mix(c, c * (0.6 + 1.15*wl) + (wt - c)*0.2, 0.85 * mix(1.0, 0.5, steep));
         float foam = smoothstep(0.74, 0.9, n2) * (0.35 - dk*0.28) + steep * (0.55 + 0.45*n1);
         // под водопадом вода кипит пеной, ниже по течению пена расходится полосами
         foam += vFoam * smoothstep(0.25 + 0.5*(1.0 - vFoam), 0.9, n1*0.6 + n2*0.5);

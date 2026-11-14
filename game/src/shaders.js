@@ -153,6 +153,17 @@ vec3 shade(vec3 alb, vec3 n, float sh){
   float back = max(dot(n, normalize(vec3(-uSun.x, 0.3, -uSun.z))), 0.0);
   return alb * (amb + uSunCol * lit + uAmbHi * back * 0.35);
 }
+// Нарисованная вода: ОДИН узор для ручья и озёр. Мировые координаты, один масштаб, одно течение
+// (к центру провала), поэтому на стыке ручья и озера рисунок не рвётся: оно продолжается.
+// speed — скорость течения: у спокойного русла и озера одинаковая, на порогах больше.
+vec3 waterTex(vec2 xz, float speed){
+  vec2 fl = -normalize(xz + 1e-3);              // течёт к центру
+  vec2 side = vec2(-fl.y, fl.x);
+  vec2 q = vec2(dot(xz, side), dot(xz, fl)) * 0.075 - vec2(0.0, uTime * speed);
+  vec3 a = texture2D(uWater, q).rgb;
+  vec3 b = texture2D(uWater, q * vec2(-0.53, 0.53) + vec2(0.31, -uTime * speed * 0.55)).rgb; // второй слой чуть другим масштабом и медленнее
+  return a * 0.62 + b * 0.38;
+}
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);

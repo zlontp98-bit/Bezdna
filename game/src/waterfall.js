@@ -196,8 +196,7 @@ function buildPools(scene) {
         vec3 deepC = mix(vec3(0.04, 0.17, 0.22), vec3(0.07, 0.26, 0.30), n1);
         vec3 c = mix(shallow, deepC, dk);
         // нарисованная вода: переливы и солнечные блики, чуть дрейфуют; вдали усредняются сами
-        vec3 wt = texture2D(uWater, vW.xz*0.075 + vec2(uTime*0.012, -uTime*0.009)).rgb * 0.6
-                + texture2D(uWater, vec2(vW.z, -vW.x)*0.041 + vec2(-uTime*0.006, uTime*0.01) + 0.3).rgb * 0.4;
+        vec3 wt = waterTex(vW.xz, 0.06);   // та же вода и то же течение, что у ручья: стык не виден
         float wl = dot(wt, vec3(0.30,0.59,0.11));
         c = mix(c, c * (0.6 + 1.15*wl) + (wt - c)*0.2, 0.85);
         // под струёй вода кипит, дальше пена расходится рваными кольцами

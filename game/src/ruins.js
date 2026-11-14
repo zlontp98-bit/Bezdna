@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { W, heightAt, waterAt, POOLS, ROAD } from './terrain.js';
+import { W, heightAt, waterAt, pathAt, POOLS, ROAD } from './terrain.js';
 import { STACKS } from './stacks.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { addCyl, addBox } from './solids.js';
@@ -116,15 +116,38 @@ export function buildRuins(scene) {
     while (re > 60 && heightAt(Math.cos(th) * re, Math.sin(th) * re) > -17) re -= 0.25;
     const br = re + 1.9;
     if (br > pr - 6.2) { g.done(scene); continue; }
-    const [bx, bz] = P(br, th), ang = Math.atan2(tx, tz);
+    // Мост ставим по тропе, а не по оси ручья: тропа пересекает ручей наискосок и не точно в
+    // выбранной точке. Находим центр тропы на каждом берегу (в рамке: o — поперёк ручья,
+    // d — вдоль него) и ставим мост между этими центрами — он продолжает тропу без излома.
+    const rx = Math.cos(th), rz = Math.sin(th);
+    const centre = (o0, o1) => {
+      let sw = 0, sd = 0, so = 0;
+      for (let o = o0; o <= o1; o += 0.5) for (let d = -4; d <= 4; d += 0.5) {
+        const [qx, qz] = [P(br, th)[0] + tx * o + rx * d, P(br, th)[1] + tz * o + rz * d];
+        const w = pathAt(qx, qz) ** 2;
+        sw += w; sd += w * d; so += w * o;
+      }
+      return sw > 0.5 ? { d: sd / sw, o: so / sw } : null;
+    };
+    const L = centre(-9, -4.2), R = centre(4.2, 9);
+    let dC = 0, slope = 0;
+    if (L && R && R.o - L.o > 6) {
+      dC = Math.max(-1.6, Math.min(1.6, (L.d + R.d) / 2)); // сдвиг моста к тропе (вдоль ручья)
+      slope = Math.max(-0.45, Math.min(0.45, (R.d - L.d) / (R.o - L.o))); // и разворот вдоль неё
+    }
+    const [bx, bz] = [P(br, th)[0] + rx * dC, P(br, th)[1] + rz * dC];
+    // ось моста — вдоль тропы: поперёк ручья + наклон на радиальную составляющую
+    const ax = tx + rx * slope, az = tz + rz * slope, al = Math.hypot(ax, az);
+    const ang = Math.atan2(ax / al, az / al);
     const bank = Math.max(heightAt(bx + tx * 3.1, bz + tz * 3.1), heightAt(bx - tx * 3.1, bz - tz * 3.1));
     const top = bank + 0.3;
     // Старый дощатый мостик: всё одной моделью (один вызов отрисовки).
     // Вдоль — две балки-лаги, поперёк — доски разной длины и тона, по бокам столбики
     // с перилами из жердей, перевязанных верёвкой; под концами — подкосы к берегу.
+    const ux = ax / al, uz = az / al; // ось моста (вдоль тропы)
     const tones = [0x8a5d3c, 0x9a6a46, 0x7a5034, 0xa57850, 0x6e4a31];
     const A = (geo, color, o, sd, y, ry = 0, rz = 0, opt = {}) =>
-      g.add(geo, color, bx + tx * o - tz * sd, y, bz + tz * o + tx * sd, opt, [1, 1, 1], ang + ry, rz);
+      g.add(geo, color, bx + ux * o - uz * sd, y, bz + uz * o + ux * sd, opt, [1, 1, 1], ang + ry, rz);
     const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
     // лаги
     for (const sd of [-0.55, 0.55]) A(box(0.16, 0.2, 7.5), WOODD, 0, sd, top - 0.2);
@@ -146,15 +169,15 @@ export function buildRuins(scene) {
         // жердь чуть провисает к середине пролёта и лежит неровно
         const o = (posts[k] + posts[k + 1]) / 2, tilt = (k ? 1 : -1) * 0.012 + (rnd() - 0.5) * 0.02;
         g.add(new THREE.CylinderGeometry(0.045, 0.055, 3.42, 5, 1).rotateX(Math.PI / 2), tones[k + (sd > 0 ? 2 : 0)],
-          bx + tx * o - tz * sd, top + 0.84 + (rnd() - 0.5) * 0.03, bz + tz * o + tx * sd, {}, [1, 1, 1], ang + tilt);
+          bx + ux * o - uz * sd, top + 0.84 + (rnd() - 0.5) * 0.03, bz + uz * o + ux * sd, {}, [1, 1, 1], ang + tilt);
         g.add(new THREE.CylinderGeometry(0.035, 0.035, 3.4, 5, 1).rotateX(Math.PI / 2), WOODG,
-          bx + tx * o - tz * sd, top + 0.42, bz + tz * o + tx * sd, {}, [1, 1, 1], ang - tilt);
+          bx + ux * o - uz * sd, top + 0.42, bz + uz * o + ux * sd, {}, [1, 1, 1], ang - tilt);
       }
     }
     // подкосы под концами и поперечины, на которых лежат лаги
     for (const o of [-3.3, 3.3]) {
       A(box(2.0, 0.16, 0.18), WOODD, o, 0, top - 0.36);
-      for (const sd of [-0.75, 0.75]) g.add(box(0.12, 1.3, 0.12), WOODD, bx + tx * (o * 0.86) - tz * sd, top - 0.85, bz + tz * (o * 0.86) + tx * sd, {}, [1, 1, 1], ang, 0);
+      for (const sd of [-0.75, 0.75]) g.add(box(0.12, 1.3, 0.12), WOODD, bx + ux * (o * 0.86) - uz * sd, top - 0.85, bz + uz * (o * 0.86) + ux * sd, {}, [1, 1, 1], ang, 0);
     }
     blobs.push({ x: bx, z: bz, r: 2.6, h: 0.6 });
     addBox(bx, bz, 0.85, 3.6, ang, top, top - 0.3); // под мостком можно проплыть
