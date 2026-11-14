@@ -285,11 +285,6 @@ function updateCamera(dt, inp) {
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
   // направление взгляда
   const fx = -Math.sin(yaw) * cp, fy = -sp, fz = -Math.cos(yaw) * cp;
-  if (firstPerson) {
-    camera.position.copy(target);
-    camera.lookAt(target.x + fx, target.y + fy, target.z + fz);
-    return;
-  }
   // Камера на «пружинной штанге». Преграды для неё — рельеф, крупные валуны и руины;
   // грибы, кроны, кусты и мелкие камни не в счёт (вблизи камеры они просто тают, см. flora.js).
   // Низкую преграду (бугор, склон за спиной, валун) камера плавно перелетает, приподнимаясь,
@@ -306,6 +301,30 @@ function updateCamera(dt, inp) {
     if (rr > 0.05) for (let a = 0; a < 6.2832; a += 0.7854) m = Math.max(m, groundAt(x + Math.cos(a) * rr, z + Math.sin(a) * rr, y, true) + 0.06);
     return m - y;
   };
+  // От первого лица камера — глаза героя. Раньше она ставилась в точку головы как есть, и у стены
+  // или на скале оказывалась внутри камня: мир виден снизу и «сквозь текстуры». Теперь выводим
+  // её из камня так же, как у третьего лица: сначала отодвигаем от стены, потом поднимаем над землёй.
+  if (firstPerson) {
+    _cs.copy(target);
+    if (player.climbing) { // лезем лицом к стене: глаза чуть отодвинуты от неё
+      const nx = player.n.x, nz = player.n.z, hl = Math.hypot(nx, nz);
+      if (hl > 0.05) { _cs.x += (nx / hl) * 0.3; _cs.z += (nz / hl) * 0.3; }
+    }
+    for (let it = 0; it < 10 && need(_cs.x, _cs.y, _cs.z, 3) > 0; it++) {
+      let bx = 0, bz = 0, bh = 1e9;
+      for (let a = 0; a < 6.2832; a += 0.7854) {
+        const qx = _cs.x + Math.cos(a) * 0.12, qz = _cs.z + Math.sin(a) * 0.12, h = groundAt(qx, qz, _cs.y, true);
+        if (h < bh) { bh = h; bx = qx; bz = qz; }
+      }
+      _cs.x = bx; _cs.z = bz;
+      _cs.y = Math.max(_cs.y, groundAt(_cs.x, _cs.z, _cs.y, true) + 0.35);
+    }
+    if (camSm.distanceToSquared(_cs) > 4 || camSmDt < 0) camSm.copy(_cs); else camSm.lerp(_cs, 1 - Math.exp(-dt * 30));
+    camSmDt = 0;
+    camera.position.copy(camSm);
+    camera.lookAt(camSm.x + fx, camSm.y + fy, camSm.z + fz);
+    return;
+  }
   const N = 18, KMAX = 0.7;
   let want = camDist, kWant = 0;
   const liftAt = (t) => (need(target.x - fx * t, target.y - fy * t + camLift * t, target.z - fz * t, t) + camLift * t) / t;
