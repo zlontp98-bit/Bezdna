@@ -38,6 +38,11 @@ function chestParts() {
     part(new THREE.CylinderGeometry(Dp / 2, Dp / 2, W, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), W1, { m: T(0, 0, Dp / 2) }),
   ];
   for (const x of [-0.27, 0.27]) lid.push(part(new THREE.CylinderGeometry(Dp / 2 + 0.02, Dp / 2 + 0.02, 0.07, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), IRON, { m: T(x, 0, Dp / 2) }));
+  // Дно крышки: у полукруглого свода его нет, и откинутая крышка изнутри была невидимой
+  // (грани смотрели от камеры). Доски нутра и железные полосы под ней.
+  lid.push(part(box(W - 0.02, 0.03, Dp - 0.02), D, { m: T(0, 0.012, Dp / 2) }));
+  for (let i = 0; i < 3; i++) lid.push(part(box(W - 0.04, 0.012, 0.15), [W2, W1, W3][i], { m: T(0, 0.03, 0.12 + i * 0.17) }));
+  for (const x of [-0.27, 0.27]) lid.push(part(box(0.075, 0.02, Dp), IRON, { m: T(x, 0.03, Dp / 2) }));
   // мох на крышке и щели
   lid.push(part(new THREE.SphereGeometry(1, 7, 4, 0, TAU, 0, Math.PI / 2), 0x4f6b2f, { m: T(-0.18, 0.23, Dp / 2 - 0.05, 0.2, 0.06, 0.16) }));
   lid.push(part(box(0.5, 0.02, 0.02), D, { m: T(0.12, Dp / 2 - 0.005, Dp / 2) }));
