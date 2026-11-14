@@ -486,12 +486,14 @@ function hasProgress() { return inv.count('log') > 0 || town.wallet > 0 || town.
 // Сводка на главном экране: ресурсы сверху и карточка с ближайшей целью
 function showSave() {
   const logs = inv.count('log'), st = town.state;
-  const chips = [`✨ ${town.wallet}`, `🪵 ${logs}`, st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка', `📖 ${craft.known.length}`];
+  const chips = [`✨ ${town.wallet}`, `🪵 ${logs}`, town.hall === 'built' ? '🏛️ Мастерская' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка', `📖 ${craft.known.length}`];
   $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
   const T = RULES.treasury, cost = RULES.build.house.cost.log;
   let ico, t, p, k;
   if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
   else if (st === 'building') { ico = '🏗️'; t = 'Дом строится'; p = `Осталось ${town.left()} с — заходи посмотреть.`; k = 1 - town.left() / (RULES.build.house.ms / 1000); }
+  else if (town.hall === 'none' && st === 'built') { const H = RULES.build.hall.cost; ico = '🏛️'; t = 'Улучши дом'; p = `Мастерская: ${H.log} 🪵, ${H.stone} 🪨 и шестерёнка ⚙️ из ящика на островке.`; k = (Math.min(1, logs / H.log) + Math.min(1, inv.count('stone') / H.stone) + Math.min(1, inv.count('gear') / H.gear)) / 3; }
+  else if (town.hall === 'building') { ico = '🏗️'; t = 'Мастерская строится'; p = `Осталось ${town.hallLeft()} с.`; k = 1 - town.hallLeft() / (RULES.build.hall.ms / 1000); }
   else if (town.treasury.logs < T.goal) { ico = '🪙'; t = 'Казна лагеря'; p = `Внесено ${town.treasury.logs} из ${T.goal} 🪵 — дальше «${T.next}».`; k = town.treasury.logs / T.goal; }
   else { ico = '💎'; t = 'Глубже в бездну'; p = 'Казна собрана. Ищи старые ящики на островках над бездной.'; k = 1; }
   $('goalIco').textContent = ico; $('goalT').textContent = t; $('goalP').textContent = p;

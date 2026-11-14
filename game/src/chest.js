@@ -72,7 +72,12 @@ export class Chests {
         this.c.opened = ev.at; this.anim = 'open'; this.t = 0;
         if (ev.by === world.me) {
           const got = [];
-          for (const id in ev.loot) if (inv.add(id, ev.loot[id]) < ev.loot[id]) got.push(`${ITEMS[id].name}`);
+          for (const id in ev.loot) {
+            // инструмент, который уже есть, второй раз не кладём (кирка одна)
+            if (ITEMS[id].max === 1 && inv.count(id) > 0) continue;
+            if (inv.add(id, ev.loot[id]) < ev.loot[id]) { got.push(`${ITEMS[id].name} (не влезло)`); continue; }
+            got.push(`${ITEMS[id].name}`);
+          }
           toast(got.length ? `🗝️ В старом ящике: ${got.join(', ')}` : 'Инвентарь полон — ящик пуст для тебя');
         }
       }

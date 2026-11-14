@@ -48,16 +48,17 @@ export const RULES = {
     spear:   { name: 'Копьё', icon: '🗡️', cost: { log: 2, stone: 1 } },
   },
   // постройки: цена и время стройки
-  build: { house: { cost: { log: 40 }, ms: 30000 } },
+  // дом (уровень 1) и его улучшение до мастерской (уровень 2): ресурсы снимает игра, мир проверяет порядок
+  build: { house: { cost: { log: 40 }, ms: 30000 }, hall: { cost: { log: 100, stone: 150, gear: 1 }, ms: 60000, needs: 'house' } },
   // местная валюта — искры ✨. Строитель покупает брёвна; казна лагеря платит за них больше,
   // но принимает только до цели следующего улучшения
   trade: { logPrice: 1, price: { log: 1, berry: 1 } },
   // старый ящик на островках: стоит на случайном острове, внутри — кирка;
   // открыли — через 3–5 минут появляется новый, на другом острове
-  chest: { loot: { pickaxe: 1 }, islands: 7, respawnMs: () => 180000 + Math.random() * 120000 },
+  chest: { loot: { gear: 1, pickaxe: 1 }, islands: 7, respawnMs: () => 180000 + Math.random() * 120000 },
   // ягодные кусты: собрал — через 2.5–4 минуты ягоды снова висят; ягоды не на каждом кусте
   bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
-  treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Мастерская' },
+  treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Кузница' },
 };
 
 // Пока сервера нет: решает сама игра и хранит состояние в памяти телефона
@@ -115,7 +116,8 @@ class LocalAuthority {
       emit({ type: 'chopped', id: ev.id, at: now, by: this.me, reward: { log: RULES.tree.logs } });
     }
     // стройка: плату пока снимает сама игра (инвентарь у неё); сервер будет проверять её сам
-    if (ev.type === 'build' && RULES.build[ev.what] && this.built[ev.what] === undefined) {
+    if (ev.type === 'build' && RULES.build[ev.what] && this.built[ev.what] === undefined
+        && (!RULES.build[ev.what].needs || this.built[RULES.build[ev.what].needs] !== undefined)) {
       this.built[ev.what] = now;
       this.save();
       emit({ type: 'built', what: ev.what, at: now, by: this.me });
