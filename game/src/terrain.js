@@ -815,7 +815,7 @@ const terrainMat = () => mat({
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround, uRockMtn;
+    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround, uRockMtn, uGrass, uPath;
     varying vec3 vW; varying vec3 vN;
     float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
@@ -876,35 +876,40 @@ const terrainMat = () => mat({
       float snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
 
       // ---- трава ----
+      // Нарисованный газон в двух масштабах (8 и 32 м, второй повёрнут): рисунок не повторяется.
+      // Цвет подтягиваем к цвету настоящих травинок (grassCol), чтобы стебли не торчали
+      // из чужого по тону ковра; от рисунка берём пучки, тёмные низины и светлые пятна.
       vec4 hm = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5);
-      vec4 g1 = texture2D(uGround, vW.xz*0.22);
-      vec4 g2 = texture2D(uGround, vec2(vW.z, -vW.x)*0.052 + 0.37);
+      vec3 gA = texture2D(uGrass, vW.xz*0.12).rgb;
+      vec3 gB = texture2D(uGrass, vec2(vW.z, -vW.x)*0.031 + 0.37).rgb;
       vec4 d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
-      float nearK = smoothstep(70.0, 18.0, camD);
       vec3 grass = grassCol(vW);
       grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
-      // трава не одного тона: пятна выгоревшей и сырой, местами проглядывает земля (крупный рисунок земли)
-      grass *= 0.86 + 0.28*d2.b;
-      grass = mix(grass, g2.rgb * vec3(0.9,1.06,0.62), 0.07 + 0.12*d2.b);
+      float gl = lumOf(gA)*0.65 + lumOf(gB)*0.35;
+      grass = mix(grass * (0.45 + 1.25*gl), mix(gA, gB, 0.35) * vec3(0.70,0.80,0.62), 0.4);
+      grass *= 0.88 + 0.24*d2.b;
       float gn = mix(n.y, ng.y, mtnK);
       float gm = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08);
       gm *= 1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0);
-      vec3 alb = mix(rock, grass, gm);
+      // у скал на пологих полках трава переходит в каменистую землю (старая текстура земли)
+      vec3 scree = texture2D(uGround, vW.xz*0.22).rgb * vec3(0.9,0.88,0.85);
+      vec3 alb = mix(rock, mix(scree, grass, smoothstep(0.35, 0.8, gm + (1.0 - mtnK))), smoothstep(0.0, 0.3, gm));
 
-      // ---- грунт: тропы и вытоптанные проплешины (канал B карты) ----
-      // Край рваный — в него заходят языки травы. Сама земля — нарисованная текстура
-      // в двух масштабах (4.5 м и 19 м): повтор не виден.
-      float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(g1.rgb) - 0.45)*0.35*nearK;
+      // ---- тропы и вытоптанные проплешины (канал B карты) ----
+      // Край рваный — в него заходят языки травы. Грунт — нарисованная тропа в двух масштабах (10 и 38 м).
+      vec3 pA = texture2D(uPath, vW.xz*0.1).rgb;
+      vec3 pB = texture2D(uPath, vec2(vW.z, -vW.x)*0.026 + 0.21).rgb;
+      float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(pA) - 0.55)*0.35*smoothstep(70.0, 18.0, camD);
       float dirtK = smoothstep(0.36, 0.5, e);
       float core = smoothstep(0.55, 0.9, e);
-      vec3 soil = g1.rgb * (0.7 + 0.6*lumOf(g2.rgb));
-      soil = mix(vec3(lumOf(soil)), soil, 0.78) * 0.92;      // чуть приглушаем: тропа не должна быть оранжевой
-      soil = mix(soil*0.82, soil*1.08, core);
+      vec3 soil = mix(pA, pB, 0.25);
+      soil = mix(vec3(lumOf(soil)), soil, 0.85) * vec3(0.92,0.9,0.86); // чуть спокойнее: не оранжевая
+      soil = mix(soil*0.84, soil*1.05, core);
       alb = mix(alb, soil, dirtK * gm);
       // у воды: мокрая галька (та же скала, темнее и холоднее)
       float wd = hm.a;
       float wet = smoothstep(-0.45, 0.0, wd) * (1.0 - mtnK);
-      vec3 pebble = tP * vec3(0.62,0.66,0.72) * (0.8 + 0.4*g1.r);
+      vec3 pebble = tP * vec3(0.62,0.66,0.72) * (0.8 + 0.4*lumOf(pA));
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
