@@ -208,6 +208,7 @@ const MAX_SLOPE = 0.9;
 const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
 const CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 // толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
+const MANTLE_MIN = 0.45, MANTLE_MAX = 1.9; // перелезть можно уступ такой высоты, м
 const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
 const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
@@ -230,7 +231,7 @@ export class Player {
     // а картинка догоняет за десятую долю секунды — без рывков
     this.vOff = new THREE.Vector3();
     this.viewPos = this.pos.clone();
-    this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
+    this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.slideGrace = 0; this.pushT = 0; this.mantle = null; this.mantleCd = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.swingT = 0; this.held = null; // взмах инструментом (сек. до конца) и что в руке (id предмета)
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
@@ -327,6 +328,48 @@ export class Player {
     }
   }
 
+  // Небольшой уступ (0.45–1.9 м) с ровным верхом: перелезаем сами, плавной дугой, без кнопки.
+  // Условие — игрок давит в уступ и стоит у него вплотную; верх проверяем на 0.5 м вглубь,
+  // чтобы не «запрыгнуть» на острый гребень или обрыв.
+  tryMantle(mx, mz, ml) {
+    if (!this.grounded || this.sliding || ml < 0.6 || this.mantleCd > 0 || this.speed > 1.6) return false;
+    const p = this.pos, l = Math.hypot(mx, mz), ux = mx / l, uz = mz / l;
+    for (let d = 0.25; d <= 0.95; d += 0.1) {
+      const h = this.G(p.x + ux * d, p.z + uz * d);
+      if (h - p.y < MANTLE_MIN) continue;
+      if (h - p.y > MANTLE_MAX + 0.4) return false;
+      // верхняя кромка найдена: смотрим площадку за ней
+      const tx = p.x + ux * (d + 0.55), tz = p.z + uz * (d + 0.55), ty = this.G(tx, tz), up = ty - p.y;
+      if (up < MANTLE_MIN || up > MANTLE_MAX) return false;
+      this.N(tx, tz, this._n2, 0.35);
+      if (this._n2.y < 0.75) return false;                          // наверху не ровно
+      if (Math.abs(this.G(tx + ux * 0.4, tz + uz * 0.4) - ty) > 0.5) return false; // там обрыв или шип
+      this.mantle = { sx: p.x, sy: p.y, sz: p.z, tx, ty, tz, t: 0, dur: 0.28 + up * 0.12 };
+      this.mantleCd = 0.5; this.speed = 0;
+      return true;
+    }
+    return false;
+  }
+  mantleStep(dt) {
+    const m = this.mantle, p = this.pos;
+    m.t += dt;
+    const k = Math.min(1, m.t / m.dur), e = k * k * (3 - 2 * k);
+    p.x = m.sx + (m.tx - m.sx) * e; p.z = m.sz + (m.tz - m.sz) * e;
+    // дуга: сначала вверх, потом вперёд; в верхней точке чуть выше уступа
+    p.y = m.sy + (m.ty - m.sy) * Math.min(1, k * 1.5) + Math.sin(k * Math.PI) * 0.35;
+    this.vel.set(0, 0, 0); this.grounded = false; this.airT = 0.5;
+    if (k >= 1) { this.mantle = null; this.grounded = true; p.y = this.G(p.x, p.z); this.airT = 0; }
+  }
+
+  // Упёрся в крутую стену и давит на неё: хватаемся сами (на уступах не нужно жать «Хват»
+  // заново после каждой полки). Нужно ~0.3 с упора, чтобы случайное касание не цепляло.
+  autoGrab(ml, dt) {
+    if (!this.grounded || this.sliding || ml < 0.6 || this.climbCd > 0 || this.speed > 1.2) { this.pushT = 0; return false; }
+    if ((this.pushT += dt) < 0.3) return false;
+    this.pushT = 0;
+    return !!this.findWall();
+  }
+
   // Ищем рядом крутую стену, за которую можно схватиться (по кнопке «Хват»)
   findWall() {
     const p = this.pos, n = this.n;
@@ -363,6 +406,18 @@ export class Player {
     const n = this.N(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
     if (n.y > 0.8 || hl < 1e-3) { // вылезли на ровное
       this.climbing = false; this.grounded = true; p.y = this.G(p.x, p.z);
+      // Мы стоим прямо на кромке: уклон «вниз от ног» тут огромный, и сразу включалось бы
+      // скольжение вниз по той самой стене, на которую только что залезли. Отступаем
+      // от края вглубь уступа и на секунду отключаем скольжение.
+      if (hl > 1e-3) {
+        const ix = -n.x / hl, iz = -n.z / hl;
+        for (let d = 0.1; d <= 0.7; d += 0.1) {
+          const qx = p.x + ix * d, qz = p.z + iz * d, h = this.G(qx, qz);
+          if (h - p.y < -0.15 || h - p.y > 0.45) break;
+          p.x = qx; p.z = qz; p.y = h;
+        }
+      }
+      this.slideGrace = 1.0; this.sliding = false;
       return;
     }
     const ux = -n.x / hl, uz = -n.z / hl; // вверх по склону (в плане)
@@ -470,6 +525,8 @@ export class Player {
     const mx = inp.mx * c - inp.my * s, mz = -inp.mx * s - inp.my * c;
     const ml = this.climbing ? 0 : Math.min(1, Math.hypot(mx, mz));
     this.climbCd = Math.max(0, this.climbCd - dt);
+    this.slideGrace = Math.max(0, this.slideGrace - dt);
+    this.mantleCd = Math.max(0, this.mantleCd - dt);
     // вода: если под ногами глубже роста по грудь — плывём
     const wl = waterAt(p.x, p.z);
     if (!this.climbing && wl > -1e8 && p.y < wl - 0.85 && wl - this.G(p.x, p.z) > 1.0) {
@@ -477,7 +534,9 @@ export class Player {
     }
     if (this.swimming) this.swimStep(dt, inp, mx, mz, wl);
     else if (this.climbing) this.climbStep(dt, inp);
-    else if (inp.grab && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
+    else if (this.mantle) this.mantleStep(dt);
+    else if (!inp.grab && this.tryMantle(mx, mz, ml)) { this.mantleStep(0); }
+    else if ((inp.grab || this.autoGrab(ml, dt)) && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
     const top = inp.sprint ? RUN : WALK;
     // на крутом склоне стоять нельзя: герой съезжает вниз, пока не схватится
     if (this.grounded) {
@@ -485,7 +544,7 @@ export class Player {
       // застряли в узкой крутой выемке (съезжать некуда) — разрешаем стоять и прыгать
       const wedged = Math.hypot(p.x - this.wedge.x, p.z - this.wedge.z) < 0.6;
       if (this.sliding) { if (fs < SLIDE_OUT || wedged) this.sliding = false; }
-      else if (fs > SLIDE_IN && !wedged) this.sliding = true;
+      else if (fs > SLIDE_IN && !wedged && this.slideGrace <= 0) this.sliding = true;
     } else this.sliding = false;
     if (this.sliding) {
       // скорость раскладываем на «вниз по склону» и «поперёк»: вниз разгоняемся,

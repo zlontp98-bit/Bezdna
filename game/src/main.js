@@ -120,11 +120,12 @@ async function build() {
   buildTerrain(scene);
   await loadStep(42, 'Ставим островки над бездной…');
   buildStacks(scene);
+  // руины раньше растений: тогда кусты и деревья обходят их плиты и столбы
+  const ruins = buildRuins(scene);
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   await loadStep(60, 'Разбиваем лагерь…');
   const camp = buildCamp(scene, flora.spawn);
-  const ruins = buildRuins(scene);
   await loadStep(66, 'Раскладываем тени…');
   bakeShadows(flora.blobs.concat(camp.blobs, ruins));
   await loadStep(84, 'Пускаем воду…');
@@ -295,14 +296,22 @@ function updateCamera(dt, inp) {
   // Луч «толстый»: кроме середины проверяем точки по бокам (половина ближней плоскости кадра).
   const rx = Math.cos(yaw) * 0.32, rz = -Math.sin(yaw) * 0.32;
   // насколько точка ниже допустимого (≤ 0 — свободна)
-  const need = (x, y, z) => Math.max(groundAt(x, z, y, true) + 0.35, groundAt(x + rx, z + rz, y, true) + 0.15, groundAt(x - rx, z - rz, y, true) + 0.15) - y;
+  // Кроме высоты под камерой проверяем кольцо вокруг неё: вплотную к отвесной стене точка
+  // «над землёй» (стена вверх не считается), а ближняя плоскость кадра уже внутри камня.
+  // Кольцо растёт с расстоянием от героя (у самого героя, прижатого к стене, оно нулевое).
+  const need = (x, y, z, t = 3) => {
+    let m = Math.max(groundAt(x, z, y, true) + 0.35, groundAt(x + rx, z + rz, y, true) + 0.15, groundAt(x - rx, z - rz, y, true) + 0.15);
+    const rr = Math.min(0.42, 0.14 * Math.max(0, t - 0.8));
+    if (rr > 0.05) for (let a = 0; a < 6.2832; a += 0.7854) m = Math.max(m, groundAt(x + Math.cos(a) * rr, z + Math.sin(a) * rr, y, true) + 0.06);
+    return m - y;
+  };
   const N = 18, KMAX = 0.7;
   let want = camDist, kWant = 0;
   for (let i = 1; i <= N; i++) {
     const t = (i / N) * camDist;
     const x = target.x - fx * t, y = target.y - fy * t, z = target.z - fz * t;
     // во сколько нужно задрать луч, чтобы пройти над преградой в этой точке
-    const k = (need(x, y + camLift * t, z) + camLift * t) / t;
+    const k = (need(x, y + camLift * t, z, t) + camLift * t) / t;
     if (k > KMAX) { want = Math.max(0.35, t - camDist / N - 0.15); break; }
     if (k > kWant) kWant = k;
   }
@@ -312,12 +321,12 @@ function updateCamera(dt, inp) {
   const at = (d, k) => camPos.set(target.x - fx * d, target.y - fy * d + k * d, target.z - fz * d);
   // итоговую точку проверяем отдельно: если сглаживание не успело — сразу ставим как надо
   at(camCur, camLift);
-  if (need(camPos.x, camPos.y, camPos.z) > 0) {
+  if (need(camPos.x, camPos.y, camPos.z, camCur) > 0) {
     camLift = Math.max(camLift, kWant);
     camCur = Math.min(camCur, want);
     for (let k = 0; k < 40 && camCur > 0.35; k++) {
       at(camCur, camLift);
-      if (need(camPos.x, camPos.y, camPos.z) <= 0) break;
+      if (need(camPos.x, camPos.y, camPos.z, camCur) <= 0) break;
       camCur = Math.max(0.35, camCur - 0.1);
     }
     at(camCur, camLift);

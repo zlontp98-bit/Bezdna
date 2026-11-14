@@ -7,7 +7,19 @@ const grid = new Map();
 export let hitSolid = false; // последняя точка опирается на объект, а не на землю
 export let ceiling = 1e9;    // низ ближайшего объекта над головой
 
+// есть ли на этом месте твёрдая постройка (плита, столб, арка): растения на неё не ставим
+export function blockedByStone(x, z, rad) {
+  const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
+  if (!list) return false;
+  for (const s of list) {
+    if (s.field) continue; // валуны и острова — отдельные модели, их растения уже обходят
+    if (Math.hypot(x - s.x, z - s.z) < s.rad + rad) return true;
+  }
+  return false;
+}
+
 function insert(s, rad) {
+  s.rad = rad;
   for (let cx = Math.floor((s.x - rad) / CELL); cx <= Math.floor((s.x + rad) / CELL); cx++)
     for (let cz = Math.floor((s.z - rad) / CELL); cz <= Math.floor((s.z + rad) / CELL); cz++) {
       const k = cx + ',' + cz;

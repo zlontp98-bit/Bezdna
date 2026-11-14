@@ -905,6 +905,13 @@ const terrainMat = () => mat({
       float facet = vnoise(vW.xz*0.035 + 3.0);
       float facet2 = vnoise(vW.xz*0.012 - 5.0);
 
+      // Трава закрывает землю почти везде на лугу, тогда скала не видна вовсе и 8 выборок текстур
+      // можно не делать. Маску травы считаем заранее (по нормали), а скалу — только там, где она нужна.
+      float gn0 = mix(n.y, ng.y, mtnK);
+      float gm0 = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn0 + (vnoise(vW.xz*0.9)-0.5)*0.08) * (1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0));
+      vec3 rock = vec3(0.35, 0.3, 0.28), nn = n;
+      float snow = 0.0;
+      if (gm0 < 0.995) {
       // ---- скала: нарисованные текстуры ----
       // Стены спуска, кольца и бездны — тёплые земляные плиты со мхом (текстура стены);
       // внешние горы — серый камень (отдельная текстура). Отвесные места проецируются по двум
@@ -913,7 +920,7 @@ const terrainMat = () => mat({
       float wx = axz.x / (axz.x + axz.y);
       vec3 tW = texture2D(uRockWall, vW.zy*0.085).rgb * wx + texture2D(uRockWall, vW.xy*0.085 + 0.31).rgb * (1.0 - wx);
       vec3 tP = texture2D(uRockPlain, vW.xz*0.12 + 0.17).rgb;
-      vec3 rock = mix(tP, tW, steepM);
+      rock = mix(tP, tW, steepM);
       // Серые горы. Масштаб плавно растёт от подножия к хребту: у долины плитка 20 м, в горах 60 м
       float bigK = smoothstep(190.0, 218.0, rr);
       vec3 tM = vec3(0.0);
@@ -963,54 +970,57 @@ const terrainMat = () => mat({
       vec3 grad = sign(det) * (dFdx(hh)*r1 + dFdy(hh)*r2);
       // рельеф только на скале и сглаженный по яркости (на земле производные дают «пунктир»)
       float bumpK = smoothstep(0.15, 0.45, steepM) * smoothstep(60.0, 12.0, camD) * 0.12;
-      vec3 nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
+      nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
       // грани треугольников нужны только скалам; на траве и тропах свет считаем по гладкой нормали
       nn = normalize(mix(n, nn, smoothstep(0.12, 0.42, 1.0 - ng.y)));
       // снег — только на самых высоких вершинах и в их складках
       float snowLine = 168.0 + facet2*18.0 + (1.0 - ng.y)*30.0; // хребет стал выше — снег только на самых пиках
-      float snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
+      snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
 
+      }
       // ---- трава ----
       // Нарисованный газон в двух масштабах (8 и 32 м, второй повёрнут): рисунок не повторяется.
       // Цвет подтягиваем к цвету настоящих травинок (grassCol), чтобы стебли не торчали
       // из чужого по тону ковра; от рисунка берём пучки, тёмные низины и светлые пятна.
       vec4 hm = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5);
-      vec3 gA = texture2D(uGrass, vW.xz*0.12).rgb;
-      vec3 gB = texture2D(uGrass, vec2(vW.z, -vW.x)*0.031 + 0.37).rgb;
-      vec4 d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
-      vec3 grass = grassCol(vW);
-      grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
-      float gl = lumOf(gA)*0.65 + lumOf(gB)*0.35;
-      grass = mix(grass * (0.45 + 1.25*gl), mix(gA, gB, 0.35) * vec3(0.70,0.80,0.62), 0.4);
-      grass *= 0.88 + 0.24*d2.b;
-      float gn = mix(n.y, ng.y, mtnK);
-      float gm = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08);
-      gm *= 1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0);
-      // у скал на пологих полках трава переходит в каменистую землю (старая текстура земли)
-      vec3 scree = texture2D(uGround, vW.xz*0.22).rgb * vec3(0.9,0.88,0.85);
-      vec3 alb = mix(rock, mix(scree, grass, smoothstep(0.35, 0.8, gm + (1.0 - mtnK))), smoothstep(0.0, 0.3, gm));
+      float gm = gm0;
+      vec3 alb = rock; vec4 d2 = vec4(0.5); vec3 pA = vec3(0.55);
+      // трава и тропа считаются только там, где они есть: на скалах и стенах (gm = 0) это 8 выборок текстур даром
+      if (gm > 0.004) {
+        vec3 gA = texture2D(uGrass, vW.xz*0.12).rgb;
+        vec3 gB = texture2D(uGrass, vec2(vW.z, -vW.x)*0.031 + 0.37).rgb;
+        d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
+        vec3 grass = grassCol(vW);
+        grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
+        float gl = lumOf(gA)*0.65 + lumOf(gB)*0.35;
+        grass = mix(grass * (0.45 + 1.25*gl), mix(gA, gB, 0.35) * vec3(0.70,0.80,0.62), 0.4);
+        grass *= 0.88 + 0.24*d2.b;
+        // у скал на пологих полках трава переходит в каменистую землю (старая текстура земли)
+        vec3 scree = texture2D(uGround, vW.xz*0.22).rgb * vec3(0.9,0.88,0.85);
+        alb = mix(rock, mix(scree, grass, smoothstep(0.35, 0.8, gm + (1.0 - mtnK))), smoothstep(0.0, 0.3, gm));
 
-      // Граница трава ↔ камень: рваная (по пятнам), с тёмной каймой дёрна и мшистым ободком на камне —
-      // трава не «обрезана» по линии, а вползает на камень языками и затеняет стык
-      float ge = gm * (1.0 - gm) * 4.0;
-      alb = mix(alb, alb * vec3(0.78, 0.9, 0.72), ge * 0.5);
-      alb = mix(alb, vec3(0.20, 0.36, 0.16) * (0.8 + 0.5*d2.b), ge * 0.22 * (1.0 - mtnK));
+        // Граница трава ↔ камень: рваная (по пятнам), с тёмной каймой дёрна и мшистым ободком на камне —
+        // трава не «обрезана» по линии, а вползает на камень языками и затеняет стык
+        float ge = gm * (1.0 - gm) * 4.0;
+        alb = mix(alb, alb * vec3(0.78, 0.9, 0.72), ge * 0.5);
+        alb = mix(alb, vec3(0.20, 0.36, 0.16) * (0.8 + 0.5*d2.b), ge * 0.22 * (1.0 - mtnK));
 
-      // ---- тропы и вытоптанные проплешины (канал B карты) ----
-      // Край рваный — в него заходят языки травы. Грунт — нарисованная тропа в двух масштабах (10 и 38 м).
-      vec3 pA = texture2D(uPath, vW.xz*0.1).rgb;
-      vec3 pB = texture2D(uPath, vec2(vW.z, -vW.x)*0.026 + 0.21).rgb;
-      float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(pA) - 0.55)*0.35*smoothstep(70.0, 18.0, camD);
-      float dirtK = smoothstep(0.36, 0.5, e);
-      float core = smoothstep(0.55, 0.9, e);
-      vec3 soil = mix(pA, pB, 0.25);
-      soil = mix(vec3(lumOf(soil)), soil, 0.85) * vec3(0.92,0.9,0.86); // чуть спокойнее: не оранжевая
-      soil = mix(soil*0.84, soil*1.05, core);
-      alb = mix(alb, soil, dirtK * gm);
+        // ---- тропы и вытоптанные проплешины (канал B карты) ----
+        // Край рваный — в него заходят языки травы. Грунт — нарисованная тропа в двух масштабах (10 и 38 м).
+        pA = texture2D(uPath, vW.xz*0.1).rgb;
+        vec3 pB = texture2D(uPath, vec2(vW.z, -vW.x)*0.026 + 0.21).rgb;
+        float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(pA) - 0.55)*0.35*smoothstep(70.0, 18.0, camD);
+        float dirtK = smoothstep(0.36, 0.5, e);
+        float core = smoothstep(0.55, 0.9, e);
+        vec3 soil = mix(pA, pB, 0.25);
+        soil = mix(vec3(lumOf(soil)), soil, 0.85) * vec3(0.92,0.9,0.86); // чуть спокойнее: не оранжевая
+        soil = mix(soil*0.84, soil*1.05, core);
+        alb = mix(alb, soil, dirtK * gm);
+      }
       // у воды: мокрая галька (та же скала, темнее и холоднее)
       float wd = hm.a;
       float wet = smoothstep(-0.45, 0.0, wd) * (1.0 - mtnK);
-      vec3 pebble = tP * vec3(0.62,0.66,0.72) * (0.8 + 0.4*lumOf(pA));
+      vec3 pebble = rock * vec3(0.7,0.74,0.8) * (0.85 + 0.3*lumOf(pA)); // мокрая галька: та же скала, темнее и холоднее
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);

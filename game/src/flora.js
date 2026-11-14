@@ -3,7 +3,7 @@ import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
 import { STACKS, PILLARS } from './stacks.js';
-import { addMeshTop } from './solids.js';
+import { addMeshTop, blockedByStone } from './solids.js';
 import { objId, idRand, RULES } from './world.js';
 
 const TAU = Math.PI * 2;
@@ -102,9 +102,12 @@ export function propMaterial() {
         // Гриб, крона или куст вплотную к камере тают «в сеточку»: камера проходит сквозь них,
         // а не застревает внутри шляпки и не закрывает героя
         float cd = distance(vW, cameraPosition);
-        if (vProp > 0.5 && cd < 2.4) {
+        // Камни (vStone = 1) не тают: рассыпающийся в точки валун у стены выглядел рябью. Они твёрдые,
+        // камера их и так не пускает внутрь; тают только растения и грибы, и камень — лишь вплотную (<0.9 м).
+        float fadeR = (vStone > 0.5 && vStone < 1.5) ? 0.9 : 2.4;
+        if (vProp > 0.5 && cd < fadeR) {
           float dth = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-          if (dth > smoothstep(0.9, 2.4, cd)) discard;
+          if (dth > smoothstep(fadeR * 0.375, fadeR, cd)) discard;
         }
         vec3 n = normalize(vN);
         vec3 v = normalize(cameraPosition - vW);
@@ -268,6 +271,7 @@ export function buildFlora(scene) {
       if (streamAt(x, z) > 0.01 || pathAt(x, z) > 0.05) continue;
       if (POOLS.some((p) => Math.hypot(x - p.x, z - p.z) < p.rad + (p.src ? 5 : 1.6))) continue;
       if (waterAt(x, z) > -1e8) continue;
+      if (blockedByStone(x, z, 0.8)) continue; // не на плитах и столбах руин
       if (r < 72 && PILLARS.some((p) => Math.hypot(x - p.x, z - p.z) < p.w + 1.8)) continue; // не под столбами паркура
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
       if (Math.hypot(x - spawn.x - 9.5, z - spawn.z + 3) < 8) continue; // место под дом в лагере
