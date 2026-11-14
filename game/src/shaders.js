@@ -24,6 +24,7 @@ export const U = {
   uPlayer: { value: new THREE.Vector3() },
   uNoise: { value: null },
   uDetail: { value: null },
+  uRockWall: { value: null }, uRockPlain: { value: null }, uGround: { value: null },
   uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
 };
 
@@ -98,6 +99,31 @@ export const U = {
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
   U.uDetail.value = tex;
+}
+
+// Нарисованные текстуры скал и земли (папка assets). Пока они грузятся, вместо них —
+// однотонная заглушка нужного цвета, так что кадр никогда не бывает чёрным.
+// Бесшовные: накладываются плиткой; стена 1024², остальные 512² (всего ~8 МБ видеопамяти).
+{
+  const fb = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
+  U.uRockWall.value = fb(158, 115, 83); U.uRockPlain.value = fb(168, 117, 87); U.uGround.value = fb(148, 111, 52);
+}
+export function loadTerrainTextures() {
+  const files = { uRockWall: 'rock_wall', uRockPlain: 'rock_plain', uGround: 'ground' };
+  return Promise.all(Object.entries(files).map(([u, f]) => new Promise((done) => {
+    const im = new Image();
+    im.onload = () => {
+      const t = new THREE.Texture(im);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.generateMipmaps = true; t.anisotropy = 4; // под косым углом (стены, дальняя земля) картинка не мылится
+      t.needsUpdate = true;
+      U[u].value = t;
+      done();
+    };
+    im.onerror = done; // не загрузилась — остаётся заглушка
+    im.src = './assets/' + f + '.jpg';
+  })));
 }
 
 export const COMMON = /* glsl */ `

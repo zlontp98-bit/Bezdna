@@ -815,128 +815,96 @@ const terrainMat = () => mat({
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D uHmap;
+    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround;
     varying vec3 vW; varying vec3 vN;
+    float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
       vec3 n = normalize(vN);
       float camD = distance(vW, cameraPosition);
-      float lf = smoothstep(190.0, 50.0, camD);
-      float wall = 1.0 - smoothstep(0.5, 0.82, n.y);
-      // координата вдоль стены — по ней идут колонны и трещины
-      vec2 tg = normalize(vec2(-n.z, n.x) + 1e-4);
-      float u = dot(vW.xz, tg);
-      float wob = vnoise(vW.xz*0.045)*5.0 + vnoise(vW.xz*0.21)*0.9;
-      float y = vW.y + wob;
-
-      // колонны: грани стены повёрнуты чуть по-разному, свет ложится плоскостями
-      float col = vnoise(vec2(u*0.16, vW.y*0.018));
-      float col2 = vnoise(vec2(u*0.45 + 7.0, vW.y*0.05));
-      vec3 nn = n;
-      nn.xz += tg * ((col - 0.5)*1.3 + (col2 - 0.5)*0.5) * wall;
-      nn.y += (col2 - 0.5) * 0.25 * wall;
-      nn = normalize(nn);
-
-      // трещины: тонкие тёмные линии, вытянутые вниз
-      float cr = vnoise(vec2(u*0.5, vW.y*0.055 + vnoise(vec2(u*0.2, vW.y*0.1))*0.6));
-      float crack = smoothstep(0.035, 0.0, abs(cr - 0.5)) * wall * lf;
-      // слои породы — только вблизи, вдали они превращаются в рябь
-      // на пологих склонах полосы превращаются в «изолинии», поэтому только на крутых стенах
-      float band = mix(0.5, smoothstep(0.3, 0.7, fract(y*0.16)), lf * (0.2 + 0.8*wall));
-      float ledge = smoothstep(0.88, 0.95, fract(y*0.33)) * lf;
-
-      // палитра камня: тёплая охра наверху, холодный сланец в глубине
-      float tone = vnoise(vec2(u*0.04, vW.y*0.03) + vW.xz*0.01);
-      vec3 rock = mix(vec3(0.50,0.42,0.35), vec3(0.43,0.36,0.31), band);
-      rock = mix(rock, vec3(0.52,0.45,0.36), tone*0.6);
-      vec3 deepR = mix(vec3(0.36,0.38,0.44), vec3(0.26,0.28,0.35), band);
-      deepR = mix(deepR, vec3(0.36,0.40,0.46), tone*0.5);
-      rock = mix(rock, deepR, smoothstep(10.0, 60.0, -vW.y));
-      rock = mix(rock, rock*1.12 + 0.02, ledge*(1.0-crack));
-      rock *= 0.88 + 0.22*col;
-      rock *= 1.0 - crack*0.35;
-      // мох и подтёки зелени на стенах: гуще под уступами и в сырых местах
-      float moss = smoothstep(0.55, 0.8, vnoise(vec2(u*0.12, vW.y*0.09)) + vnoise(vW.xz*0.5)*0.25 - (1.0-wall)*0.2) * wall;
-      vec3 mossC = mix(vec3(0.20,0.30,0.16), vec3(0.14,0.27,0.24), smoothstep(10.0, 45.0, -vW.y));
-      rock = mix(rock, mossC, moss*0.75*lf);
-      // ---- горы: слоистый скальный массив ----
-      // Грани: настоящая нормаль треугольника даёт рублёные плоскости (как в стилизованных играх),
-      // сглаженная — мягкий общий объём. Смешиваем: форма читается издали, вблизи видны сколы.
       float mtnK = smoothstep(14.0, 34.0, vW.y);
+      float deepK = smoothstep(8.0, 50.0, -vW.y);
+      // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
       fn *= sign(fn.y + 1e-5);
-      vec3 ng = normalize(mix(n, fn, 0.6));
+      vec3 ng = normalize(mix(n, fn, 0.4));
+      float steepM = smoothstep(0.2, 0.5, 1.0 - ng.y);
       float facet = vnoise(vW.xz*0.035 + 3.0);
       float facet2 = vnoise(vW.xz*0.012 - 5.0);
-      float tang = atan(vW.z, vW.x) * length(vW.xz);
-      float steepM = smoothstep(0.22, 0.5, 1.0 - ng.y);
-      // пласты породы: широкие полосы и тонкие прослойки, чуть волнистые
+
+      // ---- скала: нарисованные текстуры ----
+      // Отвесные места — плиты со мхом (текстура стены), проецируются по двум осям и плавно
+      // переходят друг в друга; плоские — светлая скала сверху. Масштаб: плитка 12 м.
+      vec2 axz = pow(abs(ng.xz) + 1e-3, vec2(4.0));
+      float wx = axz.x / (axz.x + axz.y);
+      vec3 tW = texture2D(uRockWall, vW.zy*0.085).rgb * wx + texture2D(uRockWall, vW.xy*0.085 + 0.31).rgb * (1.0 - wx);
+      vec3 tP = texture2D(uRockPlain, vW.xz*0.12 + 0.17).rgb;
+      vec3 rock = mix(tP, tW, steepM);
+      // контраст: картинка нарисована мягко, а в игре её надо читать издалека
+      rock = pow(rock, vec3(1.3)) * 1.2;
+      // Рисунок вдали усредняется в ровный цвет, поэтому структуру горы задаёт форма:
+      // широкие и тонкие пласты, тёмные щели между ними, стенки темнее полок
       float yw = vW.y + (facet - 0.5)*7.0;
+      float tang = atan(vW.z, vW.x) * length(vW.xz);
       float strata = vnoise(vec2(tang*0.006, yw*0.11));
       float thin = vnoise(vec2(tang*0.025, yw*0.5));
-      // вертикальные трещины-отдельности: стена распадается на блоки
-      // (почти отвесные: по высоте рисунок меняется медленно, каждый пласт сдвигает его)
+      float seam = smoothstep(0.1, 0.0, abs(fract(yw*0.09) - 0.5) - 0.42) * steepM;
       float jn = vnoise(vec2(tang*0.11 + floor(yw*0.09)*3.7, vW.y*0.004));
       float joint = smoothstep(0.06, 0.0, abs(jn - 0.5)) * steepM;
-      // тёмная щель между пластами
-      float seam = smoothstep(0.1, 0.0, abs(fract(yw*0.09) - 0.5) - 0.42) * steepM * smoothstep(260.0, 90.0, camD);
-      // цвет: тёплый серо-бурый камень, у каждого массива свой оттенок (охра ↔ сланец)
-      vec3 mtn = mix(vec3(0.38,0.33,0.31), vec3(0.66,0.60,0.53), smoothstep(0.25, 0.75, strata));
-      mtn = mix(mtn, mix(vec3(0.55,0.47,0.38), vec3(0.42,0.43,0.48), facet2), 0.45);
-      mtn *= 0.9 + 0.2*thin;
-      mtn *= mix(1.08, 0.84, steepM);             // стенки темнее полок
-      mtn *= 1.0 - joint*0.15 - seam*0.2;
-      // осыпь и светлая крошка на пологих местах
-      mtn = mix(mtn, vec3(0.62,0.58,0.52), (1.0 - steepM) * smoothstep(0.55, 0.8, thin) * 0.35);
-      rock = mix(rock, mtn, mtnK);
-      nn = normalize(mix(nn, ng + vec3(facet - 0.5, 0.0, thin - 0.5)*0.25, mtnK));
+      rock *= (0.84 + 0.3*strata) * (0.94 + 0.12*thin);
+      rock *= mix(1.1, 0.8, steepM) * (1.0 - seam*0.2 - joint*0.14);
+      rock *= mix(1.0, 0.9 + 0.2*facet2, mtnK);
+      // глубже — холоднее и темнее; высоко и вдали — серее (воздух и камень, а не охра)
+      rock = mix(rock, vec3(lumOf(rock)) * vec3(0.78,0.86,1.02), deepK*0.85);
+      rock = mix(rock, mix(vec3(lumOf(rock)), rock, 0.7) * vec3(0.94,0.96,1.0), mtnK*smoothstep(60.0, 220.0, camD)*0.6);
+      // небольшой рельеф по яркости картинки: плиты чуть выпуклые и ловят свет
+      float hh = lumOf(rock);
+      vec3 dpx = dFdx(vW), dpy = dFdy(vW);
+      vec3 r1 = cross(dpy, ng), r2 = cross(ng, dpx);
+      float det = dot(dpx, r1);
+      vec3 grad = sign(det) * (dFdx(hh)*r1 + dFdy(hh)*r2);
+      // рельеф только на скале и сглаженный по яркости (на земле производные дают «пунктир»)
+      float bumpK = smoothstep(0.15, 0.45, steepM) * smoothstep(60.0, 12.0, camD) * 0.12;
+      vec3 nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
       // снег — только на самых высоких вершинах и в их складках
       float snowLine = 92.0 + facet2*16.0 + (1.0 - ng.y)*30.0;
       float snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
 
-      // трава: на лугу и на полках гор; выше она суше и желтее, у снега пропадает
-      vec3 grass = grassCol(vW);
-      grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
-      float gn = mix(n.y, ng.y, mtnK);
-      float gm = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08 + (thin - 0.5)*0.1*mtnK);
-      gm *= 1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0);
-      // ---- земля ----
-      // Две выборки текстуры деталей в разных масштабах и с повёрнутыми осями: вместе они
-      // не дают заметного повтора. d1 — мелочь (камушки ~25 см), d2 — крупные пятна.
+      // ---- трава ----
       vec4 hm = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5);
-      vec4 d1 = texture2D(uDetail, vW.xz*0.17);
+      vec4 g1 = texture2D(uGround, vW.xz*0.22);
+      vec4 g2 = texture2D(uGround, vec2(vW.z, -vW.x)*0.052 + 0.37);
       vec4 d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
       float nearK = smoothstep(70.0, 18.0, camD);
-      // трава не одного тона: тёмные сырые и светлые выгоревшие пятна, вблизи — кочки
+      vec3 grass = grassCol(vW);
+      grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
+      // трава не одного тона: пятна выгоревшей и сырой, местами проглядывает земля (крупный рисунок земли)
       grass *= 0.86 + 0.28*d2.b;
-      grass = mix(grass, grass*vec3(1.16,1.12,0.80), smoothstep(0.5, 0.75, d1.b) * 0.35 * nearK);
+      grass = mix(grass, g2.rgb * vec3(0.9,1.06,0.62), 0.07 + 0.12*d2.b);
+      float gn = mix(n.y, ng.y, mtnK);
+      float gm = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08);
+      gm *= 1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0);
       vec3 alb = mix(rock, grass, gm);
-      // Грунт: тропы и вытоптанные проплешины (канал B карты). Край рваный — в него заходят
-      // языки травы; середина утоптана и светлее, по краям темнее и сырее, с камушками.
-      float e = hm.b + (d2.b - 0.5)*0.5 + (d1.b - 0.5)*0.3*nearK;
+
+      // ---- грунт: тропы и вытоптанные проплешины (канал B карты) ----
+      // Край рваный — в него заходят языки травы. Сама земля — нарисованная текстура
+      // в двух масштабах (4.5 м и 19 м): повтор не виден.
+      float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(g1.rgb) - 0.45)*0.35*nearK;
       float dirtK = smoothstep(0.36, 0.5, e);
       float core = smoothstep(0.55, 0.9, e);
-      vec3 soil = mix(vec3(0.36,0.27,0.19), vec3(0.56,0.44,0.31), d2.b);
-      soil = mix(soil*0.82, soil*1.06 + 0.015, core);
-      soil *= 1.0 - smoothstep(0.07, 0.0, d1.g) * 0.2 * core * nearK;              // трещинки в сухой земле
-      soil = mix(soil, soil*vec3(0.78,0.8,0.82), smoothstep(0.62, 0.8, d2.r)*0.5); // пятна грязи
-      float peb = smoothstep(0.6, 0.74, d1.r) * step(0.72, d1.a) * nearK;          // камушки: не в каждой ячейке
-      vec3 pebC = mix(vec3(0.36,0.34,0.32), vec3(0.58,0.55,0.50), fract(d1.a*7.3)) * (0.75 + 0.35*d1.r);
-      soil = mix(soil, pebC, peb * (1.0 - core*0.75));
+      vec3 soil = g1.rgb * (0.7 + 0.6*lumOf(g2.rgb));
+      soil = mix(vec3(lumOf(soil)), soil, 0.78) * 0.92;      // чуть приглушаем: тропа не должна быть оранжевой
+      soil = mix(soil*0.82, soil*1.08, core);
       alb = mix(alb, soil, dirtK * gm);
-      // редкие камушки и в траве у края грунта
-      alb = mix(alb, pebC, peb * step(0.9, d1.a) * gm * smoothstep(0.18, 0.36, e) * (1.0 - dirtK));
-      // у воды: мокрая галька и тёмный песок
+      // у воды: мокрая галька (та же скала, темнее и холоднее)
       float wd = hm.a;
       float wet = smoothstep(-0.45, 0.0, wd) * (1.0 - mtnK);
-      vec3 pebble = mix(vec3(0.33,0.30,0.26), vec3(0.46,0.42,0.36), vnoise(vW.xz*2.4));
-      pebble = mix(pebble, pebC*0.8, smoothstep(0.5, 0.7, d1.r) * nearK);
+      vec3 pebble = tP * vec3(0.62,0.66,0.72) * (0.8 + 0.4*g1.r);
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
 
-      // в щелях и у подножия стен темнее
-      float ao = mix(1.0, 0.8 + 0.2*col2, wall) * (1.0 - mtnK*0.12*(1.0-facet2));
-      vec3 c = shade(alb, mix(n, nn, 0.9), shadowAt(vW.xz)) * ao;
+      float ao = 1.0 - mtnK*0.1*(1.0-facet2);
+      vec3 c = shade(alb, nn, shadowAt(vW.xz)) * ao;
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
 });
