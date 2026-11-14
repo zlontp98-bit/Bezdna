@@ -457,7 +457,7 @@ export function buildFlora(scene) {
 
   // ---- дно шахты: берег озера ----
   // Много крупных камней (добываемых киркой), кристаллы и светящиеся грибы: голубое сияние в темноте
-  const floorOk = (y, ny) => ny > 0.8 && y < -250;
+  const floorOk = (y, ny) => ny > 0.8 && y < -135;
   scatter(130, 30, W.PIT - 2.5, (x, y, z, ny) => {
     if (!floorOk(y, ny)) return false;
     const s = 0.7 + Math.pow(rnd(), 1.6) * 2.4;

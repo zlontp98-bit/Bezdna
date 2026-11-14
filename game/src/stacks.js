@@ -39,7 +39,7 @@ function stackGeo(s, pos, idx, SEG = 30) {
   const ys = [0.35, 0.05, -0.5, -1.4];
   // Длина тела: столбы-ступени и малые острова — висящие обломки (70 и 130 м), большой остров тянется до дна.
   // Раньше все доходили до дна, а теперь там идёт спуск: колонны мешали бы плитам.
-  const maxD = s.pillar ? 70 : s.big ? 330 : 130;
+  const maxD = s.pillar ? 20 : s.big ? 330 : 130;
   for (let d = 3; d < maxD; d *= 1.35) ys.push(-d);
   const P = [];
   P.push(s.x, s.top + 0.45, s.z); // центр вершины
@@ -158,7 +158,7 @@ export function buildStacks(scene) {
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);
-    solid(i0, 11, p.top - 70 - 9);
+    solid(i0, 11, p.top - 20 - 4);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

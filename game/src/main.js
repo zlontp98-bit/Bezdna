@@ -201,7 +201,7 @@ const ZONES = [[14, 'Смотровая площадка'], [-3, 'Луг у кр
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
-  setCls('lift', 'show', player.pos.y < -130);
+  setCls('lift', 'show', player.pos.y < -85);
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
