@@ -7,7 +7,8 @@ import { RULES } from './world.js';
 export class Crafting {
   constructor(inv, world, toast) {
     this.inv = inv; this.world = world; this.toast = toast;
-    this.known = world.snapshot().known || [];
+    // Чертежей больше нет: все рецепты доступны сразу
+    this.known = Object.keys(RULES.recipes);
     world.on((ev) => {
       if (ev.by !== world.me) return;
       if (ev.type === 'boughtBlueprint') { inv.add(ev.item, 1); toast(`−${ev.price} ✨  📜 ${RULES.recipes[ev.what].name}: чертёж получен`); }
@@ -26,12 +27,7 @@ export class Crafting {
     });
   }
   // какой рецепт откроет свёрток в руке (или null)
-  heldBlueprint() {
-    const h = this.inv.held;
-    if (!h) return null;
-    for (const what in RULES.blueprints) if (RULES.blueprints[what].item === h.id && !this.known.includes(what)) return what;
-    return null;
-  }
+  heldBlueprint() { return null; } // чертежей нет
   learn() { const w = this.heldBlueprint(); if (w) this.world.send({ type: 'learn', what: w }); }
   canMake(what) {
     const c = RULES.recipes[what].cost;

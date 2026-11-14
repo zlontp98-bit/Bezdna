@@ -244,10 +244,10 @@
   #talkProg[hidden] { display: none; }
   #talkProg div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd978, #ffb02e); }
   /* крафт: кнопка под счётчиком искр и окно с рецептами */
-  #craftBtn { position: absolute; top: max(130px, calc(env(safe-area-inset-top) + 116px)); left: max(14px, env(safe-area-inset-left));
+  #craftBtn { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
     width: 44px; height: 44px; border-radius: 12px; font-size: 22px; }
   #craftBtn.on { background: var(--accent); }
-  #craft { position: absolute; top: max(130px, calc(env(safe-area-inset-top) + 116px)); left: max(66px, calc(env(safe-area-inset-left) + 52px));
+  #craft { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(66px, calc(env(safe-area-inset-left) + 52px));
     width: min(330px, 80vw); padding: 12px; border-radius: 16px; display: none; }
   #craft.show { display: block; }
   #craft h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
@@ -261,7 +261,7 @@
   .rc button:disabled { filter: grayscale(.8); opacity: .55; }
   @media (max-height: 470px) { #craft { top: max(84px, calc(env(safe-area-inset-top) + 70px)); } }
   /* кошелёк: искры — местная валюта */
-  #coins { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
+  #coins { display: none; position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
     padding: 6px 12px; border-radius: 12px; font-size: 16px; font-weight: 800; pointer-events: none; font-variant-numeric: tabular-nums; }
   #fade { position: fixed; inset: 0; background: #d9f3f2; opacity: 0; pointer-events: none; }
 

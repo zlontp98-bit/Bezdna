@@ -72,7 +72,8 @@ class LocalAuthority {
     this.picked = {}; // камушек → когда подобран
     this.mined = {}; // валун → когда разбит
     this.chest = null; // { id, island, seed, opened, respawn } — где сейчас старый ящик
-    this.treasury = { logs: 0 }; // казна лагеря: сколько брёвен внесено к следующему улучшению
+    this.treasury = { logs: 0 }; // (устарело) казна лагеря
+    this.project = {}; // задание на доске: сколько чего внесено в улучшение дома
     try {
       const d = JSON.parse(store.get('bezdna.world', 'null'));
       if (d && d.cut) this.cut = d.cut;
@@ -83,9 +84,10 @@ class LocalAuthority {
       if (d && d.mined) this.mined = d.mined;
       if (d && d.chest) this.chest = d.chest;
       if (d && d.treasury) this.treasury = d.treasury;
+      if (d && d.project) this.project = d.project;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, known: this.known, picked: this.picked, mined: this.mined, chest: this.chest })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, project: this.project, known: this.known, picked: this.picked, mined: this.mined, chest: this.chest })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
@@ -93,7 +95,7 @@ class LocalAuthority {
     for (const id in this.picked) if (now - this.picked[id] > (id.startsWith('bush:') ? RULES.bush : RULES.pebble).respawnMs(id) + 60000) delete this.picked[id];
     this.ensureChest(now);
     this.save();
-    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined }, chest: { ...this.chest } };
+    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, project: { ...this.project }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined }, chest: { ...this.chest } };
   }
   // Ящика нет или открытый простоял своё — ставим новый на другой остров.
   // Мир выбирает только остров и «зерно»; точное место на острове игра выводит из них сама,
@@ -160,6 +162,20 @@ class LocalAuthority {
     }
     if (ev.type === 'craft' && RULES.recipes[ev.what] && (this.known[this.me] || []).includes(ev.what)) {
       emit({ type: 'crafted', what: ev.what, by: this.me, cost: { ...RULES.recipes[ev.what].cost } });
+    }
+    // Задание на доске: принести ресурсы на улучшение дома. Взносы общие; когда набрано всё —
+    // мастерская начинает строиться сама (событие 'built'), без отдельной кнопки.
+    if (ev.type === 'contribute' && this.built.house !== undefined && this.built.hall === undefined) {
+      const need = RULES.build.hall.cost, cap = need[ev.item];
+      if (!cap || !(ev.n > 0)) return;
+      const have = this.project[ev.item] || 0, n = Math.min(Math.floor(ev.n), cap - have);
+      if (n <= 0) return;
+      this.project[ev.item] = have + n;
+      const done = Object.keys(need).every((id) => (this.project[id] || 0) >= need[id]);
+      if (done) this.built.hall = now;
+      this.save();
+      emit({ type: 'contributed', by: this.me, item: ev.item, n, project: { ...this.project }, done });
+      if (done) emit({ type: 'built', what: 'hall', at: now, by: this.me });
     }
     // Продажа и казна. Брёвна игра снимает, только получив ответ, и ровно столько, сколько принято.
     const pay = (coins) => (this.wallets[this.me] = (this.wallets[this.me] || 0) + coins);

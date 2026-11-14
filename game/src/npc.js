@@ -50,11 +50,16 @@ export class Settlement {
     if (snap.built && snap.built.hall !== undefined) this.beginHall(snap.built.hall);
     this.wallet = snap.wallet || 0;
     this.treasury = snap.treasury || { logs: 0 };
+    this.project = snap.project || {};
     world.on((ev) => {
       if (ev.type === 'built' && ev.what === 'house') this.begin(ev.at);
       if (ev.type === 'built' && ev.what === 'hall') this.beginHall(ev.at);
       // ответы на продажу и взнос: брёвна снимаем ровно столько, сколько принято
       if (ev.type === 'deposited') this.treasury = ev.treasury;
+      if (ev.type === 'contributed') {
+        this.project = ev.project;
+        if (ev.by === world.me) { this.inv.remove(ev.item, ev.n); this.toast(`−${ev.n} ${{ log: '🪵', stone: '🪨', gear: '⚙️' }[ev.item]} в задание`); }
+      }
       if (ev.type === 'boughtBlueprint' && ev.by === world.me) this.wallet = ev.wallet;
       if ((ev.type === 'paid' || ev.type === 'deposited') && ev.by === world.me) {
         const item = ev.item || 'log';
@@ -303,50 +308,32 @@ export class Settlement {
 
   // что говорит строитель и что предлагает: { name, text, acts: [{ label, can, run }] }
   dialog() {
-    const cost = RULES.build.house.cost.log, have = this.inv.count('log'), price = RULES.trade.logPrice;
+    const cost = RULES.build.house.cost.log, have = this.inv.count('log');
     const name = 'Борода, строитель', acts = [];
     let text;
     if (this.state === 'none') {
-      text = `Привет! Палатка — это не дом. Принеси ${cost} брёвен, и я за полминуты поставлю настоящий — с дверью и доской заданий. Лишние брёвна тоже куплю.`;
+      text = `Привет! Палатка — это не дом. Принеси ${cost} брёвен, и я за полминуты поставлю настоящий — с дверью и доской заданий.`;
       acts.push({ label: `Построить дом: ${cost} 🪵 (есть ${have})`, can: have >= cost, run: () => this.accept() });
-    } else if (this.state === 'building') text = `Строю, не отвлекай! Осталось ${this.left()} с. Брёвна куплю, если есть.`;
+    } else if (this.state === 'building') text = `Строю, не отвлекай! Осталось ${this.left()} с.`;
     else if (this.hall === 'building') text = `Мастерскую строим! Осталось ${this.hallLeft()} с. Леса не трогай.`;
-    else if (this.hall === 'built') text = `Мастерская готова — красота! Брёвна покупаю по ${price} ✨, а в казну на доске за них дают больше.`;
-    else text = `Дом готов. Хочешь большую мастерскую — с башней, навесом и стойкой для оружия? Нужны брёвна, камень и одна шестерёнка из старых ящиков на островках. Брёвна покупаю по ${price} ✨.`;
-    // улучшение дома до мастерской: ресурсы снимаются сразу, как и за первый дом
-    if (this.state === 'built' && this.hall === 'none') {
-      const H = RULES.build.hall.cost, lg = this.inv.count('log'), st = this.inv.count('stone'), gr = this.inv.count('gear');
-      acts.push({ label: `Улучшить до мастерской: ${H.log} 🪵 ${lg}/${H.log} · ${H.stone} 🪨 ${st}/${H.stone} · ${H.gear} ⚙️ ${gr}/${H.gear}`, can: lg >= H.log && st >= H.stone && gr >= H.gear, run: () => this.acceptHall() });
-    }
-    acts.push({ label: have ? `Продать ${have} 🪵 за ${have * price} ✨` : 'Продать брёвна — нет брёвен', can: have > 0, run: () => this.world.send({ type: 'sell', item: 'log', n: have }) });
-    const bn = this.inv.count('berry'), bp = RULES.trade.price.berry;
-    if (bn) acts.push({ label: `Продать ${bn} 🫐 за ${bn * bp} ✨`, can: true, run: () => this.world.send({ type: 'sell', item: 'berry', n: bn }) });
-    // чертежи: по одному, пока не изучен
-    for (const what in RULES.blueprints) {
-      const bp = RULES.blueprints[what], r = RULES.recipes[what];
-      if (this.craft.known.includes(what)) continue;
-      const has = this.inv.count(bp.item) > 0;
-      acts.push({ label: has ? `📜 ${r.name}: чертёж уже у тебя — изучи его` : `Купить чертёж: ${r.icon} ${r.name} — ${bp.price} ✨`, can: !has && this.wallet >= bp.price, run: () => this.world.send({ type: 'buyBlueprint', what }) });
-    }
+    else if (this.hall === 'built') text = 'Мастерская готова — красота! Заходи в дом, на доске заданий скоро появится новая работа.';
+    else text = 'Дом готов. Хочешь большую мастерскую — с башней, навесом и стойкой для оружия? На доске заданий в доме написано, что нужно принести.';
     return { name, text, acts };
   }
-  acceptHall() {
-    const H = RULES.build.hall.cost;
-    if (this.state !== 'built' || this.hall !== 'none') return;
-    for (const id in H) if (this.inv.count(id) < H[id]) return;
-    for (const id in H) this.inv.remove(id, H[id]);
-    this.world.send({ type: 'build', what: 'hall' });
-    this.toast('🏗️ Стройка мастерской началась');
-  }
-  // доска заданий: пока одно задание — казна лагеря
+  // доска заданий в доме: улучшение до мастерской — принести брёвна, камень и шестерёнку
   boardDialog() {
-    const T = RULES.treasury, got = this.treasury.logs, have = this.inv.count('log'), k = Math.min(have, T.goal - got);
-    if (got >= T.goal) return { name: 'Доска заданий', text: `Казна собрана: ${T.goal}/${T.goal} 🪵. «${T.next}» скоро начнут строить — следи за доской.`, prog: 1, acts: [] };
+    const H = RULES.build.hall.cost, P = this.project, name = 'Доска заданий';
+    if (this.hall !== 'none') return { name, text: this.hall === 'building' ? `Мастерская строится: осталось ${this.hallLeft()} с.` : 'Задание выполнено — мастерская построена. Новые задания появятся позже.', prog: 1, acts: [] };
+    const icon = { log: '🪵', stone: '🪨', gear: '⚙️' };
+    const lines = Object.keys(H).map((id) => `${icon[id]} ${P[id] || 0}/${H[id]}`).join('   ');
+    const give = Object.keys(H).map((id) => [id, Math.min(this.inv.count(id), H[id] - (P[id] || 0))]).filter(([, n]) => n > 0);
+    const total = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / Object.keys(H).length;
     return {
-      name: 'Доска заданий',
-      text: `Казна лагеря. Следующее улучшение — «${T.next}». Внесено ${got}/${T.goal} 🪵. За бревно — ${T.perLog} ✨, за последнее — ещё ${T.bonus} ✨.`,
-      prog: got / T.goal,
-      acts: [{ label: k ? `Внести ${k} 🪵 → ${k * T.perLog} ✨` : 'Внести брёвна — нет брёвен', can: k > 0, run: () => this.world.send({ type: 'deposit', n: k }) }],
+      name,
+      text: `Задание: улучшить дом до мастерской. Принести: ${lines}. Шестерёнку можно найти в старых ящиках на островках над бездной.`,
+      prog: total,
+      acts: [{ label: give.length ? 'Внести: ' + give.map(([id, n]) => `${n} ${icon[id]}`).join(' · ') : 'Внести — у тебя нет нужного', can: give.length > 0,
+        run: () => { for (const [id, n] of give) this.world.send({ type: 'contribute', item: id, n }); } }],
     };
   }
   // игрок согласился: платим брёвнами и просим мир начать стройку

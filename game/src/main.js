@@ -205,7 +205,6 @@ function updateHud(dt) {
   setCls('chop', 'show', !!act);
   if (act) setText('actIcon', { talk: '💬', board: '📜', learn: '📖', chest: '🗝️', pick: '✋', berry: '🫐', chop: '🪓', mine: '⛏️' }[act]);
   if (talkOpen) { if (talkOpen !== act) closeTalk(); else showTalk(talkOpen); }
-  setText('coinN', String(town.wallet));
   const d = Math.round(-y);
   setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
   setCss('bar', 'height', Math.round(Math.max(0, Math.min(100, (-y / 50) * 100))) + '%');
@@ -482,20 +481,19 @@ function start() {
 }
 $('play').addEventListener('click', start);
 // есть ли что терять: сводка прогресса на главном экране
-function hasProgress() { return inv.count('log') > 0 || town.wallet > 0 || town.state !== 'none' || craft.known.length > 0; }
+function hasProgress() { return inv.count('log') > 0 || inv.count('stone') > 0 || town.state !== 'none'; }
 // Сводка на главном экране: ресурсы сверху и карточка с ближайшей целью
 function showSave() {
   const logs = inv.count('log'), st = town.state;
-  const chips = [`✨ ${town.wallet}`, `🪵 ${logs}`, town.hall === 'built' ? '🏛️ Мастерская' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка', `📖 ${craft.known.length}`];
+  const chips = [`🪵 ${logs}`, `🪨 ${inv.count('stone')}`, `⚙️ ${inv.count('gear')}`, town.hall === 'built' ? '🏛️ Мастерская' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка'];
   $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
-  const T = RULES.treasury, cost = RULES.build.house.cost.log;
+  const cost = RULES.build.house.cost.log, H = RULES.build.hall.cost, P = town.project || {};
   let ico, t, p, k;
   if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
   else if (st === 'building') { ico = '🏗️'; t = 'Дом строится'; p = `Осталось ${town.left()} с — заходи посмотреть.`; k = 1 - town.left() / (RULES.build.house.ms / 1000); }
-  else if (town.hall === 'none' && st === 'built') { const H = RULES.build.hall.cost; ico = '🏛️'; t = 'Улучши дом'; p = `Мастерская: ${H.log} 🪵, ${H.stone} 🪨 и шестерёнка ⚙️ из ящика на островке.`; k = (Math.min(1, logs / H.log) + Math.min(1, inv.count('stone') / H.stone) + Math.min(1, inv.count('gear') / H.gear)) / 3; }
+  else if (town.hall === 'none') { ico = '🏛️'; t = 'Задание: мастерская'; p = `На доске в доме: ${H.log} 🪵, ${H.stone} 🪨 и ${H.gear} ⚙️ (из ящика на островке). Внесено: ${P.log || 0}/${H.log} · ${P.stone || 0}/${H.stone} · ${P.gear || 0}/${H.gear}.`; k = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / 3; }
   else if (town.hall === 'building') { ico = '🏗️'; t = 'Мастерская строится'; p = `Осталось ${town.hallLeft()} с.`; k = 1 - town.hallLeft() / (RULES.build.hall.ms / 1000); }
-  else if (town.treasury.logs < T.goal) { ico = '🪙'; t = 'Казна лагеря'; p = `Внесено ${town.treasury.logs} из ${T.goal} 🪵 — дальше «${T.next}».`; k = town.treasury.logs / T.goal; }
-  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Казна собрана. Ищи старые ящики на островках над бездной.'; k = 1; }
+  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Мастерская готова. Ищи старые ящики на островках над бездной.'; k = 1; }
   $('goalIco').textContent = ico; $('goalT').textContent = t; $('goalP').textContent = p;
   $('goalBar').style.width = Math.round(k * 100) + '%';
   $('playSub').textContent = hasProgress() ? 'С последнего сохранения' : 'Новое приключение';
