@@ -193,7 +193,8 @@ vec3 applyFog(vec3 c, vec3 w){
   float camIn = smoothstep(-70.0, -130.0, cameraPosition.y);
   f = max(f, smoothstep(-55.0, -120.0, w.y) * (1.0 - lakeK*0.92) * (1.0 - camIn*0.97));
   // в глубине немного голубого света от кристаллов и воды: не чёрный провал
-  c += vec3(0.025, 0.05, 0.085) * camIn * smoothstep(-60.0, -200.0, w.y) * (1.0 - f);
+  float inK = camIn * smoothstep(-60.0, -200.0, w.y) * (1.0 - f);
+  c = c * (1.0 + 0.45 * inK * (1.0 - lakeK)) + vec3(0.025 + 0.025 * (1.0 - lakeK), 0.05 + 0.035 * (1.0 - lakeK), 0.085 + 0.045 * (1.0 - lakeK)) * inK;
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-60.0, -150.0, w.y));
   fc = mix(fc, vec3(0.05, 0.16, 0.21), lakeK * 0.8);
