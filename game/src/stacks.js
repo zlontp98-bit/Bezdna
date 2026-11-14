@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm } from './noise.js';
-import { rockMat, heightAt } from './terrain.js';
-import { addMeshTop, groundAt } from './solids.js';
+import { rockMat, heightAt, W } from './terrain.js';
+import { addMeshTop, addCyl, groundAt } from './solids.js';
 import { mulberry32, SEED } from './noise.js';
 
 // Скальные островки, торчащие из шахты. Плоская вершина с травой,
@@ -33,24 +33,36 @@ export const PILLARS = [];
 export const CHAINS = [];
 for (const s of STACKS) { s.x = Math.cos(s.th) * s.r; s.z = Math.sin(s.th) * s.r; }
 
+// Колонны. Острова и столбы-ступени в середине шахты стоят на дне (колонны до самого низа): по ним
+// и по уступам на них идёт спуск через центр. Столбы у самой стены — короткие висящие обломки:
+// там проходит спуск вдоль стены.
+const FLOOR_Y = -(W.LOW + W.DEEP);
+export const isHanging = (s) => !!s.pillar && s.r > 41;
+const bodyLen = (s) => (s.hang = isHanging(s)) ? 20 : s.top - FLOOR_Y + 12;
+const kAt = (dy) => (dy > -0.6 ? 1.0 : 0.96 - 0.22 * Math.min(1, -dy / 14) - 0.12 * Math.min(1, -dy / 90));
+const leanAt = (s, dy) => { const lean = Math.min(1, -Math.min(dy, 0) / 60); return [Math.cos(s.th * 3.1) * s.w * 0.5 * lean, Math.sin(s.th * 2.3) * s.w * 0.5 * lean]; };
+// ось и радиус колонны на высоте y (для уступов и физики)
+export function colAt(s, y) {
+  const dy = Math.min(0, y - s.top), [ox, oz] = leanAt(s, dy);
+  return { x: s.x + ox, z: s.z + oz, r: s.w * kAt(dy) * (s.pillar ? 0.94 : 0.86) };
+}
+
 function stackGeo(s, pos, idx, SEG = 30) {
   const base = pos.length / 3;
   // кольца сверху вниз: вершина подробно, ниже — реже
   const ys = [0.35, 0.05, -0.5, -1.4];
   // Длина тела: столбы-ступени и малые острова — висящие обломки (70 и 130 м), большой остров тянется до дна.
   // Раньше все доходили до дна, а теперь там идёт спуск: колонны мешали бы плитам.
-  const maxD = s.pillar ? 20 : s.big ? 330 : 130;
+  const maxD = bodyLen(s);
   for (let d = 3; d < maxD; d *= 1.35) ys.push(-d);
+  ys.push(-maxD);
   const P = [];
   P.push(s.x, s.top + 0.45, s.z); // центр вершины
   for (let j = 0; j < ys.length; j++) {
     const dy = ys[j], y = s.top + dy;
     // шапка чуть нависает, ниже ствол сужается и слегка изгибается
-    let k;
-    if (dy > 0) k = 0.86; else if (dy > -0.6) k = 1.0;
-    else k = 0.96 - 0.22 * Math.min(1, -dy / 14) - 0.12 * Math.min(1, -dy / 90);
-    const lean = Math.min(1, -Math.min(dy, 0) / 60);
-    const ox = Math.cos(s.th * 3.1) * s.w * 0.5 * lean, oz = Math.sin(s.th * 2.3) * s.w * 0.5 * lean;
+    const k = dy > 0 ? 0.86 : kAt(dy);
+    const [ox, oz] = leanAt(s, dy);
     for (let i = 0; i < SEG; i++) {
       const a = (i / SEG) * Math.PI * 2;
       const cx = Math.cos(a), cz = Math.sin(a);
@@ -75,7 +87,7 @@ function stackGeo(s, pos, idx, SEG = 30) {
     }
   }
   // дно: острый конус под последним кольцом, чтобы обломок не был открытой трубой, если смотреть снизу
-  if (maxD < 330) {
+  if (s.hang) {
     const last = base + 1 + (nRings - 1) * SEG, apex = pos.length / 3;
     let ax = 0, az = 0;
     for (let i = 0; i < SEG; i++) { ax += pos[(last + i) * 3]; az += pos[(last + i) * 3 + 2]; }
@@ -127,6 +139,7 @@ function planChain(A, B, rnd) {
     PILLARS.push(p); chain.push(p);
   }
   chain.push({ x: bx, z: bz, top: B.top, w: 0 });
+  chain.A = A; chain.B = B;
   CHAINS.push(chain);
 }
 
@@ -139,10 +152,21 @@ export function buildStacks(scene) {
     // у тела настоящий низ: ниже него (на спуске, у озера) верхушка не считается землёй
     addMeshTop(tris, 0.35, under === undefined ? {} : { under });
   };
+  // тело колонны — стопка цилиндров по её настоящей оси и толщине (она сужается и наклоняется):
+  // за него можно хвататься и лезть; раньше телом был «столб» по форме шапки — невидимые стены в глубине
+  const body = (s) => {
+    const bottom = s.hang ? s.top - 22 : FLOOR_Y - 12, step = s.pillar ? 6 : 3;
+    let y1 = s.top - 3.5;
+    while (y1 > bottom + 0.5) {
+      const d = s.top - y1, h = d < 60 ? step : 1e3, y0 = Math.max(bottom, y1 - h), c = colAt(s, (y1 + y0) / 2);
+      addCyl(c.x, c.z, c.r, y1, y0, true, !!s.pillar); // тонкие столбы камера не считает преградой: иначе рядом с ними она прыгает вплотную к герою
+      y1 = y0;
+    }
+  };
   for (const s of STACKS) {
     const i0 = idx.length;
     stackGeo(s, pos, idx, s.big ? 48 : 30);
-    solid(i0, s.big ? 48 : 30, s.big ? s.top - 340 : s.top - 130 - 9);
+    solid(i0, s.big ? 48 : 30, s.top - 3.6); body(s);
   }
   // столбы ставим, когда острова уже твёрдые: края меряем по настоящей вершине
   const rnd = mulberry32(SEED + 404);
@@ -158,7 +182,7 @@ export function buildStacks(scene) {
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);
-    solid(i0, 11, p.top - 20 - 4);
+    solid(i0, 11, p.top - 3.6); body(p);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

@@ -463,24 +463,30 @@ export class Player {
     return this.grabFace(ux, uz, 0.3);
   }
   faceStep(dt, inp) {
-    const f = this.face, p = this.pos, v = this.vel, s = f.s;
+    const f = this.face, p = this.pos, v = this.vel;
     const ux = -f.nx, uz = -f.nz;                      // в стену
-    // вбок: стик влево/вправо вдоль грани; граница камня ищется заново (грань изогнута)
-    const ml = inp.mx * CLIMB * dt;
-    let nx = p.x + (-uz) * ml, nz = p.z + ux * ml;
-    const yq = p.y + 0.6;
-    const seat = (qx, qz) => {
+    // Куда хотим: вбок вдоль грани и вверх/вниз. Граница камня ищется заново (грань изогнута, скалы
+    // переходят одна в другую). Точку принимаем, только если там есть за что держаться и тело не
+    // оказывается внутри породы стены или под чужой скалой: тогда просто упираемся, без «телепорта».
+    const ml = inp.mx * CLIMB * dt, dy = inp.my * CLIMBV * dt;
+    const seat = (qx, qz, y) => {
       for (let d = -0.6; d <= 1.5; d += 0.05) {
-        if (rockAt(qx + ux * d, qz + uz * d, yq)) {
-          const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05);
-          return [bx, bz];
-        }
+        const r = rockAt(qx + ux * d, qz + uz * d, y + 0.6);
+        if (!r) continue;
+        const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05), hx = bx + f.nx * 0.42, hz = bz + f.nz * 0.42;
+        if (heightAt(hx, hz) > y + 0.35) return null;                              // там порода стены шахты
+        if (rockAt(hx, hz, y + 0.3) || rockAt(hx, hz, y + 1.25)) return null;        // там чужая скала (голова или ноги)
+        return [bx, bz, r];
       }
       return null;
     };
-    let b = seat(nx, nz);
-    if (!b) { nx = p.x; nz = p.z; b = seat(nx, nz); }
+    let b = null, ny = p.y;
+    for (const [kl, kv] of [[1, 1], [0, 1], [1, 0], [0, 0]]) {
+      b = seat(p.x - uz * ml * kl, p.z + ux * ml * kl, p.y + dy * kv);
+      if (b) { ny = p.y + dy * kv; break; }
+    }
     if (!b) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; return; }
+    const s = f.s = b[2], yq = ny + 0.6;
     const nn = this._n4 || (this._n4 = { x: 0, z: 0 });
     if (rockNormal(b[0], b[1], yq, nn)) {
       let ax = f.nx * 0.65 + nn.x * 0.35, az = f.nz * 0.65 + nn.z * 0.35; const al = Math.hypot(ax, az) || 1;
@@ -489,10 +495,6 @@ export class Player {
     const ox = p.x, oz = p.z;
     p.x = b[0] + f.nx * 0.42; p.z = b[1] + f.nz * 0.42;
     this.vOff.x += ox - p.x; this.vOff.z += oz - p.z;
-    // вверх/вниз
-    const up = inp.my * CLIMBV * dt;
-    let ny = p.y + up;
-    ny = Math.max(ny, s.bottom - 0.4);
     let topIn = fieldTop(s, b[0] - f.nx * 0.35, b[1] - f.nz * 0.35);
     if (topIn < -1e8) topIn = p.y + 5;
     p.y = ny;
@@ -559,9 +561,11 @@ export class Player {
     const fwd = Math.max(n.y * 0.5, 1 / Math.hypot(1, sl));
     const mvx = ux * inp.my * fwd - uz * inp.mx, mvz = uz * inp.my * fwd + ux * inp.mx;
     const amt = Math.min(1, Math.hypot(inp.mx, inp.my));
+    const cx0 = p.x, cz0 = p.z, cy0 = p.y;
     p.x += mvx * CLIMB * dt; p.z += mvz * CLIMB * dt;
     this.collide();
     p.y = this.G(p.x, p.z);
+    if (hitSolid && p.y - cy0 > 0.6) { p.x = cx0; p.z = cz0; p.y = cy0; } // над головой чужая скала: упираемся
     // лицом к стене: поворачиваемся плавно (нормаль на гранях скалы чуть «дрожит»)
     { let d = Math.atan2(ux, uz) - this.facing; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; this.facing += d * Math.min(1, dt * 8); }
     this.climbLean = Math.asin(Math.min(1, n.y));
@@ -610,7 +614,7 @@ export class Player {
   // Оказались под/внутри следа твёрдой глыбы в воздухе: ищем ближайшую сторону, где опора ниже ног
   pushOutOfSolid() {
     const p = this.pos;
-    for (let d = 0.15; d <= 1.6; d += 0.15) for (let k = 0; k < 8; k++) {
+    for (let d = 0.15; d <= 0.75; d += 0.15) for (let k = 0; k < 8; k++) {
       const a = (k / 8) * Math.PI * 2, qx = p.x + Math.cos(a) * d, qz = p.z + Math.sin(a) * d;
       if (this.G(qx, qz) < p.y - 0.05) {
         this.vOff.x += p.x - qx; this.vOff.z += p.z - qz;
@@ -744,7 +748,11 @@ export class Player {
       const h = this.G(p.x, p.z);
       // Внутрь скалы снизу/сбоку не «приземляемся»: если верх намного выше, чем были ноги, — это стена,
       // выталкиваемся из её следа и летим дальше (раньше касание низа глыбы телепортировало на её верх)
-      if (p.y <= h && hitSolid && h - prevY > 0.55 && this.pushOutOfSolid()) { /* отодвинулись */ }
+      if (p.y <= h && hitSolid && h - prevY > 0.55) {
+        // мы в следе скалы ниже её верха (упёрлись головой или боком): назад, на место до шага; не вышло — выталкиваемся
+        if (this.G(px0, pz0) <= p.y) { p.x = px0; p.z = pz0; v.x = 0; v.z = 0; if (v.y > 0) v.y = 0; }
+        else this.pushOutOfSolid();
+      }
       else if (p.y <= h && !this.slipOffWall()) {
         // если ноги уже были ниже края (зацепились за уступ) — поднимаемся плавно
         const assist = h - Math.max(p.y, prevY);

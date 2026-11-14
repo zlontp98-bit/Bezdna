@@ -27,8 +27,8 @@ function insert(s, rad) {
       (grid.get(k) || grid.set(k, []).get(k)).push(s);
     }
 }
-export function addCyl(x, z, r, top, bottom = -1e9) {
-  insert({ x, z, r, top, bottom, box: false }, r);
+export function addCyl(x, z, r, top, bottom = -1e9, climb = false, soft = false) {
+  insert({ x, z, r, top, bottom, box: false, climb, soft }, r);
 }
 // Верх произвольной модели (валун, островок): треугольники в мире растеризуются
 // в маленькую карту высот, поэтому опора совпадает с картинкой по построению.
@@ -112,14 +112,15 @@ export function groundAt(x, z, y, forCamera = false) {
   return h;
 }
 
-export const fieldTop = (s, x, z) => fieldAt(s, x, z);
+// верх объекта в точке (−1e9 — точка вне его): для карт высот и для цилиндров
+export const fieldTop = (s, x, z) => (s.field ? fieldAt(s, x, z) : s.box ? -1e9 : (x - s.x) ** 2 + (z - s.z) ** 2 <= s.r * s.r ? s.top : -1e9);
 // Лазание по бокам скал (climb: true): есть ли в точке (x, y, z) сама скала — а не только её верх?
 export function rockAt(x, z, y) {
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return null;
   for (const s of list) {
     if (s.off || !s.climb) continue;
-    const t = fieldAt(s, x, z);
+    const t = fieldTop(s, x, z);
     if (t > -1e8 && y < t && y > s.bottom) return s;
   }
   return null;
@@ -145,7 +146,7 @@ export function rockFace(x, z, y, dx, dz, out) {
     const bd = Math.max(0, d - 0.08), bx = x + dx * bd, bz = z + dz * bd;
     if (!rockNormal(bx, bz, y, _rn)) { _rn.x = -dx; _rn.z = -dz; }
     out.s = s; out.bx = bx; out.bz = bz; out.nx = _rn.x; out.nz = _rn.z;
-    out.top = Math.max(fieldAt(s, bx - _rn.x * 0.4, bz - _rn.z * 0.4), fieldAt(s, bx + dx * 0.4, bz + dz * 0.4));
+    out.top = Math.max(fieldTop(s, bx - _rn.x * 0.4, bz - _rn.z * 0.4), fieldTop(s, bx + dx * 0.4, bz + dz * 0.4));
     return true;
   }
   return false;

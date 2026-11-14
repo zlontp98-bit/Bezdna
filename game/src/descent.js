@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { W, heightAt, pitR, rockMat } from './terrain.js';
 import { addMeshTop, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
-import { STACKS, PILLARS } from './stacks.js';
+import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { part, merge, T, propMaterial } from './flora.js';
 
@@ -22,10 +22,11 @@ const LANE = 4.0;                   // «дорожка» героя: расст
 const FLOOR = -(W.LOW + W.DEEP);    // дно шахты
 export const DESCENT = { spines: [], lobes: [], links: [], stats: {}, ready: false };
 export const DBG = {};
-const PICKED = [1, 8, 5];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
+const PICKED = [1, 11, 20];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
 
 const rwAt = (th) => pitR(Math.cos(th) * W.PIT, Math.sin(th) * W.PIT);
 const toWorld = (s, u, sp) => {
+  if (sp.cart) return [s, u];                                        // «каньон» в середине шахты строится прямо в координатах мира
   const th = sp.th0 + sp.dir * s / RS, c = Math.cos(th), sn = Math.sin(th);
   let r = rwAt(th) - u;
   for (let k = 0; k < 2; k++) r = pitR(c * r, sn * r) - u;          // радиус стенки в самой точке, а не на окружности
@@ -69,10 +70,10 @@ function makeSpine(rnd, ringY) {
   S = 10; Y = ringY - 0.05;
 
   const TEMPL = [
-    ['wide', 20], ['passage', 5], ['tunnel', 6], ['climb', 5], ['wall', 14], ['cliff', 14], ['snake', 11], ['jump', 6], ['bridge', 7], ['drop', 4], ['slide', 6], ['stones', 8], ['fork', 9], ['spur', 9], ['dome', 7], ['traverse', 7],
+    ['wide', 20], ['passage', 5], ['tunnel', 6], ['climb', 5], ['wall', 14], ['cliff', 14], ['snake', 11], ['jump', 6], ['bridge', 7], ['drop', 4], ['slide', 6], ['stones', 8], ['fork', 9], ['dome', 7], ['traverse', 7],
   ];
   const tot = TEMPL.reduce((a, t) => a + t[1], 0);
-  const need = ['spur', 'wall', 'snake', 'cliff', 'traverse', 'fork', 'dome', 'wall', 'tunnel', 'spur', 'snake', 'stones', 'cliff', 'wall', 'fork', 'traverse', 'climb', 'dome', 'slide', 'snake', 'cliff', 'spur', 'stones', 'tunnel', 'bridge', 'wall', 'fork', 'cliff', 'jump', 'drop'];
+  const need = ['wall', 'snake', 'cliff', 'traverse', 'fork', 'dome', 'wall', 'tunnel', 'snake', 'stones', 'cliff', 'wall', 'fork', 'traverse', 'climb', 'dome', 'slide', 'snake', 'cliff', 'stones', 'tunnel', 'bridge', 'wall', 'fork', 'cliff', 'jump', 'drop'];
   for (let guard = 0; guard < 90 && Y > FLOOR + 14; guard++) {
     tm++;
     let q = rnd() * tot, kind = 'wide';
@@ -317,7 +318,7 @@ const topY = (l, s, u, bw = 1) => {
 };
 
 function lobeMesh(l, sp, out, rnd) {
-  const SEG = l.T < 3 ? 10 : 14, rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
+  const SEG = l.seg || (l.T < 3 ? 10 : 14), rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
   const sc = l.rot !== undefined ? l.cs : (l.s0 + l.s1) / 2, uc = l.rot !== undefined ? l.cu : (l.u0 + l.u1) / 2;
   const a = l.rot !== undefined ? l.A : (l.s1 - l.s0) / 2, b = l.rot !== undefined ? l.B : (l.u1 - l.u0) / 2;
   l.sc = sc; l.uc = uc; l.a = a; l.b = b; l.ph = [rnd() * TAU, rnd() * TAU, rnd() * TAU];
@@ -386,8 +387,9 @@ function lobeMesh(l, sp, out, rnd) {
 // ---------- 3. проверки ----------
 function obstacles() {
   const list = [];
-  for (const st of STACKS) list.push([st.x, st.z, st.w * 1.25 + 1.2, st.top + 6, st.top - (st.big ? 340 : 140)]);
-  for (const p of PILLARS) list.push([p.x, p.z, p.w * 1.1 + 1.0, p.top + 3, p.top - 26]);
+  // шапки островов и столбов; тела колонн ниже — отдельные цилиндры, их видит solidsNear
+  for (const st of STACKS) list.push([st.x, st.z, st.w * 1.25 + 1.2, st.top + 6, st.top - 8]);
+  for (const p of PILLARS) list.push([p.x, p.z, p.w * 1.1 + 1.0, p.top + 3, p.top - 8]);
   return list;
 }
 
@@ -440,6 +442,144 @@ function conflictCount(spines, obs) {
     }
   }
   return n;
+}
+
+// ---------- «Каньон»: спуск через середину шахты ----------
+// Острова и столбы стоят колоннами до дна. На колоннах — каменные уступы; между уступами соседних
+// колонн — цепочки площадок на столбах и естественные мосты; от дороги вдоль стены к колоннам
+// островов перекинуты длинные мосты. Вниз по колонне — с уступа на уступ (они идут винтом) или по её грани.
+function buildCanyon(best, out, rnd) {
+  const sp = { cart: true, th0: 0, dir: 1 }, links = [], glow = [], stats = { ledges: 0, pole: 0, bridges: 0, wall: 0, runs: 0, fill: 0 };
+  const base = (o) => ({ T: 3, n: 2.6, bump: 0.1, arch: 0, gu: 0, gs: 0, gs0: 0, tm: 0, ...o });
+  const put = (l) => { lobeMesh(l, sp, out, rnd); return l; };
+  const circ = (x, z, a, y, o = {}) => base({ s0: x - a, s1: x + a, u0: z - a, u1: z + a, sRef: x, yRef: y, ...o });
+  const ell = (x, z, ang, A, B, y, o = {}) => {
+    const es = Math.abs(A * Math.cos(ang)) + Math.abs(B * Math.sin(ang)), eu = Math.abs(A * Math.sin(ang)) + Math.abs(B * Math.cos(ang));
+    return base({ rot: ang, cs: x, cu: z, A, B, s0: x - es, s1: x + es, u0: z - eu, u1: z + eu, sRef: x, uRef: z, dS: Math.cos(ang), dU: Math.sin(ang), yRef: y, ...o });
+  };
+  const segL = (xA, zA, yA, xB, zB, yB, half, o = {}) => {
+    const ds = xB - xA, du = zB - zA, len = Math.hypot(ds, du), ang = Math.atan2(du, ds);
+    const l = ell((xA + xB) / 2, (zA + zB) / 2, ang, len / 2 + 0.9, half, yA, { T: 1.8, n: 3.2, bump: 0.06, seg: 8, ...o });
+    l.sRef = xA; l.uRef = zA; l.gs = l.gs0 = (yB - yA) / len;
+    return l;
+  };
+  // место свободно: нет чужих скал (глыб, шапок островов) ни на уровне тела, ни над головой, ни прямо под уступом
+  const free = (x, z, rad, y, T) => {
+    if (heightAt(x, z) > y - 1) return false;
+    for (let k = 0; k < 17; k++) {
+      const a = k * 0.785, rr = k === 0 ? 0 : k <= 8 ? rad : rad * 0.5, px = x + Math.cos(a) * rr, pz = z + Math.sin(a) * rr;
+      for (const yy of [y + 0.3, y + 1.4, y + 2.5, y - T * 0.5, y - T - 0.8, y - T - 2.6]) { const r = rockAt(px, pz, yy); if (r && r.field) return false; }
+    }
+    return true;
+  };
+  // уступ на колонне острова: полукруглая полка, вросшая в колонну, выступает в сторону ang
+  const ledgeAt = (st, y, ang) => {
+    const c = colAt(st, y), A = 2.3 + rnd() * 0.6, B = 2.6 + rnd() * 0.8, dx = Math.cos(ang), dz = Math.sin(ang);
+    const x = c.x + dx * (c.r + A * 0.45), z = c.z + dz * (c.r + A * 0.45);
+    const T = 2.6 + rnd() * 1.6;
+    if (!free(x + dx * A * 0.4, z + dz * A * 0.4, Math.max(A, B) * 0.9, y, T * 1.1)) return null;
+    return { st, y, ang, x, z, A, B, T, ex: c.x + dx * (c.r + A * 1.35), ez: c.z + dz * (c.r + A * 1.35), mx: c.x + dx * (c.r + A * 0.8), mz: c.z + dz * (c.r + A * 0.8) };
+  };
+  const buildLedge = (L) => {
+    put(ell(L.x, L.z, L.ang, L.A, L.B, L.y, { T: L.T, n: 2.5, bump: 0.12, seg: 10 }));
+    (L.st._ledges || (L.st._ledges = [])).push(L);
+    stats.ledges++;
+    if (rnd() < 0.4) glow.push([L.mx + (rnd() - 0.5), L.y, L.mz + (rnd() - 0.5)]);
+    return L;
+  };
+  for (const st of STACKS) st._ledges = [];
+
+  // 1) мосты от дороги вдоль стены к колоннам островов
+  const wsp = best.spines[0];
+  for (const lk of wsp.plan.links) {
+    if (lk.kind !== 'wide' && lk.kind !== 'plateau') continue;
+    for (const w of lk.wps) {
+    let E = null;
+    for (let u = w[1]; u <= 17; u += 0.4) { const [x, z] = toWorld(w[0], u, wsp), g = groundAt(x, z, w[2] + 0.6); if (Math.abs(g - w[2]) < 1.6) E = [x, z, g, u]; else if (E) break; }
+    if (!E) continue;
+    let bst = null, bd = 1e9;
+    for (const st of STACKS) { const c = colAt(st, E[2]); const d = Math.hypot(E[0] - c.x, E[1] - c.z) - c.r; if (d < bd && E[2] < st.top - 8) { bd = d; bst = st; } }
+    if (!bst || bd < 6 || bd > 24 || bst._ledges.some((q) => Math.abs(q.y - E[2]) < 7)) continue;
+    const c = colAt(bst, E[2]), ang = Math.atan2(E[1] - c.z, E[0] - c.x), L = ledgeAt(bst, E[2] - 0.2 - rnd() * 0.6, ang);
+    if (!L) continue;
+    const [ax, az] = toWorld(w[0], E[3] - 1.3, wsp), ya = groundAt(ax, az, E[2] + 0.6);
+    let ok = true;
+    for (const f of [0.3, 0.5, 0.7]) ok = ok && free(ax + (L.ex - ax) * f, az + (L.ez - az) * f, 1.3, ya + (L.y - ya) * f, 2.2);
+    if (!ok) continue;
+    buildLedge(L);
+    put(segL(ax, az, ya, L.mx, L.mz, L.y, 1.15 + rnd() * 0.3, { T: 2.2 }));
+    stats.wall++; stats.bridges++;
+    const [lx, lz] = toWorld(w[0], w[1], wsp);
+    links.push({ kind: 'xbridge', wps: [[lx, w[2], lz], [ax, ya, az], [L.mx, L.y, L.mz]] });
+    }
+  }
+
+  // 2) цепочки площадок на столбах между островами, на нескольких уровнях; уровни чередуют направление
+  CHAINS.forEach((chain, ci) => {
+    const poles0 = chain.slice(1, -1).filter((p) => !isHanging(p));
+    if (poles0.length < 2) return;
+    let lvl = 0;
+    for (let y0 = -34 - rnd() * 14; y0 > FLOOR + 12; y0 -= 26 + rnd() * 10, lvl++) {
+      const rev = (lvl + ci) % 2 === 1, poles = rev ? poles0.slice().reverse() : poles0, side = rnd() < 0.5 ? 1 : -1;
+      const A = rev ? chain.B : chain.A, B = rev ? chain.A : chain.B, dl = 0.3 + rnd() * 0.45;
+      let nodes = null;
+      for (let attempt = 0; attempt < 4 && !nodes; attempt++) {
+        const yb = y0 - attempt * 3.2, arr = [];
+        let good = true;
+        for (let k = 0; k < poles.length && good; k++) {
+          const y = yb - (k + 1) * dl + (rnd() - 0.5) * 0.15, c = colAt(poles[k], y), nb = poles[Math.min(poles.length - 1, k + 1)], pv = poles[Math.max(0, k - 1)];
+          let tx = nb.x - pv.x, tz = nb.z - pv.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+          const a = 1.45 + rnd() * 0.4, x = c.x - tz * side * (c.r + 1.0), z = c.z + tx * side * (c.r + 1.0);
+          good = free(x, z, a, y, 1.8);
+          arr.push({ x, z, y, a });
+        }
+        if (good) nodes = arr;
+      }
+      if (!nodes) continue;
+      const wps = [];
+      const end = (st, toward, y) => {
+        if (!st || st.ring || st.pillar) return null;
+        const c = colAt(st, y), L = ledgeAt(st, y, Math.atan2(toward.z - c.z, toward.x - c.x));
+        return L ? buildLedge(L) : null;
+      };
+      const LA = end(A, nodes[0], nodes[0].y + dl + 0.1), LB = end(B, nodes[nodes.length - 1], nodes[nodes.length - 1].y - dl);
+      for (const n of nodes) { put(circ(n.x, n.z, n.a, n.y, { T: 1.6, n: 2.3, bump: 0.05, seg: 8 })); stats.pole++; }
+      const span = (x1, z1, y1, r1, x2, z2, y2, r2) => {
+        const d = Math.hypot(x2 - x1, z2 - z1), g = d - r1 - r2;
+        if (g < 2.3) return;
+        const ux = (x2 - x1) / d, uz = (z2 - z1) / d;
+        put(segL(x1 + ux * (r1 - 0.5), z1 + uz * (r1 - 0.5), y1, x2 - ux * (r2 - 0.5), z2 - uz * (r2 - 0.5), y2, 0.75 + rnd() * 0.2, { T: 1.4 }));
+        stats.bridges++;
+      };
+      if (LA) { wps.push([LA.mx, LA.y, LA.mz]); span(LA.mx, LA.mz, LA.y, LA.A * 0.55, nodes[0].x, nodes[0].z, nodes[0].y, nodes[0].a); }
+      nodes.forEach((n, k) => { wps.push([n.x, n.y, n.z]); const m = nodes[k + 1]; if (m) span(n.x, n.z, n.y, n.a, m.x, m.z, m.y, m.a); });
+      const ln = nodes[nodes.length - 1];
+      if (LB) { span(ln.x, ln.z, ln.y, ln.a, LB.mx, LB.mz, LB.y, LB.A * 0.55); wps.push([LB.mx, LB.y, LB.mz]); }
+      links.push({ kind: 'run', wps });
+      stats.runs++;
+    }
+  });
+
+  // 3) винтовые уступы на колоннах островов: чтобы с любого уступа было куда спуститься ниже
+  STACKS.forEach((st, si) => {
+    const dirn = si % 2 ? 1 : -1;
+    const list = st._ledges.slice().sort((a, b) => b.y - a.y);
+    let prev = { y: st.top, ang: rnd() * TAU, top: true }, qi = 0;
+    for (let guard = 0; guard < 60; guard++) {
+      while (qi < list.length && list[qi].y > prev.y - 3) qi++;
+      const next = list[qi], floorY = heightAt(st.x, st.z) + 2.5, ny = next ? next.y : floorY;
+      if (prev.y - ny <= 8.5) { if (!next) break; prev = next; qi++; continue; }
+      const y = prev.y - (5.2 + rnd() * 1.6), c = colAt(st, y), Rc = c.r + 1.2;
+      const dA = 2 * Math.asin(Math.min(0.95, 3.6 / Rc));
+      let L = null;
+      for (let t = 0; t < 7 && !L; t++) L = ledgeAt(st, y - t * 0.3, prev.ang + dirn * (dA + t * 0.45));
+      if (!L) { prev = { y: y - 1, ang: prev.ang + 1 }; continue; }
+      buildLedge(L); stats.fill++;
+      if (!prev.top && prev.mx !== undefined) links.push({ kind: 'drop', wps: [[prev.mx, prev.y, prev.mz], [prev.ex, prev.y, prev.ez], [L.ex, L.y, L.ez], [L.mx, L.y, L.mz]] });
+      prev = L;
+    }
+  });
+  return { links, glow, stats };
 }
 
 export function buildDescent(scene) {
@@ -535,6 +675,7 @@ export function buildDescent(scene) {
     off(c);
   }
   if (!best) return DESCENT;
+  const cany = buildCanyon(best, out, mulberry32(SEED + 9004));
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(out.pos, 3));
   geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(out.pos.length / 3 * 2), 2));
@@ -557,6 +698,7 @@ export function buildDescent(scene) {
       }
     }
   });
+  for (const [x, y, z] of cany.glow) { const h = 0.6 + r3() * 0.9; col.setHSL(0.5 + r3() * 0.3, 0.7, 0.66); cry.push(part(oct, col.getHex(), { glow: 0.85, m: T(x, y + h * 0.7, z, 0.26 * h, h, 0.26 * h, r3() * 6) })); }
   if (cry.length) {
     const cm = new THREE.Mesh(merge(cry), propMaterial());
     cm.frustumCulled = false; cm.matrixAutoUpdate = false;
@@ -577,6 +719,8 @@ export function buildDescent(scene) {
       links.push({ si, kind: lk.kind, tm: lk.tm, wps: dense.map(([s2, u, y]) => { const [x, z] = toWorld(s2, u, sp); return [x, y, z]; }) });
     }
   });
+  for (const lk of cany.links) links.push({ si: 9, kind: lk.kind, tm: 0, wps: lk.wps });
+  DESCENT.canyon = cany.stats;
   DESCENT.lobes = best.spines.flatMap((sp) => sp.plan.lobes.map((l) => ({ si: l.si, tm: l.tm, cx: l.cx, cz: l.cz, rad: l.rad, yTop: l.yTop, yBot: l.yBot, T: l.T, rubble: !!l.rubble, tower: !!l.tower, solid: l.solid })));
   Object.assign(DESCENT, { spines: best.spines.map((s) => ({ th0: s.th0, dir: s.dir, n: s.plan.lobes.length, endY: s.plan.Y })), links, ready: true,
     stats: { ms: Date.now() - t0, conflicts: 0, blocked: best.bad, tried, nsp: best.NSP, seed: best.k, lobes: best.spines.reduce((q, s) => q + s.plan.lobes.length, 0), links: links.length, tris: out.pos.length / 9 } });
