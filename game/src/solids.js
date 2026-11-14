@@ -37,7 +37,7 @@ export function addCyl(x, z, r, top, bottom = -1e9) {
 // hang — модель висит (камень, торчащий из стены): под ней можно пройти
 // slope — верх наклонный: по нему можно скользить (нормаль берётся из карты высот плиты);
 // under — высота низа плиты: ниже неё проходят под ней (для висящих в воздухе плит)
-export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under, climb = false } = {}) {
+export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under, climb = false, roof = false } = {}) {
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y0 = 1e9;
   for (let i = 0; i < tris.length; i += 3) {
     x0 = Math.min(x0, tris[i]); x1 = Math.max(x1, tris[i]);
@@ -68,7 +68,7 @@ export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slop
     }
   }
   const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope, climb };
+  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope, climb, roof };
   insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
   return s; // off = true — объекта сейчас нет (разбитый валун)
 }
@@ -103,6 +103,7 @@ export function groundAt(x, z, y, forCamera = false) {
     } else if (s.box) {
       if (Math.abs(dx * s.c - dz * s.s) > s.hx || Math.abs(dx * s.s + dz * s.c) > s.hz) continue;
     } else if (dx * dx + dz * dz > s.r * s.r) continue;
+    if (forCamera && s.roof && y + 1.3 < top) continue; // крыши (арки, тоннели) камера не считает: иначе под ними она «сходит с ума»
     if (y + 1.3 < s.bottom) { if (s.bottom < ceiling) ceiling = s.bottom; continue; } // проходим под ним
     // на уровне тела висящая плита — стена: отдаём её верх, и шаг/прыжок внутрь не пройдёт,
     // пока ноги не окажутся почти у верха (см. Player.tryMove)

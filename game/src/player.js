@@ -607,6 +607,21 @@ export class Player {
     }
   }
 
+  // Оказались под/внутри следа твёрдой глыбы в воздухе: ищем ближайшую сторону, где опора ниже ног
+  pushOutOfSolid() {
+    const p = this.pos;
+    for (let d = 0.15; d <= 1.6; d += 0.15) for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2, qx = p.x + Math.cos(a) * d, qz = p.z + Math.sin(a) * d;
+      if (this.G(qx, qz) < p.y - 0.05) {
+        this.vOff.x += p.x - qx; this.vOff.z += p.z - qz;
+        p.x = qx; p.z = qz;
+        this.vel.x = Math.cos(a) * 1.0; this.vel.z = Math.sin(a) * 1.0;
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Падаем вдоль отвесной стены: «приземлиться» на её грань нельзя — отодвигаемся
   // от стены и летим дальше, а не сползаем внутри камня
   slipOffWall() {
@@ -727,7 +742,10 @@ export class Player {
       p.y += v.y * dt;
       if (v.y > 0 && p.y + 1.3 > ceil) { p.y = Math.max(prevY, ceil - 1.3); v.y = 0; } // стукнулись головой
       const h = this.G(p.x, p.z);
-      if (p.y <= h && !this.slipOffWall()) {
+      // Внутрь скалы снизу/сбоку не «приземляемся»: если верх намного выше, чем были ноги, — это стена,
+      // выталкиваемся из её следа и летим дальше (раньше касание низа глыбы телепортировало на её верх)
+      if (p.y <= h && hitSolid && h - prevY > 0.55 && this.pushOutOfSolid()) { /* отодвинулись */ }
+      else if (p.y <= h && !this.slipOffWall()) {
         // если ноги уже были ниже края (зацепились за уступ) — поднимаемся плавно
         const assist = h - Math.max(p.y, prevY);
         if (assist > 0.03) this.vOff.y -= assist;
