@@ -37,7 +37,7 @@ export function addCyl(x, z, r, top, bottom = -1e9) {
 // hang — модель висит (камень, торчащий из стены): под ней можно пройти
 // slope — верх наклонный: по нему можно скользить (нормаль берётся из карты высот плиты);
 // under — высота низа плиты: ниже неё проходят под ней (для висящих в воздухе плит)
-export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under } = {}) {
+export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under, climb = false } = {}) {
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y0 = 1e9;
   for (let i = 0; i < tris.length; i += 3) {
     x0 = Math.min(x0, tris[i]); x1 = Math.max(x1, tris[i]);
@@ -68,7 +68,7 @@ export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slop
     }
   }
   const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope };
+  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope, climb };
   insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
   return s; // off = true — объекта сейчас нет (разбитый валун)
 }
@@ -109,6 +109,45 @@ export function groundAt(x, z, y, forCamera = false) {
     if (top > h) { h = top; hitSolid = true; lastSolid = s; }
   }
   return h;
+}
+
+export const fieldTop = (s, x, z) => fieldAt(s, x, z);
+// Лазание по бокам скал (climb: true): есть ли в точке (x, y, z) сама скала — а не только её верх?
+export function rockAt(x, z, y) {
+  const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
+  if (!list) return null;
+  for (const s of list) {
+    if (s.off || !s.climb) continue;
+    const t = fieldAt(s, x, z);
+    if (t > -1e8 && y < t && y > s.bottom) return s;
+  }
+  return null;
+}
+// Нормаль грани скалы (наружу) в точке на высоте y: по тому, с каких сторон вокруг есть камень
+export function rockNormal(x, z, y, out, rad = 0.55) {
+  let sx = 0, sz = 0;
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+    if (rockAt(x + c * rad, z + sn * rad, y)) { sx -= c; sz -= sn; }
+  }
+  const l = Math.hypot(sx, sz);
+  if (l < 0.2) return false;
+  out.x = sx / l; out.z = sz / l;
+  return true;
+}
+// Грань скалы впереди по направлению (dx, dz): ближайшая точка камня на высоте y в пределах 1.1 м
+const _rn = { x: 0, z: 0 };
+export function rockFace(x, z, y, dx, dz, out) {
+  for (let d = 0; d <= 1.1; d += 0.1) {
+    const s = rockAt(x + dx * d, z + dz * d, y);
+    if (!s) continue;
+    const bd = Math.max(0, d - 0.08), bx = x + dx * bd, bz = z + dz * bd;
+    if (!rockNormal(bx, bz, y, _rn)) { _rn.x = -dx; _rn.z = -dz; }
+    out.s = s; out.bx = bx; out.bz = bz; out.nx = _rn.x; out.nz = _rn.z;
+    out.top = Math.max(fieldAt(s, bx - _rn.x * 0.4, bz - _rn.z * 0.4), fieldAt(s, bx + dx * 0.4, bz + dz * 0.4));
+    return true;
+  }
+  return false;
 }
 
 // Стоим на наклонной плите?

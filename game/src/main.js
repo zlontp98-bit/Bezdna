@@ -451,7 +451,7 @@ function frame(now) {
     actHeld = inp.chop;
   }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
-  if (player.pos.y < -400 && !falling) { falling = true; $('msg').textContent = 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
+  if ((player.pos.y < -400 || player.fell) && !falling) { falling = true; $('msg').textContent = player.fell ? 'Ты сорвался — возвращаемся на последний уступ' : 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }

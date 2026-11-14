@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
-import { groundAt, hitSolid, ceiling, solidNormal, solidSloped } from './solids.js';
+import { groundAt, hitSolid, ceiling, solidNormal, solidSloped, lastSolid, rockAt, rockFace, rockNormal, fieldTop } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
 const _lp = new THREE.Vector3();
@@ -206,9 +206,10 @@ const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
 // так герой не попадает в петлю «зашёл — съехал — зашёл», от которой его дёргало
 const MAX_SLOPE = 0.9;
 const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
-const CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
+const CLIMBV = 2.2, CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 // толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
 const MANTLE_MIN = 0.45, MANTLE_MAX = 1.9; // перелезть можно уступ такой высоты, м
+const FALL_MAX = 10; // падение выше этого — срыв, возврат на последний уступ
 const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
 const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
@@ -232,7 +233,7 @@ export class Player {
     this.vOff = new THREE.Vector3();
     this.viewPos = this.pos.clone();
     this.launchT = 0; this.onSlab = false;
-    this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.slideGrace = 0; this.pushT = 0; this.mantle = null; this.mantleCd = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
+    this.face = null; this.fallTop = 0; this.fell = false; this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.slideGrace = 0; this.pushT = 0; this.mantle = null; this.mantleCd = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.swingT = 0; this.held = null; // взмах инструментом (сек. до конца) и что в руке (id предмета)
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
     this.blinkT = 2; this.gazeT = 0; this.gaze = 0; this.px = 0; this.py = 0; this.waddle = 0;
@@ -369,7 +370,8 @@ export class Player {
     if (!this.grounded || this.sliding || ml < 0.6 || this.climbCd > 0 || this.speed > 1.2) { this.pushT = 0; return false; }
     if ((this.pushT += dt) < 0.3) return false;
     this.pushT = 0;
-    return !!this.findWall();
+    const fx = Math.sin(this.facing), fz = Math.cos(this.facing);
+    return !!this.findFace(fx, fz) || !!this.findWall();
   }
 
   // Ищем рядом крутую стену, за которую можно схватиться (по кнопке «Хват»)
@@ -392,6 +394,8 @@ export class Player {
   }
 
   grab() {
+    const fx = Math.sin(this.facing), fz = Math.cos(this.facing);
+    if (this.grabFace(fx, fz)) return true;
     const w = this.findWall();
     if (!w) return false;
     const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
@@ -402,8 +406,130 @@ export class Player {
     return true;
   }
 
+  // ---- Лазание по бокам глыб (скал-«массивов» спуска): хват на отвесной грани, вверх/вниз/вбок, вылезание на верх ----
+  // Грань впереди, достаточно высокая, чтобы не перелезть на ходу (это делает tryMantle)
+  findFace(ux, uz, minUp = 1.5) {
+    const p = this._fc || (this._fc = {});
+    if (!rockFace(this.pos.x, this.pos.z, this.pos.y + 0.9, ux, uz, p)) return null;
+    if (p.top - this.pos.y < minUp || this.pos.y + 0.9 < p.s.bottom + 0.2) return null;
+    return p;
+  }
+  grabFace(ux, uz, minUp = 1.5) {
+    const f = this.findFace(ux, uz, minUp);
+    if (!f) return false;
+    const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
+    this.pos.x = f.bx + f.nx * 0.42; this.pos.z = f.bz + f.nz * 0.42;
+    this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
+    this.face = { s: f.s, nx: f.nx, nz: f.nz };
+    this.climbing = true; this.grounded = false; this.vel.set(0, 0, 0);
+    return true;
+  }
+  // Повиснуть на кромке, на которой стоишь, чтобы спуститься по отвесной стене вниз (кнопка «Хват» у обрыва)
+  grabEdge(ux, uz) {
+    const p = this.pos;
+    this.G(p.x, p.z);
+    const s = lastSolid;
+    if (!s || !s.climb) return false;
+    let drop = false;
+    for (let d = 0.5; d <= 1.1 && !drop; d += 0.2) drop = this.G(p.x + ux * d, p.z + uz * d) < p.y - 1.8;
+    if (!drop) return false;
+    const yq = p.y - 0.7;
+    let d = 0;
+    while (d < 1.6 && rockAt(p.x + ux * d, p.z + uz * d, yq)) d += 0.05;
+    if (d >= 1.6 || d < 0.01) return false;
+    const bx = p.x + ux * (d - 0.05), bz = p.z + uz * (d - 0.05), n = this._n3 || (this._n3 = { x: 0, z: 0 });
+    if (!rockNormal(bx, bz, yq, n)) { n.x = ux; n.z = uz; }
+    const ox = p.x, oy = p.y, oz = p.z;
+    p.x = bx + n.x * 0.42; p.z = bz + n.z * 0.42; p.y -= 1.5;
+    this.vOff.x += ox - p.x; this.vOff.y += oy - p.y; this.vOff.z += oz - p.z;
+    this.face = { s, nx: n.x, nz: n.z };
+    this.climbing = true; this.grounded = false; this.vel.set(0, 0, 0);
+    return true;
+  }
+  // Стоим на кромке скалы с обрывом впереди — можно повиснуть и слезть по грани (для подсветки кнопки «Хват»)
+  edgeAhead() {
+    if (!this.grounded || this.sliding) return false;
+    const p = this.pos, ux = Math.sin(this.facing), uz = Math.cos(this.facing);
+    this.G(p.x, p.z);
+    if (!lastSolid || !lastSolid.climb) return false;
+    for (let d = 0.5; d <= 1.1; d += 0.2) if (this.G(p.x + ux * d, p.z + uz * d) < p.y - 1.8) return true;
+    return false;
+  }
+  // В прыжке: тянемся к грани, к которой летим, — «долететь до уступа и успеть зацепиться»
+  airGrab(inp, mx, mz, ml) {
+    if (this.airT < 0.12 || this.mantle) return false;
+    const a = ml > 0.3 ? Math.atan2(mx, mz) : this.facing, ux = Math.sin(a), uz = Math.cos(a);
+    if (!inp.grab && ml < 0.5) return false;
+    return this.grabFace(ux, uz, 0.3);
+  }
+  faceStep(dt, inp) {
+    const f = this.face, p = this.pos, v = this.vel, s = f.s;
+    const ux = -f.nx, uz = -f.nz;                      // в стену
+    // вбок: стик влево/вправо вдоль грани; граница камня ищется заново (грань изогнута)
+    const ml = inp.mx * CLIMB * dt;
+    let nx = p.x + (-uz) * ml, nz = p.z + ux * ml;
+    const yq = p.y + 0.6;
+    const seat = (qx, qz) => {
+      for (let d = -0.6; d <= 1.5; d += 0.05) {
+        if (rockAt(qx + ux * d, qz + uz * d, yq)) {
+          const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05);
+          return [bx, bz];
+        }
+      }
+      return null;
+    };
+    let b = seat(nx, nz);
+    if (!b) { nx = p.x; nz = p.z; b = seat(nx, nz); }
+    if (!b) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; return; }
+    const nn = this._n4 || (this._n4 = { x: 0, z: 0 });
+    if (rockNormal(b[0], b[1], yq, nn)) {
+      let ax = f.nx * 0.65 + nn.x * 0.35, az = f.nz * 0.65 + nn.z * 0.35; const al = Math.hypot(ax, az) || 1;
+      f.nx = ax / al; f.nz = az / al;
+    }
+    const ox = p.x, oz = p.z;
+    p.x = b[0] + f.nx * 0.42; p.z = b[1] + f.nz * 0.42;
+    this.vOff.x += ox - p.x; this.vOff.z += oz - p.z;
+    // вверх/вниз
+    const up = inp.my * CLIMBV * dt;
+    let ny = p.y + up;
+    ny = Math.max(ny, s.bottom - 0.4);
+    let topIn = fieldTop(s, b[0] - f.nx * 0.35, b[1] - f.nz * 0.35);
+    if (topIn < -1e8) topIn = p.y + 5;
+    p.y = ny;
+    // руки достали до верха — вылезаем наверх
+    if (inp.my > 0.2 && p.y + 1.25 >= topIn) {
+      const tx = b[0] - f.nx * 0.75, tz = b[1] - f.nz * 0.75, ty = this.G(tx, tz);
+      if (ty > p.y - 0.5 && ty < p.y + 2.6) {
+        this.mantle = { sx: p.x, sy: p.y, sz: p.z, tx, ty, tz, t: 0, dur: 0.55 };
+        this.mantleCd = 0.5; this.climbCd = 0.5; this.face = null; this.climbing = false; this.speed = 0;
+        return;
+      }
+    }
+    // дошли ногами до земли
+    const g = this.G(p.x, p.z);
+    if (inp.my < 0 && p.y <= g + 0.04) {
+      this.face = null; this.climbing = false; this.grounded = true; p.y = g; this.airT = 0; this.climbCd = 0.3;
+      return;
+    }
+    { let d = Math.atan2(ux, uz) - this.facing; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; this.facing += d * Math.min(1, dt * 9); }
+    this.climbLean = 0.12;
+    const amt = Math.min(1, Math.hypot(inp.mx, inp.my));
+    this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
+    this.climbAmt = amt;
+    v.set(0, 0, 0);
+    if (inp.jump) {            // оттолкнуться от грани: прыжок вверх-назад
+      this.face = null; this.climbing = false; this.climbCd = 0.35; this.airT = 1;
+      v.set(f.nx * 4.5, 7.5, f.nz * 4.5);
+    } else if (inp.grab) {     // отпустить
+      this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1;
+      v.set(f.nx * 1.5, 0, f.nz * 1.5);
+    }
+  }
+  _topAt(s, x, z) { return fieldTop(s, x, z); }
+
   // Лазание: стик вверх/вниз — по стене, влево/вправо — вбок. Выносливости пока нет.
   climbStep(dt, inp) {
+    if (this.face) return this.faceStep(dt, inp);
     const p = this.pos, v = this.vel;
     const n = this.N(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
     if (n.y > 0.8 || hl < 1e-3) { // вылезли на ровное
@@ -547,7 +673,9 @@ export class Player {
     else if (this.climbing) this.climbStep(dt, inp);
     else if (this.mantle) this.mantleStep(dt);
     else if (!inp.grab && this.tryMantle(mx, mz, ml)) { this.mantleStep(0); }
-    else if ((inp.grab || this.autoGrab(ml, dt)) && this.climbCd <= 0 && this.grab()) { /* схватились */ } else {
+    else if (inp.grab && this.grounded && this.climbCd <= 0 && this.grabEdge(Math.sin(this.facing), Math.cos(this.facing))) { /* повисли на кромке */ }
+    else if ((inp.grab || this.autoGrab(ml, dt)) && this.climbCd <= 0 && this.grab()) { /* схватились */ }
+    else if (!this.grounded && !this.sliding && this.climbCd <= 0 && this.airGrab(inp, mx, mz, ml)) { /* схватились в прыжке */ } else {
     const top = inp.sprint ? RUN : WALK;
     // на крутом склоне стоять нельзя: герой съезжает вниз, пока не схватится
     if (this.grounded) {
@@ -614,11 +742,14 @@ export class Player {
     }
     }
 
-    this.canGrab = !this.climbing && this.climbCd <= 0 && !!this.findWall();
+    this.canGrab = !this.climbing && this.climbCd <= 0 && (!!this.findWall() || !!this.findFace(Math.sin(this.facing), Math.cos(this.facing)) || this.edgeAhead());
     this.N(p.x, p.z, this.n, 0.35);
 
-    // запоминаем безопасное место для возврата после падения в колодец
-    if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && p.y > -60 && waterAt(p.x, p.z) < p.y) {
+    // падение с большой высоты — срыв: спуск вниз только по маршруту, прыжком в шахту до дна не обойтись
+    if (this.grounded || this.climbing || this.swimming || this.mantle) this.fallTop = p.y;
+    else { this.fallTop = Math.max(this.fallTop, p.y); if (this.fallTop - p.y > FALL_MAX) this.fell = true; }
+    // запоминаем безопасное место для возврата после срыва
+    if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && waterAt(p.x, p.z) < p.y) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
     }
@@ -781,5 +912,6 @@ export class Player {
     this.vel.set(0, 0, 0);
     this.vOff.set(0, 0, 0);
     this.grounded = true; this.climbing = false; this.swimming = false; this.sliding = false;
+    this.face = null; this.fell = false; this.fallTop = this.pos.y; this.mantle = null;
   }
 }
