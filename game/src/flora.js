@@ -309,27 +309,27 @@ export function buildFlora(scene) {
       // берега заводи: слева и справа, дальше от воды — ближе к лугу
       for (const side of [-1, 1]) for (let k = 0; k < 4; k++) {
         const [x, z] = at(s.pc - 4 - k * 4.5 - rnd() * 2.5, side * (10 + rnd() * 6 + k * 1.2));
-        group(x, z, 0.9 + rnd() * 1.1, p.level);
+        group(x, z, 0.5 + rnd() * 0.35, p.level);
       }
       // и пара у самой стены, по бокам от водопада
-      for (const side of [-1, 1]) { const [x, z] = at(s.pc - 0.5 + rnd() * 2, side * (7.5 + rnd() * 1.5)); group(x, z, 0.8 + rnd() * 0.8, p.level); }
+      for (const side of [-1, 1]) { const [x, z] = at(s.pc - 0.5 + rnd() * 2, side * (7.5 + rnd() * 1.5)); group(x, z, 0.5 + rnd() * 0.3, p.level); }
       continue;
     }
     // чаша на первом кольце: u — вниз по течению от центра чаши, v — поперёк
     const at = (u, v) => [p.x + p.dx * u - p.dz * v, p.z + p.dz * u + p.dx * v];
     for (const side of [-1, 1]) for (let k = 0; k < 3; k++) {
       const [x, z] = at(-1 + k * 3 + rnd() * 2, side * (6.8 + rnd() * 3.2 + k * 0.8));
-      group(x, z, 0.7 + rnd() * 0.9, p.level);
+      group(x, z, 0.5 + rnd() * 0.3, p.level);
     }
     for (const side of [-1, 1]) {
       const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;
-      add(lists.rock, x, heightAt(x, z) - 0.2, z, 1.7, 0x8f8a82, rnd() * TAU, 0.2);
-      taken.push({ x, z, r: 1.7 });
+      add(lists.rock, x, heightAt(x, z) - 0.2, z, 0.8, 0x8f8a82, rnd() * TAU, 0.2);
+      taken.push({ x, z, r: 0.8 });
     }
   }
   // родник в верховье ущелья: вода выходит из-под камней
   for (const s of SOURCES) {
-    for (const [da, l, sc] of [[1.4, 0, 1.9], [0.4, -2.2, 1.4], [0.6, 2.4, 1.6], [-1.2, -2.7, 1.0], [2.8, 1.2, 1.5]]) {
+    for (const [da, l, sc] of [[1.4, 0, 0.9], [0.4, -2.2, 0.7], [0.6, 2.4, 0.8], [-1.2, -2.7, 0.55], [2.8, 1.2, 0.7]]) {
       const a = SRC.GORGE + da, r = W.SRC_R + a, th = s.tw + l / r, x = Math.cos(th) * r, z = Math.sin(th) * r;
       const g = 0.46 + rnd() * 0.1;
       add(lists.rock, x, heightAt(x, z) - 0.25, z, sc, col.setRGB(g * 0.95, g, g * 0.92).getHex(), rnd() * TAU, rnd() * 0.3);
@@ -391,16 +391,15 @@ export function buildFlora(scene) {
     return true;
   });
   // камни: везде, особенно у края
-  scatter(250, W.PIT + 2, W.MEADOW + 40, (x, y, z, ny, r) => {
+  // Только мелкие камни (крупные теперь на дне шахты). Все камни в игре добываются киркой.
+  scatter(110, W.PIT + 2, W.MEADOW + 40, (x, y, z, ny, r) => {
     if (ny < 0.8) return false;
-    const big = rnd() < 0.22;
-    const s = big ? 1.3 + rnd() * 1.5 : 0.35 + rnd() * 0.6;
+    const s = 0.35 + rnd() * 0.45;
     if (!free(x, z, s + 0.6)) return false;
     if (r > W.R + 30 && r < W.MEADOW - 30 && rnd() < 0.5) return false;
     const g = 0.5 + rnd() * 0.16;
     if (y < -30) col.setRGB(g * 0.7, g * 0.74, g * 0.9); else col.setRGB(g * 1.0, g * 0.92, g * 0.82);
     add(lists.rock, x, y, z, s, col.getHex(), rnd() * TAU, rnd() * 0.5);
-    if (s >= 0.6) lists.rock[lists.rock.length - 1].mine = true; // от полуметра — можно разбить киркой
     if (s > 0.8) { taken.push({ x, z, r: s }); blobs.push({ x, z, r: s * 1.5, h: s * 0.5 }); }
     return true;
   });
@@ -456,6 +455,37 @@ export function buildFlora(scene) {
     return true;
   });
 
+  // ---- дно шахты: берег озера ----
+  // Много крупных камней (добываемых киркой), кристаллы и светящиеся грибы: голубое сияние в темноте
+  const floorOk = (y, ny) => ny > 0.8 && y < -250;
+  scatter(130, 30, W.PIT - 2.5, (x, y, z, ny) => {
+    if (!floorOk(y, ny)) return false;
+    const s = 0.7 + Math.pow(rnd(), 1.6) * 2.4;
+    if (!free(x, z, s + 0.4)) return false;
+    const g = 0.42 + rnd() * 0.16;
+    add(lists.rock, x, y, z, s, col.setRGB(g * 0.72, g * 0.78, g * 0.92).getHex(), rnd() * TAU, rnd() * 0.4);
+    taken.push({ x, z, r: s });
+    return true;
+  });
+  scatter(60, 30, W.PIT - 2, (x, y, z, ny) => {
+    if (!floorOk(y, ny) || !free(x, z, 1.2)) return false;
+    add(lists.crystal, x, y - 0.05, z, 0.8 + rnd() * 1.6, col.setHSL(0.48 + rnd() * 0.12, 0.75, 0.66).getHex(), rnd() * TAU, (rnd() - 0.5) * 0.5);
+    taken.push({ x, z, r: 0.9 });
+    return true;
+  });
+  scatter(110, 30, W.PIT - 2, (x, y, z, ny) => {
+    if (!floorOk(y, ny)) return false;
+    add(lists.small, x, y, z, 0.7 + rnd() * 1.4, col.setHSL(0.45 + rnd() * 0.15, 0.7, 0.68).getHex());
+    return true;
+  });
+  scatter(8, 30, W.PIT - 3, (x, y, z, ny) => {
+    if (!floorOk(y, ny) || !free(x, z, 2.8)) return false;
+    const s = 0.8 + rnd() * 0.9;
+    add(lists.shroom, x, y - 0.1, z, s, col.setHSL(0.47 + rnd() * 0.1, 0.6, 0.55).getHex());
+    taken.push({ x, z, r: 2.4 }); colliders.push({ x, z, r: 0.45 * s });
+    return true;
+  });
+
   const geos = {
     leaf: leafTree(), pine: pineTree(), shroom: giantShroom(),
     rock: rockGeo(), crystal: crystalGeo(), small: smallShroom(), bush: bushGeo(),
@@ -485,7 +515,7 @@ export function buildFlora(scene) {
       if (key === 'rock') {
         const solid = rockSolid(geos.rock, dummy.matrix, t);
         // крупные валуны луга и уступов можно разбить киркой (камни паркура и берега — нет)
-        if (t.mine && solid) boulders.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone(), solid });
+        if (solid) boulders.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone(), solid });
       }
       im.setMatrixAt(i, dummy.matrix);
       im.setColorAt(i, col.setHex(t.color));

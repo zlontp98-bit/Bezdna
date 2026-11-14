@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED, smoothstep } from './noise.js';
 import { U, mat } from './shaders.js';
-import { W, SRC, SOURCES, POOLS, poolDist, heightAt, normalAt, waterAt } from './terrain.js';
+import { W, SRC, SOURCES, POOLS, LAKE, poolDist, heightAt, normalAt, waterAt } from './terrain.js';
 import { part, merge, T } from './flora.js';
 
 const TAU = Math.PI * 2;
@@ -254,7 +254,7 @@ export function buildStreams(scene) {
       open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода уходит в туман
       if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: лента
       segs.push([start, i]);
-      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? -110 : lvl[j], open, half: halfAt(i) * 0.74 - 0.2, src: R[i] > W.SRC_R };
+      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: halfAt(i) * 0.74 - 0.2, src: R[i] > W.SRC_R };
       falls.push(f);
       if (open) break;
       // пена ниже места удара струи

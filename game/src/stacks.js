@@ -37,7 +37,7 @@ function stackGeo(s, pos, idx, SEG = 30) {
   const base = pos.length / 3;
   // кольца сверху вниз: вершина подробно, ниже — реже
   const ys = [0.35, 0.05, -0.5, -1.4];
-  for (let d = 3; d < 150; d *= 1.35) ys.push(-d);
+  for (let d = 3; d < 330; d *= 1.35) ys.push(-d);
   const P = [];
   P.push(s.x, s.top + 0.45, s.z); // центр вершины
   for (let j = 0; j < ys.length; j++) {

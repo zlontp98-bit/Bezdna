@@ -183,11 +183,15 @@ vec3 applyFog(vec3 c, vec3 w){
   c = lit - over + over / (1.0 + over*2.5);
   // высоко над лугом воздух прозрачнее — горы не тонут в дымке
   float den = uFogDen * (1.0 - 0.6*smoothstep(10.0, 70.0, w.y));
-  float f = 1.0 - exp(-d * (den + deep*0.012));
+  // дно шахты (озеро): туман мягче, цвет — голубой, и немного собственного света
+  float lakeK = smoothstep(-120.0, -200.0, w.y) * (1.0 - smoothstep(52.0, 95.0, length(w.xz)));
+  c = c * (1.0 + lakeK*0.7) + vec3(0.02, 0.06, 0.08) * lakeK;
+  float f = 1.0 - exp(-d * (den + deep*0.012*(1.0 - lakeK*0.75)));
   // и чем ниже под ногами, тем гуще туман сам по себе
-  f = max(f, smoothstep(-55.0, -120.0, w.y));
+  f = max(f, smoothstep(-55.0, -120.0, w.y) * (1.0 - lakeK*0.92));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-60.0, -150.0, w.y));
+  fc = mix(fc, vec3(0.05, 0.16, 0.21), lakeK * 0.8);
   return grade(mix(c, fc, clamp(f, 0.0, 1.0)));
 }
 // Цвет травы: наверху сочная зелень, глубже — бирюза, ещё глубже — сиреневый мох

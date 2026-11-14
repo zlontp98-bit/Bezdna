@@ -198,6 +198,7 @@ const ZONES = [[14, 'Смотровая площадка'], [-3, 'Луг у кр
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
+  setCls('lift', 'show', player.pos.y < -130);
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
@@ -264,6 +265,9 @@ function renderCraft() {
   }
 }
 function toggleCraft(on = !craftOpen) { craftOpen = on; setCls('craft', 'show', on); setCls('craftBtn', 'on', on); if (on) renderCraft(); }
+// «Наверх»: со дна шахты возвращаемся к лагерю (последнее безопасное место на земле)
+$('lift').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
+$('lift').addEventListener('click', () => { if (falling) return; falling = true; $('msg').textContent = 'Поднимаемся к лагерю…'; $('msg').classList.add('show'); });
 $('craftBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
 $('craftBtn').addEventListener('click', () => toggleCraft());
 
@@ -444,7 +448,7 @@ function frame(now) {
     actHeld = inp.chop;
   }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
-  if (player.pos.y < -80 && !falling) { falling = true; $('msg').classList.add('show'); }
+  if (player.pos.y < -400 && !falling) { falling = true; $('msg').textContent = 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }

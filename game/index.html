@@ -244,6 +244,8 @@
   #talkProg[hidden] { display: none; }
   #talkProg div { height: 100%; width: 0; background: linear-gradient(90deg, #ffd978, #ffb02e); }
   /* крафт: кнопка под счётчиком искр и окно с рецептами */
+  #lift { position: absolute; top: max(138px, calc(env(safe-area-inset-top) + 124px)); left: max(14px, env(safe-area-inset-left)); padding: 10px 14px; border-radius: 12px; font-size: 14px; font-weight: 800; display: none; background: var(--accent); color: #3a2500; }
+  #lift.show { display: block; }
   #craftBtn { position: absolute; top: max(84px, calc(env(safe-area-inset-top) + 70px)); left: max(14px, env(safe-area-inset-left));
     width: 44px; height: 44px; border-radius: 12px; font-size: 22px; }
   #craftBtn.on { background: var(--accent); }
@@ -302,6 +304,7 @@
   </div>
   <div id="coins" class="glass">✨ <span id="coinN">0</span></div>
   <button id="craftBtn" class="glass" aria-label="Крафт">🛠️</button>
+  <button id="lift" aria-label="Наверх">⬆ Наверх</button>
   <div id="craft" class="glass"><h3>Крафт</h3><div id="craftList"></div></div>
   <button id="gear" class="glass" aria-label="Меню">☰</button>
   <div id="fps"></div>

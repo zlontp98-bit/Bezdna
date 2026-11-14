@@ -1,7 +1,9 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
 import { mat } from './shaders.js';
-import { SRC, POOLS, poolDist, heightAt } from './terrain.js';
+import { SRC, POOLS, LAKE, poolDist, heightAt } from './terrain.js';
+// озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
+const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
 import { smoothstep } from './noise.js';
 
 // Водопады: пелена воды с кромки по параболе, у подножия — брызги и водяная пыль.
@@ -81,7 +83,7 @@ export function buildWaterfalls(scene, falls) {
   for (const f of falls) {
     const cx = Math.cos(f.th), cz = Math.sin(f.th), px = -cz, pz = cx;
     const outX = -cx, outZ = -cz; // от стены к центру провала
-    const H = f.y0 - f.y1, T = Math.sqrt((2 * H) / G), VH = f.src ? SRC.VH : 1.6;
+    const H = f.y0 - f.y1, T = Math.sqrt((2 * H) / G), VH = f.open ? 4.2 : f.src ? SRC.VH : 1.6;
     // точка на пелене: o — насколько вода отошла от кромки к центру, l — поперёк
     const P = (o, l) => [cx * (f.lipR - o) + px * l, cz * (f.lipR - o) + pz * l];
     const halfAt = (d) => f.half + Math.min(2.5, H * 0.06) * d;
@@ -106,7 +108,7 @@ export function buildWaterfalls(scene, falls) {
       hit = o;
     }
     // последний ряд уходит под гладь чаши: линия входа в воду ровная, без щели
-    if (!f.open) { const b = rows[rows.length - 1]; rows.push({ o: b.o, y: f.y1 - 0.4, d: 1 }); }
+    { const b = rows[rows.length - 1]; rows.push({ o: b.o, y: f.y1 - 0.4, d: 1 }); }
     const NR = rows.length;
     const pos = [], uv = [], dir = [], idx = [];
     for (const L of [0, 1]) {
@@ -120,7 +122,7 @@ export function buildWaterfalls(scene, falls) {
           const [x, z] = P(oo, u * half);
           pos.push(x, y, z);
           uv.push(u, Math.sqrt(f.y0 - y + 0.3), L, d);
-          dir.push(outX, outZ, f.open ? (1 - d) * 40 : y - f.y1);
+          dir.push(outX, outZ, y - f.y1);
         }
       }
       for (let i = 0; i < NR - 1; i++)
@@ -138,11 +140,10 @@ export function buildWaterfalls(scene, falls) {
     sheet.frustumCulled = false;
     sheet.renderOrder = 4;
     scene.add(sheet);
-    if (f.open) continue; // в шахту вода уходит в туман
     // куда бьёт струя: чаша под ней рисует здесь кипящую пену и расходящиеся круги
     {
       const [hx, hz] = P(hit, 0);
-      for (const p of POOLS) if (poolDist(p, hx, hz) < 1) p.splash = { x: hx, z: hz, rad: halfAt(1) * 0.55 + Math.min(1.2, H * 0.02) };
+      for (const p of [...POOLS, lakePool]) if (poolDist(p, hx, hz) < 1) p.splash = { x: hx, z: hz, rad: halfAt(1) * 0.55 + Math.min(1.2, H * 0.02) };
     }
 
     // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
@@ -223,7 +224,7 @@ function buildPools(scene) {
       }`,
   });
   const NRG = 12, SEG = 48;
-  for (const p of POOLS) {
+  for (const p of [...POOLS, lakePool]) {
     // точка чаши: t — доля радиуса, ph — угол; у истока чаша вытянута вниз по течению
     const pt = (t, ph) => {
       const c = Math.cos(ph), s = Math.sin(ph);

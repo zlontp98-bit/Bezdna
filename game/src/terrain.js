@@ -13,6 +13,7 @@ export const W = {
   ARMS: 3,      // сколько спиральных пандусов
   HOLE: 70,     // край первого кольца: отсюда гигантская стена вниз
   LOW: 48,      // глубина нижнего уступа под стеной
+  DEEP: 250,    // и ещё столько вниз — дно шахты (новая локация с озером)
   PIT: 50,      // радиус шахты, уходящей в бездну
   SHELF: [4.55, 1.68], // карниз-спуск по стене: начальный угол и длина дуги (рад)
   MEADOW: 205,  // где луг переходит в горы
@@ -22,6 +23,8 @@ export const W = {
   SRC_R: 213,   // радиус чаши под водопадом-истоком у подножия гор
   CRAG: { th: 0.42, r: 141, top: 24, w: 6.5 }, // утёс-смотровая у лагеря: на него лезут по стене
 };
+// Озеро на дне шахты: сюда стекают водопады с кольца. Глубина берега — со всех сторон камни.
+export const LAKE = { x: 0, z: 0, r: 33, level: -(W.LOW + W.DEEP) - 2.0 };
 W.CRAG.x = Math.cos(W.CRAG.th) * W.CRAG.r; W.CRAG.z = Math.sin(W.CRAG.th) * W.CRAG.r;
 
 const angDiff = (a, b) => {
@@ -314,10 +317,12 @@ function rawHeight(x, z) {
         low += (Math.max(low, hs + fbm(x * 0.4, z * 0.4, 1) * 0.15) - low) * band;
       }
       // шахта в бездну
-      low -= smoothstep(pitR(x, z) + 1.0, pitR(x, z) - 1.5, r) * 140;
+      low -= smoothstep(pitR(x, z) + 1.0, pitR(x, z) - 1.5, r) * W.DEEP;
       h += (low - h) * wall;
     }
   }
+  // чаша озера на дне: пологий спуск от берега к середине (≈9 м глубины)
+  if (r < LAKE.r + 14) h -= 9.5 * smoothstep(LAKE.r + 6, LAKE.r - 14, r) * (1 + fbm(x * 0.08 + 4, z * 0.08 - 2, 2) * 0.2);
   for (const p of POOLS) if (!p.src) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
   return applySources(h, x, z, r, th);
 }
@@ -416,6 +421,7 @@ export function waterAt(x, z) {
     // в чаше одна ровная гладь: уровень чаши, а не ручья, который через неё течёт
     if (poolDist(p, x, z) < 1.01) w = p.src ? p.level : Math.max(w, p.level);
   }
+  if (r < LAKE.r + 0.4) w = Math.max(w, LAKE.level);
   // ручей в ущелье над водопадом: неглубокий, по щиколотку
   const a = r - W.SRC_R;
   if (a > 3 && a < SRC.GORGE + 0.5) {
@@ -910,7 +916,7 @@ const terrainMat = () => mat({
       // Трава закрывает землю почти везде на лугу, тогда скала не видна вовсе и 8 выборок текстур
       // можно не делать. Маску травы считаем заранее (по нормали), а скалу — только там, где она нужна.
       float gn0 = mix(n.y, ng.y, mtnK);
-      float gm0 = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn0 + (vnoise(vW.xz*0.9)-0.5)*0.08) * (1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0));
+      float gm0 = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn0 + (vnoise(vW.xz*0.9)-0.5)*0.08) * (1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0)) * (1.0 - smoothstep(-235.0, -262.0, vW.y)); // на дне шахты травы нет: галька и камень
       vec3 rock = vec3(0.35, 0.3, 0.28), nn = n;
       float snow = 0.0;
       if (gm0 < 0.995) {
@@ -1027,8 +1033,12 @@ const terrainMat = () => mat({
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
 
+      // на дне шахты темно, но не чёрно: мягкое голубое свечение от воды, кристаллов и грибов
+      float deepGlow = smoothstep(-150.0, -230.0, vW.y) * (1.0 - smoothstep(52.0, 84.0, rr));
+      alb = alb * (1.0 + deepGlow * 0.6);
       float ao = 1.0 - mtnK*0.1*(1.0-facet2);
       vec3 c = shade(alb, nn, shadowAt(vW.xz)) * ao;
+      c += alb * vec3(0.10, 0.20, 0.25) * deepGlow;
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
 });
