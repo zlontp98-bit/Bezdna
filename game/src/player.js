@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
-import { groundAt, hitSolid, ceiling } from './solids.js';
+import { groundAt, hitSolid, ceiling, solidNormal, solidSloped } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
 const _lp = new THREE.Vector3();
@@ -231,6 +231,7 @@ export class Player {
     // а картинка догоняет за десятую долю секунды — без рывков
     this.vOff = new THREE.Vector3();
     this.viewPos = this.pos.clone();
+    this.launchT = 0; this.onSlab = false;
     this.climbing = false; this.climbCd = 0; this.climbPhase = 0; this.slideGrace = 0; this.pushT = 0; this.mantle = null; this.mantleCd = 0; this.climbLean = 0; this.canGrab = false; this.walkable = true;
     this.swingT = 0; this.held = null; // взмах инструментом (сек. до конца) и что в руке (id предмета)
     this.lureA = 0; this.lureV = 0; this.lureB = 0; this.lureBV = 0; this.pvy = 0;
@@ -258,7 +259,8 @@ export class Player {
   N(x, z, out, e) {
     normalAt(x, z, out, e);
     groundAt(x, z, this.pos.y);
-    if (hitSolid) out.set(0, 1, 0);
+    // на наклонной плите нормаль её собственная (по ней скользим), на остальных объектах — вверх
+    if (hitSolid && !solidNormal(x, z, out)) out.set(0, 1, 0);
     return out;
   }
 
@@ -501,7 +503,13 @@ export class Player {
   // в которую просто упёрся (усреднённая нормаль цепляла стену — отсюда были дёрганья)
   footSlope() {
     const p = this.pos, n = this.N(p.x, p.z, this.n, 0.35);
-    if (hitSolid) return 0;
+    this.onSlab = false;
+    if (hitSolid) {
+      if (!solidSloped()) return 0;
+      // наклонная плита: крутизна по её нормали (а не по точке впереди — у края плиты там обрыв)
+      this.onSlab = true;
+      return Math.hypot(n.x, n.z) / Math.max(n.y, 0.05);
+    }
     const hl = Math.hypot(n.x, n.z);
     if (hl < 0.05) return 0;
     const e = 0.18, dx = n.x / hl, dz = n.z / hl;
@@ -559,11 +567,13 @@ export class Player {
       v.x = dx * vd + lx * vl; v.z = dz * vd + lz * vl;
       this.slideDir = Math.atan2(dx, dz);
     } else {
-      const k = Math.min(1, dt * (this.grounded ? 11 : 2.5));
+      // после скольжения полёт долгий (launchT): сопротивление воздуха мало, можно «долететь» до уступа
+      const k = Math.min(1, dt * (this.grounded ? 11 : this.launchT > 0 ? 0.45 : 2.5));
       v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
     }
     // прыгать можно только с ровного: по крутой стене прыжками не забраться
-    if (this.grounded) this.walkable = !this.sliding;
+    // со склона нельзя прыгнуть, чтобы не забираться по стене прыжками; с жёлоба-плиты — можно (длинный прыжок)
+    if (this.grounded) this.walkable = !this.sliding || this.onSlab;
     if (inp.jump && this.walkable && (this.grounded || this.airT < 0.12) && v.y <= 0.01) {
       v.y = JUMP; this.grounded = false; this.airT = 1;
     }
@@ -578,6 +588,8 @@ export class Player {
     } else { this.stuckRef.copy(p); this.stuckT = 0; }
 
     if (!this.grounded) {
+      if (this.sliding && this.launchT <= 0) this.launchT = 1.1; // сорвались со скольжения — летим по инерции
+      this.launchT = Math.max(0, this.launchT - dt);
       this.airT += dt;
       v.y -= GRAV * dt;
       // потолок берём ДО шага вверх: иначе за один кадр голова проскакивала
@@ -592,7 +604,7 @@ export class Player {
         const assist = h - Math.max(p.y, prevY);
         if (assist > 0.03) this.vOff.y -= assist;
         p.y = h; this.grounded = true; this.airT = 0;
-        this.landT = Math.min(1, -v.y / 22); v.y = 0;
+        this.landT = Math.min(1, -v.y / 22); v.y = 0; this.launchT = 0;
       }
     } else {
       this.airT = 0; v.y = 0;

@@ -6,6 +6,7 @@ const CELL = 6;
 const grid = new Map();
 export let hitSolid = false; // последняя точка опирается на объект, а не на землю
 export let ceiling = 1e9;    // низ ближайшего объекта над головой
+export let lastSolid = null; // объект, на котором стоит последняя точка (для наклона)
 
 // есть ли на этом месте твёрдая постройка (плита, столб, арка): растения на неё не ставим
 export function blockedByStone(x, z, rad) {
@@ -34,7 +35,9 @@ export function addCyl(x, z, r, top, bottom = -1e9) {
 // tris — плоский массив x,y,z по три вершины на треугольник.
 // soft — мелочь, которую камера не считает преградой (перелетает, а не упирается);
 // hang — модель висит (камень, торчащий из стены): под ней можно пройти
-export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false } = {}) {
+// slope — верх наклонный: по нему можно скользить (нормаль берётся из карты высот плиты);
+// under — высота низа плиты: ниже неё проходят под ней (для висящих в воздухе плит)
+export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under } = {}) {
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y0 = 1e9;
   for (let i = 0; i < tris.length; i += 3) {
     x0 = Math.min(x0, tris[i]); x1 = Math.max(x1, tris[i]);
@@ -65,7 +68,7 @@ export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false } = {
     }
   }
   const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: hang ? y0 : -1e9, soft, off: false };
+  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope };
   insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
   return s; // off = true — объекта сейчас нет (разбитый валун)
 }
@@ -87,7 +90,7 @@ export function addBox(x, z, hx, hz, rot, top, bottom = -1e9) {
 // Высота опоры под точкой для героя, чьи ноги на высоте y
 export function groundAt(x, z, y, forCamera = false) {
   let h = heightAt(x, z);
-  hitSolid = false; ceiling = 1e9;
+  hitSolid = false; ceiling = 1e9; lastSolid = null;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return h;
   for (const s of list) {
@@ -103,7 +106,35 @@ export function groundAt(x, z, y, forCamera = false) {
     if (y + 1.3 < s.bottom) { if (s.bottom < ceiling) ceiling = s.bottom; continue; } // проходим под ним
     // на уровне тела висящая плита — стена: отдаём её верх, и шаг/прыжок внутрь не пройдёт,
     // пока ноги не окажутся почти у верха (см. Player.tryMove)
-    if (top > h) { h = top; hitSolid = true; }
+    if (top > h) { h = top; hitSolid = true; lastSolid = s; }
   }
   return h;
+}
+
+// Стоим на наклонной плите?
+export function solidSloped() { return hitSolid && !!lastSolid && !!lastSolid.slope; }
+// Нормаль наклонной плиты в точке. У края плиты берём одностороннюю разность, а не «плоско»:
+// иначе у нижнего края жёлоба скольжение обрывалось бы за долю метра до полёта.
+export function solidNormal(x, z, out, e = 0.3) {
+  const s = lastSolid;
+  if (!s || !s.slope) return false;
+  const c = fieldAt(s, x, z);
+  if (c < -1e8) return false;
+  const a = fieldAt(s, x - e, z), b = fieldAt(s, x + e, z), d = fieldAt(s, x, z - e), f = fieldAt(s, x, z + e);
+  const gx = a > -1e8 && b > -1e8 ? (b - a) / (2 * e) : b > -1e8 ? (b - c) / e : a > -1e8 ? (c - a) / e : 0;
+  const gz = d > -1e8 && f > -1e8 ? (f - d) / (2 * e) : f > -1e8 ? (f - c) / e : d > -1e8 ? (c - d) / e : 0;
+  out.set(-gx, 1, -gz).normalize();
+  return true;
+}
+
+// Твёрдые постройки (плиты, столбы, арки) вокруг точки с их высотами — для проверки, не мешают ли они
+// чему-то построенному на другой высоте. Плиты-карты высот (камни, острова) не включены.
+export function solidsNear(x, z, rad) {
+  const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL)), out = [];
+  if (!list) return out;
+  for (const s of list) {
+    if (s.field) continue;
+    if (Math.hypot(x - s.x, z - s.z) < s.rad + rad) out.push({ top: s.top, bottom: s.bottom, x: s.x, z: s.z });
+  }
+  return out;
 }

@@ -37,7 +37,10 @@ function stackGeo(s, pos, idx, SEG = 30) {
   const base = pos.length / 3;
   // кольца сверху вниз: вершина подробно, ниже — реже
   const ys = [0.35, 0.05, -0.5, -1.4];
-  for (let d = 3; d < 330; d *= 1.35) ys.push(-d);
+  // Длина тела: столбы-ступени и малые острова — висящие обломки (70 и 130 м), большой остров тянется до дна.
+  // Раньше все доходили до дна, а теперь там идёт спуск: колонны мешали бы плитам.
+  const maxD = s.pillar ? 70 : s.big ? 330 : 130;
+  for (let d = 3; d < maxD; d *= 1.35) ys.push(-d);
   const P = [];
   P.push(s.x, s.top + 0.45, s.z); // центр вершины
   for (let j = 0; j < ys.length; j++) {
@@ -63,12 +66,22 @@ function stackGeo(s, pos, idx, SEG = 30) {
   for (let i = 0; i < P.length; i++) pos.push(P[i]);
   // треугольники: веер на вершине и кольца вниз
   for (let i = 0; i < SEG; i++) idx.push(base, base + 1 + ((i + 1) % SEG), base + 1 + i);
+  const nRings = ys.length;
   for (let j = 0; j < ys.length - 1; j++) {
     const a0 = base + 1 + j * SEG, b0 = a0 + SEG;
     for (let i = 0; i < SEG; i++) {
       const i1 = (i + 1) % SEG;
       idx.push(a0 + i, a0 + i1, b0 + i, a0 + i1, b0 + i1, b0 + i);
     }
+  }
+  // дно: острый конус под последним кольцом, чтобы обломок не был открытой трубой, если смотреть снизу
+  if (maxD < 330) {
+    const last = base + 1 + (nRings - 1) * SEG, apex = pos.length / 3;
+    let ax = 0, az = 0;
+    for (let i = 0; i < SEG; i++) { ax += pos[(last + i) * 3]; az += pos[(last + i) * 3 + 2]; }
+    pos.push(ax / SEG, s.top + ys[nRings - 1] - 9, az / SEG);
+    // тот же порядок обхода, что у боковых стенок, но наружу — вниз
+    for (let i = 0; i < SEG; i++) idx.push(last + ((i + 1) % SEG), last + i, apex);
   }
 }
 
@@ -119,16 +132,17 @@ function planChain(A, B, rnd) {
 
 export function buildStacks(scene) {
   const pos = [], idx = [];
-  const solid = (i0, SEG) => {
+  const solid = (i0, SEG, under) => {
     // верх (веер и три верхних кольца) — в физику, точно по треугольникам
     const top = idx.slice(i0, i0 + SEG * 3 + SEG * 6 * 3), tris = new Float32Array(top.length * 3);
     top.forEach((v, k) => { tris[k * 3] = pos[v * 3]; tris[k * 3 + 1] = pos[v * 3 + 1]; tris[k * 3 + 2] = pos[v * 3 + 2]; });
-    addMeshTop(tris, 0.35);
+    // у тела настоящий низ: ниже него (на спуске, у озера) верхушка не считается землёй
+    addMeshTop(tris, 0.35, under === undefined ? {} : { under });
   };
   for (const s of STACKS) {
     const i0 = idx.length;
     stackGeo(s, pos, idx, s.big ? 48 : 30);
-    solid(i0, s.big ? 48 : 30);
+    solid(i0, s.big ? 48 : 30, s.big ? s.top - 340 : s.top - 130 - 9);
   }
   // столбы ставим, когда острова уже твёрдые: края меряем по настоящей вершине
   const rnd = mulberry32(SEED + 404);
@@ -144,7 +158,7 @@ export function buildStacks(scene) {
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);
-    solid(i0, 11);
+    solid(i0, 11, p.top - 70 - 9);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

@@ -100,7 +100,7 @@ const PEAKS = [
 
 // контрфорсы: край стены гуляет по углу, получаются колонны и ниши
 const edgeR = (x, z) => W.HOLE + 0.6 + fbm(x * 0.11 + 7, z * 0.11 - 3, 3) * 3.2;
-const pitR = (x, z) => W.PIT + fbm(x * 0.09 - 11, z * 0.09 + 5, 3) * 4.0;
+export const pitR = (x, z) => W.PIT + fbm(x * 0.09 - 11, z * 0.09 + 5, 3) * 4.0;
 // высота карниза на угле th (или null — карниза нет)
 export function shelfAt(th) {
   let t = th - W.SHELF[0];

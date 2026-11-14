@@ -381,10 +381,12 @@ function buildOldWorld(scene, rnd, blobs) {
     // опоры: высокая на нижнем уступе и вторая у края шахты
     const pier = (r, w) => {
       const [x, z] = at(r);
-      const base = heightAt(x, z) - 1.0, top = deckY - 1.4;
+      // опора у края шахты — обломок длиной ≤ 36 м (раньше столб до дна, теперь там спуск); низ у твёрдого тела настоящий
+      const top = deckY - 1.4, base = Math.max(heightAt(x, z) - 1.0, top - 36);
       g.add(box(w, top - base, w * 0.85), STONE[1], x, base + (top - base) / 2, z, S, [1, 1, 1], ry);
       g.add(box(w + 0.5, 0.8, w * 0.85 + 0.5), STONE[0], x, top + 0.4, z, S, [1, 1, 1], ry);
-      addBox(x, z, w / 2, w * 0.42, ry, top);
+      g.add(new THREE.ConeGeometry(w * 0.7, 3, 6), STONE[1], x, base - 1.4, z, S, [1, 1, 1], ry, Math.PI);
+      addBox(x, z, w / 2, w * 0.42, ry, top, base);
     };
     pier(64.5, 2.6); pier(47.5, 2.3);
     // арка под настилом между краем и первой опорой

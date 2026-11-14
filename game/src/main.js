@@ -19,6 +19,7 @@ import { Pickups } from './pickups.js';
 import { Crafting } from './craft.js';
 import { Miner } from './mine.js';
 import { Chests } from './chest.js';
+import { buildDescent } from './descent.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -123,6 +124,8 @@ async function build() {
   buildStacks(scene);
   // руины раньше растений: тогда кусты и деревья обходят их плиты и столбы
   const ruins = buildRuins(scene);
+  // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
+  buildDescent(scene);
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   await loadStep(60, 'Разбиваем лагерь…');
