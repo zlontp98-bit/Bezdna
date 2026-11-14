@@ -209,7 +209,7 @@ const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
 const CLIMBV = 2.2, CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 // толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
 const MANTLE_MIN = 0.45, MANTLE_MAX = 1.9; // перелезть можно уступ такой высоты, м
-const FALL_MAX = 10; // падение выше этого — срыв, возврат на последний уступ
+const FALL_MAX = 1e9; // срыв при падении отключён на время тестов // падение выше этого — срыв, возврат на последний уступ
 const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
 const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
@@ -219,7 +219,7 @@ export class Player {
     this.vel = new THREE.Vector3();
     this.grounded = true;
     this.facing = Math.atan2(-spawn.x, -spawn.z);
-    this.safe = this.pos.clone();
+    this.safe = this.pos.clone(); this.home = this.pos.clone();
     this.safeT = 0; this.airT = 0; this.phase = 0; this.speed = 0; this.landT = 0;
     this.scene = scene;
     this.look = { color: SKIN_COLORS[0], armor: false }; // броня появится вместе с крафтом

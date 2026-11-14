@@ -201,7 +201,7 @@ const ZONES = [[14, 'Смотровая площадка'], [-3, 'Луг у кр
 let zoneName = '', zoneT = 0;
 function updateHud(dt) {
   const y = player.pos.y;
-  setCls('lift', 'show', player.pos.y < -85);
+  setCls('lift', 'show', player.pos.y < -40);
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
@@ -270,7 +270,7 @@ function renderCraft() {
 function toggleCraft(on = !craftOpen) { craftOpen = on; setCls('craft', 'show', on); setCls('craftBtn', 'on', on); if (on) renderCraft(); }
 // «Наверх»: со дна шахты возвращаемся к лагерю (последнее безопасное место на земле)
 $('lift').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
-$('lift').addEventListener('click', () => { if (falling) return; falling = true; $('msg').textContent = 'Поднимаемся к лагерю…'; $('msg').classList.add('show'); });
+$('lift').addEventListener('click', () => { if (falling) return; player.safe.copy(player.home); falling = true; $('msg').textContent = 'Поднимаемся к лагерю…'; $('msg').classList.add('show'); });
 $('craftBtn').addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
 $('craftBtn').addEventListener('click', () => toggleCraft());
 
