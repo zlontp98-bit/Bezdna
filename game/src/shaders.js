@@ -24,7 +24,7 @@ export const U = {
   uPlayer: { value: new THREE.Vector3() },
   uNoise: { value: null },
   uDetail: { value: null },
-  uGround: { value: null }, uRockMtn: { value: null }, uGrass: { value: null }, uPath: { value: null },
+  uRockWall: { value: null }, uRockPlain: { value: null }, uGround: { value: null }, uRockMtn: { value: null }, uGrass: { value: null }, uPath: { value: null },
   uLeaf: { value: null }, uBark: { value: null }, uWater: { value: null },
   uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
 };
@@ -107,11 +107,11 @@ export const U = {
 // Бесшовные: накладываются плиткой; стена 1024², остальные 512² (всего ~8 МБ видеопамяти).
 {
   const fb = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
-  U.uGround.value = fb(148, 111, 52); U.uRockMtn.value = fb(150, 135, 140); U.uGrass.value = fb(110, 150, 40); U.uPath.value = fb(180, 135, 80);
+  U.uRockWall.value = fb(158, 115, 83); U.uRockPlain.value = fb(168, 117, 87); U.uGround.value = fb(148, 111, 52); U.uRockMtn.value = fb(150, 135, 140); U.uGrass.value = fb(110, 150, 40); U.uPath.value = fb(180, 135, 80);
   U.uLeaf.value = fb(110, 160, 40); U.uBark.value = fb(140, 90, 60); U.uWater.value = fb(40, 140, 160);
 }
 export function loadTerrainTextures() {
-  const files = { uGround: 'ground', uRockMtn: 'rock_mtn', uGrass: 'grass', uPath: 'path', uLeaf: 'leaf', uBark: 'bark', uWater: 'water' };
+  const files = { uRockWall: 'rock_wall', uRockPlain: 'rock_plain', uGround: 'ground', uRockMtn: 'rock_mtn', uGrass: 'grass', uPath: 'path', uLeaf: 'leaf', uBark: 'bark', uWater: 'water' };
   return Promise.all(Object.entries(files).map(([u, f]) => new Promise((done) => {
     const im = new Image();
     im.onload = () => {
