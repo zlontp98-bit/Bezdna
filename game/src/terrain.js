@@ -815,7 +815,7 @@ const terrainMat = () => mat({
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround;
+    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround, uRockMtn;
     varying vec3 vW; varying vec3 vN;
     float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
@@ -839,6 +839,12 @@ const terrainMat = () => mat({
       vec3 tW = texture2D(uRockWall, vW.zy*0.085).rgb * wx + texture2D(uRockWall, vW.xy*0.085 + 0.31).rgb * (1.0 - wx);
       vec3 tP = texture2D(uRockPlain, vW.xz*0.12 + 0.17).rgb;
       vec3 rock = mix(tP, tW, steepM);
+      // Внешние горы — серый камень с мхом в трещинах (отдельная текстура, плитка 20 м):
+      // стены кольца и бездны остаются тёплыми, а хребет вокруг долины — каменный
+      vec3 tM = texture2D(uRockMtn, vW.zy*0.05).rgb * wx + texture2D(uRockMtn, vW.xy*0.05 + 0.31).rgb * (1.0 - wx);
+      tM = mix(texture2D(uRockMtn, vW.xz*0.06 + 0.17).rgb, tM, steepM);
+      tM = mix(vec3(lumOf(tM)), tM, 0.72) * vec3(0.97,0.98,1.03); // серее: меньше розового и охры
+      rock = mix(rock, tM, mtnK);
       // контраст: картинка нарисована мягко, а в игре её надо читать издалека
       rock = pow(rock, vec3(1.3)) * 1.2;
       // Рисунок вдали усредняется в ровный цвет, поэтому структуру горы задаёт форма:
@@ -851,7 +857,7 @@ const terrainMat = () => mat({
       float jn = vnoise(vec2(tang*0.11 + floor(yw*0.09)*3.7, vW.y*0.004));
       float joint = smoothstep(0.06, 0.0, abs(jn - 0.5)) * steepM;
       rock *= (0.84 + 0.3*strata) * (0.94 + 0.12*thin);
-      rock *= mix(1.1, 0.8, steepM) * (1.0 - seam*0.2 - joint*0.14);
+      rock *= mix(1.1, 0.8, steepM) * (1.0 - seam*0.2 * (1.0 - mtnK*0.6) - joint*0.14);
       rock *= mix(1.0, 0.9 + 0.2*facet2, mtnK);
       // глубже — холоднее и темнее; высоко и вдали — серее (воздух и камень, а не охра)
       rock = mix(rock, vec3(lumOf(rock)) * vec3(0.78,0.86,1.02), deepK*0.85);

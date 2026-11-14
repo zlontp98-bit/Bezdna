@@ -24,7 +24,7 @@ export const U = {
   uPlayer: { value: new THREE.Vector3() },
   uNoise: { value: null },
   uDetail: { value: null },
-  uRockWall: { value: null }, uRockPlain: { value: null }, uGround: { value: null },
+  uRockWall: { value: null }, uRockPlain: { value: null }, uGround: { value: null }, uRockMtn: { value: null },
   uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
 };
 
@@ -106,10 +106,10 @@ export const U = {
 // Бесшовные: накладываются плиткой; стена 1024², остальные 512² (всего ~8 МБ видеопамяти).
 {
   const fb = (r, g, b) => { const t = new THREE.DataTexture(new Uint8Array([r, g, b, 255]), 1, 1, THREE.RGBAFormat); t.needsUpdate = true; return t; };
-  U.uRockWall.value = fb(158, 115, 83); U.uRockPlain.value = fb(168, 117, 87); U.uGround.value = fb(148, 111, 52);
+  U.uRockWall.value = fb(158, 115, 83); U.uRockPlain.value = fb(168, 117, 87); U.uGround.value = fb(148, 111, 52); U.uRockMtn.value = fb(150, 135, 140);
 }
 export function loadTerrainTextures() {
-  const files = { uRockWall: 'rock_wall', uRockPlain: 'rock_plain', uGround: 'ground' };
+  const files = { uRockWall: 'rock_wall', uRockPlain: 'rock_plain', uGround: 'ground', uRockMtn: 'rock_mtn' };
   return Promise.all(Object.entries(files).map(([u, f]) => new Promise((done) => {
     const im = new Image();
     im.onload = () => {
