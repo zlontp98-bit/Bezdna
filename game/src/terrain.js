@@ -396,13 +396,15 @@ function applyChannel(h, x, z) {
   const th = Math.atan2(z, x);
   let d = 1e9;
   for (const tw of W.STREAMS) d = Math.min(d, Math.abs(angDiff(th, tw)) * r);
-  if (d > 4.3) return h;
+  if (d > 7.6) return h;
   // русло: плоское дно и берега с уклоном, по которому ещё можно выйти из воды;
   // врезано в сетку точно, а не по её ячейкам
   const flat = sampleGrid(FG, x, z);
   if (flat <= 0.001) return h;
   const rim = sampleGrid(LG, x, z) + 0.25; // кромка берега чуть выше воды
-  const ch = rim + (h - rim) * smoothstep(3.4, 4.2, d) - sampleGrid(DG, x, z) * clamp((3.4 - d) / 2.1, 0, 1);
+  // Берега пологие: от кромки у воды земля плавно поднимается к лугу на 4–5 метрах (раньше —
+  // на 0.8 м, получалась прямоугольная канава с отвесной стенкой), а дно вогнутое, без ступеньки
+  const ch = rim + (h - rim) * smoothstep(3.0, 7.4, d) - sampleGrid(DG, x, z) * smoothstep(3.7, 0.7, d);
   return Math.min(h, h + (ch - h) * flat);
 }
 // Уровень воды под точкой: ручей или чаша; -1e9 — суши
@@ -569,9 +571,9 @@ function bakeHeightTexture() {
       let beach = -2;
       for (const p of POOLS) {
         const d = Math.hypot(x - p.x, z - p.z);
-        if (!p.src) { m *= smoothstep(p.rad - 0.8, p.rad + 0.2, d); continue; }
+        if (!p.src) { m *= smoothstep(p.rad + 1.0, p.rad + 4.5, d); continue; } // у чаши — голый камень и галька
         // у пруда под истоком — широкий галечный берег
-        m *= smoothstep(p.rad + 2.5, p.rad + 4.5, d);
+        m *= smoothstep(p.rad + 6.0, p.rad + 12.0, d);
         beach = Math.max(beach, -0.45 + 0.4 * smoothstep(p.rad + 4.5, p.rad + 1, d));
       }
       let wl = waterAt(x, z);
@@ -885,7 +887,7 @@ const terrainMat = () => mat({
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D uHmap, uRockWall, uRockPlain, uGround, uRockMtn, uGrass, uPath;
+    uniform sampler2D uHmap, uGround, uRockMtn, uGrass, uPath;
     varying vec3 vW; varying vec3 vN; varying vec2 vB;
     float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
@@ -903,18 +905,23 @@ const terrainMat = () => mat({
       float facet = vnoise(vW.xz*0.035 + 3.0);
       float facet2 = vnoise(vW.xz*0.012 - 5.0);
 
-      // ---- скала: нарисованные текстуры ----
-      // Отвесные места — плиты со мхом (текстура стены), проецируются по двум осям и плавно
-      // переходят друг в друга; плоские — светлая скала сверху. Масштаб: плитка 12 м.
+      // ---- скала: одна серая каменная текстура ----
+      // Везде камень, а не «земля»: и стены кольца и бездны, и горы. Отвесные места — проекция
+      // по двум осям (без размазывания), плоские — сверху. Масштаб зависит от расстояния до
+      // центра: у стен долины плитка 20 м (мельче, глыбы ~5 м), в горах 60 м (глыбы 15–20 м).
       vec2 axz = pow(abs(ng.xz) + 1e-3, vec2(4.0));
       float wx = axz.x / (axz.x + axz.y);
-      vec3 tW = texture2D(uRockWall, vW.zy*0.085).rgb * wx + texture2D(uRockWall, vW.xy*0.085 + 0.31).rgb * (1.0 - wx);
-      vec3 tP = texture2D(uRockPlain, vW.xz*0.12 + 0.17).rgb;
-      vec3 rock = mix(tP, tW, steepM);
-      // Внешние горы — серый камень с мхом в трещинах (отдельная текстура, плитка 20 м):
-      // стены кольца и бездны остаются тёплыми, а хребет вокруг долины — каменный
-      vec3 tM = texture2D(uRockMtn, vW.zy*0.017).rgb * wx + texture2D(uRockMtn, vW.xy*0.017 + 0.31).rgb * (1.0 - wx);
-      tM = mix(texture2D(uRockMtn, vW.xz*0.024 + 0.17).rgb, tM, steepM);
+      float bigK = smoothstep(190.0, 218.0, rr);
+      vec3 tM = vec3(0.0);
+      if (bigK < 0.999) {
+        vec3 a1 = texture2D(uRockMtn, vW.zy*0.05).rgb * wx + texture2D(uRockMtn, vW.xy*0.05 + 0.31).rgb * (1.0 - wx);
+        tM += mix(texture2D(uRockMtn, vW.xz*0.06 + 0.17).rgb, a1, steepM) * (1.0 - bigK);
+      }
+      if (bigK > 0.001) {
+        vec3 a2 = texture2D(uRockMtn, vW.zy*0.017).rgb * wx + texture2D(uRockMtn, vW.xy*0.017 + 0.31).rgb * (1.0 - wx);
+        tM += mix(texture2D(uRockMtn, vW.xz*0.024 + 0.17).rgb, a2, steepM) * bigK;
+      }
+      vec3 rock = tM;
       tM = mix(vec3(lumOf(tM)), tM, 0.78) * vec3(0.98,0.98,1.02);
       // Глыбы: у каждой свой оттенок (серо-бурые, песочные, тёплые), между ними тёмные швы
       // (vB.x — шов, vB.y — оттенок из ячеек глыб в terrain.js)
@@ -923,7 +930,7 @@ const terrainMat = () => mat({
       tM = mix(tM, tM * vec3(1.16,1.04,0.84), smoothstep(0.05, 0.4, bt));     // песочные
       tM = mix(tM, tM * vec3(0.86,0.9,1.0), smoothstep(-0.05, -0.4, bt));      // холодные серые
       tM *= 1.0 - vB.x * 0.62;
-      rock = mix(rock, tM, mtnK);
+      rock = tM;
       // контраст: картинка нарисована мягко, а в игре её надо читать издалека
       rock = pow(rock, vec3(1.3)) * 1.2;
       // Рисунок вдали усредняется в ровный цвет, поэтому структуру горы задаёт форма:
@@ -950,6 +957,8 @@ const terrainMat = () => mat({
       // рельеф только на скале и сглаженный по яркости (на земле производные дают «пунктир»)
       float bumpK = smoothstep(0.15, 0.45, steepM) * smoothstep(60.0, 12.0, camD) * 0.12;
       vec3 nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
+      // грани треугольников нужны только скалам; на траве и тропах свет считаем по гладкой нормали
+      nn = normalize(mix(n, nn, smoothstep(0.12, 0.42, 1.0 - ng.y)));
       // снег — только на самых высоких вершинах и в их складках
       float snowLine = 168.0 + facet2*18.0 + (1.0 - ng.y)*30.0; // хребет стал выше — снег только на самых пиках
       float snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
@@ -961,14 +970,14 @@ const terrainMat = () => mat({
       vec4 hm = texture2D(uHmap, vW.xz/(2.0*uExt)+0.5);
       vec3 gA = texture2D(uGrass, vW.xz*0.12).rgb;
       vec3 gB = texture2D(uGrass, vec2(vW.z, -vW.x)*0.031 + 0.37).rgb;
-      vec4 d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
+      vec4 d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.07 + 0.37); // мелкие мягкие пятна (крупные давали угловатые кляксы)
       vec3 grass = grassCol(vW);
       grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
       float gl = lumOf(gA)*0.65 + lumOf(gB)*0.35;
       grass = mix(grass * (0.45 + 1.25*gl), mix(gA, gB, 0.35) * vec3(0.70,0.80,0.62), 0.4);
-      grass *= 0.88 + 0.24*d2.b;
+      grass *= 0.94 + 0.12*d2.b;
       float gn = mix(n.y, ng.y, mtnK);
-      float gm = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08);
+      float gm = smoothstep(mix(0.55, 0.68, mtnK), mix(0.72, 0.82, mtnK), gn + (vnoise(vW.xz*0.9)-0.5)*0.08); // дерн держится и на крутых склонах, камень — только на настоящих скалах
       gm *= 1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0);
       // у скал на пологих полках трава переходит в каменистую землю (старая текстура земли)
       vec3 scree = texture2D(uGround, vW.xz*0.22).rgb * vec3(0.9,0.88,0.85);
@@ -987,8 +996,8 @@ const terrainMat = () => mat({
       alb = mix(alb, soil, dirtK * gm);
       // у воды: мокрая галька (та же скала, темнее и холоднее)
       float wd = hm.a;
-      float wet = smoothstep(-0.45, 0.0, wd) * (1.0 - mtnK);
-      vec3 pebble = tP * vec3(0.62,0.66,0.72) * (0.8 + 0.4*lumOf(pA));
+      float wet = smoothstep(-0.9, -0.05, wd) * (1.0 - mtnK);
+      vec3 pebble = rock * vec3(0.78,0.84,0.92) * (0.85 + 0.3*lumOf(pA)); // мокрый камень у воды
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);

@@ -105,16 +105,10 @@ export function buildRuins(scene) {
     g.done(scene);
   }
 
-  // ---- у каждого ручья: камни-переступки наверху и дощатый мостик на кольце ----
+  // ---- у каждого ручья: дощатый мостик на кольце (камни-переступки в ряд убраны) ----
   for (const th of W.STREAMS) {
     const tx = -Math.sin(th), tz = Math.cos(th);
     const [fx, fz] = P(92.6, th), g = new Group(fx, fz);
-    for (const o of [-2.6, -1.3, 0, 1.3, 2.6]) {
-      const x = fx + tx * o, z = fz + tz * o, gy = heightAt(x, z);
-      const top = Math.max(gy + 0.34, waterAt(x, z) + 0.22), h = top - gy + 0.4;
-      g.add(new THREE.CylinderGeometry(0.6, 0.72, h, 7, 1), STONE[g.i++ % 4], x, top - h / 2, z, { stone: 1 }, [1, 1, 1], o);
-      addCyl(x, z, 0.62, top);
-    }
     // мостик
     // мостик — между чашей и обрывом, если там хватает места
     const pool = POOLS[W.STREAMS.indexOf(th)], pr = Math.hypot(pool.x, pool.z);

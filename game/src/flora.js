@@ -109,7 +109,19 @@ export function propMaterial() {
         vec3 n = normalize(vN);
         vec3 v = normalize(cameraPosition - vW);
         vec3 alb = vC;
-        if (vStone > 0.5) {
+        if (vStone > 1.5 && vStone < 2.5 || vStone > 3.5) {
+          // крона: нарисованная листва. Одна выборка по самой «плоской» для этой точки оси;
+          // оттенок дерева (зелёный, осенний) сохраняется — берём из картинки только рисунок
+          vec3 an = abs(n);
+          vec2 luv = an.y > max(an.x, an.z) ? vW.xz : (an.x > an.z ? vW.zy : vW.xy);
+          float ll = dot(texture2D(uLeaf, luv*0.55).rgb, vec3(0.30,0.59,0.11));
+          alb *= mix(1.0, ll/0.5, vStone > 3.5 ? 0.55 : 0.95);
+        } else if (vStone > 2.5) {
+          // ствол: кора с вертикальными жилами, шов развёртки на задней стороне
+          vec3 bk = texture2D(uBark, vec2(atan(vL.z, vL.x)*0.8, vL.y*0.5)).rgb;
+          alb = mix(alb * dot(bk, vec3(0.30,0.59,0.11))/0.42, bk*0.85, 0.35);
+        }
+        if (vStone > 0.5 && vStone < 1.5) {
           // старый камень: пятна, сколы, тёмные прожилки и мох на верхних гранях
           vec3 q = vL * 1.7;
           float t = vnoise(q.xz + q.y*0.7) * 0.6 + vnoise(q.zy*2.3 + q.x) * 0.4;
@@ -134,10 +146,10 @@ function leafTree() {
   const trunk = new THREE.CylinderGeometry(0.2, 0.36, 2.8, 6, 1, true);
   const blob = new THREE.IcosahedronGeometry(1, 1), blob0 = new THREE.IcosahedronGeometry(1, 0);
   const ctr = new THREE.Vector3(0, 3.7, 0);
-  const o = { sway: 1, round: ctr };
+  const o = { sway: 1, round: ctr, stone: 2 };
   return merge([
-    part(trunk, 0x7a5236, { m: T(0, 1.4, 0) }),
-    part(new THREE.CylinderGeometry(0.09, 0.14, 1.3, 5, 1, true), 0x7a5236, { m: T(0.45, 2.5, 0.1, 1, 1, 1, 0, -0.8) }),
+    part(trunk, 0x7a5236, { stone: 3, m: T(0, 1.4, 0) }),
+    part(new THREE.CylinderGeometry(0.09, 0.14, 1.3, 5, 1, true), 0x7a5236, { stone: 3, m: T(0.45, 2.5, 0.1, 1, 1, 1, 0, -0.8) }),
     part(blob, 0xffffff, { ...o, m: T(0, 3.9, 0, 1.75, 1.45, 1.75) }),
     part(blob0, 0xe9f5d8, { ...o, m: T(1.2, 3.3, 0.3, 1.3, 1.1, 1.3, 0.4) }),
     part(blob0, 0xdcefd0, { ...o, m: T(-1.05, 3.2, -0.5, 1.35, 1.1, 1.35, 1.1) }),
@@ -148,10 +160,10 @@ function pineTree() {
   const cone = (r, h) => new THREE.ConeGeometry(r, h, 8, 1);
   const ctr = (y) => new THREE.Vector3(0, y, 0);
   return merge([
-    part(new THREE.CylinderGeometry(0.16, 0.3, 2.2, 6, 1, true), 0x6b4a34, { m: T(0, 1.1, 0) }),
-    part(cone(1.7, 2.6), 0xd9ecd2, { sway: 0.6, round: ctr(1.6), m: T(0, 2.7, 0) }),
-    part(cone(1.35, 2.3), 0xe9f5dc, { sway: 0.8, round: ctr(3.0), m: T(0, 4.2, 0) }),
-    part(cone(0.95, 2.1), 0xffffff, { sway: 1, round: ctr(4.6), m: T(0, 5.6, 0) }),
+    part(new THREE.CylinderGeometry(0.16, 0.3, 2.2, 6, 1, true), 0x6b4a34, { stone: 3, m: T(0, 1.1, 0) }),
+    part(cone(1.7, 2.6), 0xd9ecd2, { stone: 4, sway: 0.6, round: ctr(1.6), m: T(0, 2.7, 0) }),
+    part(cone(1.35, 2.3), 0xe9f5dc, { stone: 4, sway: 0.8, round: ctr(3.0), m: T(0, 4.2, 0) }),
+    part(cone(0.95, 2.1), 0xffffff, { stone: 4, sway: 1, round: ctr(4.6), m: T(0, 5.6, 0) }),
   ]);
 }
 function giantShroom() {
@@ -171,7 +183,7 @@ function giantShroom() {
 }
 function bushGeo() {
   const b = new THREE.IcosahedronGeometry(1, 0);
-  const o = (c) => ({ sway: 0.6, round: new THREE.Vector3(c[0], -0.2, c[1]) });
+  const o = (c) => ({ sway: 0.6, stone: 2, round: new THREE.Vector3(c[0], -0.2, c[1]) });
   return merge([
     part(b, 0xffffff, { ...o([0, 0]), m: T(0, 0.5, 0, 0.85, 0.7, 0.85, 0.3) }),
     part(b, 0xe6f4d6, { ...o([0.6, 0.1]), m: T(0.62, 0.38, 0.12, 0.6, 0.5, 0.6, 1.2) }),
@@ -260,60 +272,45 @@ export function buildFlora(scene) {
   const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) =>
     list.push({ x, y, z, s, color, rot, tilt });
 
-  // ---- камни у водопадов: каждый поставлен вручную ----
-  // Не кольцо одинаковых валунов, а маршрут: по камням через чашу, по выступам в стене
-  // за пелену водопада и вверх на смотровой камень. top — высота верха камня (по ней
-  // рассчитаны прыжки: герой прыгает на 1.6 м вверх и на 3.5–6 м в длину).
+  // ---- камни у водопадов ----
+  // Не ряды и не кольцо, а естественные группы: у воды лежит одна крупная глыба, рядом две-три
+  // поменьше (полузарытые, под разными углами), группы стоят на разном удалении от воды.
   const grey = (g, warm = 1) => col.setRGB(g * (1 + 0.06 * warm), g * 1.01, g * (1 - 0.04 * warm)).getHex();
   const stone = (x, z, o) => {
-    if (o.top !== undefined) STONES.push({ x, z, top: o.top, s: o.s, hang: !!o.hang });
-    add(lists.rock, x, o.top !== undefined ? o.top : heightAt(x, z) - (o.sink ?? 0.12), z, o.s, grey(o.g ?? 0.54, o.warm ?? 1), o.rot ?? 0, o.tilt ?? 0);
-    Object.assign(lists.rock[lists.rock.length - 1], { sy: o.sy ?? 0.8, sz: o.sz ?? 1, top: o.top, hang: !!o.hang });
+    add(lists.rock, x, heightAt(x, z) - (o.sink ?? 0.15), z, o.s, grey(o.g ?? 0.54, o.warm ?? 0), o.rot ?? 0, o.tilt ?? 0);
+    Object.assign(lists.rock[lists.rock.length - 1], { sy: o.sy ?? 0.8, sz: o.sz ?? 1 });
     taken.push({ x, z, r: o.s });
-    if (!o.hang && o.s > 0.8) blobs.push({ x, z, r: o.s * 1.5, h: o.s * 0.5 });
+    if (o.s > 0.8) blobs.push({ x, z, r: o.s * 1.5, h: o.s * 0.5 });
+  };
+  const okSpot = (x, z, lvl) => streamAt(x, z) < 0.05 && waterAt(x, z) < -1e8 && heightAt(x, z) < lvl + 1.4 && heightAt(x, z) > lvl - 0.6;
+  const group = (x, z, big, lvl) => {
+    if (!okSpot(x, z, lvl)) return;
+    const n = 2 + (rnd() * 3 | 0), a0 = rnd() * TAU;
+    for (let k = 0; k < n; k++) {
+      const a = a0 + k * (1.7 + rnd()), d = k ? big * (0.85 + rnd() * 0.9) : 0;
+      const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d;
+      if (k && !okSpot(px, pz, lvl)) continue;
+      const sz = k ? big * (0.28 + rnd() * 0.38) : big;
+      stone(px, pz, { s: sz, sy: 0.62 + rnd() * 0.34, sz: 0.85 + rnd() * 0.3, rot: rnd() * TAU, tilt: rnd() * 0.32, g: 0.46 + rnd() * 0.14, sink: 0.1 + rnd() * 0.25 });
+    }
   };
   for (const p of POOLS) {
     if (p.src) {
-      const s = p.s, B = s.base, wl = p.level;
-      const at = (a, l) => { const r = W.SRC_R + a, th = s.tw + l / r; return [Math.cos(th) * r, Math.sin(th) * r]; };
-      // 1) брод: пять камней через чашу перед самой пеленой, шаг 3–3.5 м, высота «лесенкой»
-      for (const [a, l, sz, up, rot] of [[-3.6, -6.9, 1.25, 0.55, 0.4], [-2.4, -3.7, 1.05, 0.85, 2.1], [-4.3, -0.5, 1.35, 0.6, 3.3], [-2.2, 2.7, 1.0, 0.95, 5.0], [-3.8, 6.2, 1.3, 0.5, 1.2]]) {
-        const [x, z] = at(s.pc + a + 1.5, l);
-        stone(x, z, { s: sz, sy: 2.3, sz: 0.9, top: wl + up, rot, g: 0.5, warm: 0 });
+      const s = p.s, at = (a, l) => { const r = W.SRC_R + a, th = s.tw + l / r; return [Math.cos(th) * r, Math.sin(th) * r]; };
+      // берега заводи: слева и справа, дальше от воды — ближе к лугу
+      for (const side of [-1, 1]) for (let k = 0; k < 4; k++) {
+        const [x, z] = at(s.pc - 4 - k * 4.5 - rnd() * 2.5, side * (10 + rnd() * 6 + k * 1.2));
+        group(x, z, 0.9 + rnd() * 1.1, p.level);
       }
-      // 2) выступы в стене ниши: слева по дуге, за пеленой водопада и вверх направо.
-      //    Центр ниши — (a = −2, l = 0); камень наполовину сидит в скале
-      const ledge = (deg, up, sz, o = {}) => {
-        const ph = (deg * Math.PI) / 180;
-        let rho = 6;
-        while (rho < 15) { const [x, z] = at(-2 + Math.cos(ph) * rho, Math.sin(ph) * rho); if (heightAt(x, z) > B + up + 1.5) break; rho += 0.1; }
-        rho -= sz * 0.42;
-        const [x, z] = at(-2 + Math.cos(ph) * rho, Math.sin(ph) * rho);
-        stone(x, z, { s: sz, sy: 0.62, top: B + up, hang: true, rot: deg * 0.13, tilt: 0.06, g: 0.47, warm: 0, ...o });
-      };
-      [[-80, 1.0, 1.5], [-64, 2.0, 1.4], [-48, 3.1, 1.55], [-32, 4.1, 1.4], [-16, 5.2, 1.6], [1, 6.2, 1.45],
-        [18, 7.3, 1.5], [35, 8.4, 1.4], [52, 9.5, 1.55]].forEach(([deg, up, sz]) => ledge(deg, up, sz));
-      ledge(70, 10.4, 2.5, { sy: 0.5, g: 0.5 }); // смотровой камень над чашей
-      // 3) берег: камни разного размера, группами, а не через равные промежутки
-      for (const [a, l, sz, sy, rot, tilt] of [[-7.5, -11.6, 1.7, 0.75, 0.7, 0.15], [-9.3, -13.4, 0.75, 0.8, 2.2, 0.3], [-5.4, -13.8, 0.5, 0.9, 4.0, 0.2],
-        [-6.2, 12.4, 2.0, 0.7, 1.9, 0.1], [-9.0, 14.3, 0.95, 0.85, 3.6, 0.35], [-16.0, -6.4, 1.15, 0.7, 5.2, 0.2], [-17.6, 7.0, 0.85, 0.8, 0.3, 0.25],
-        [-15.0, 8.6, 0.5, 1.0, 2.8, 0.1], [-3.2, 15.5, 1.3, 0.9, 4.4, 0.2]]) {
-        const [x, z] = at(s.pc + a, l);
-        stone(x, z, { s: sz, sy, rot, tilt, g: 0.5 + sz * 0.03 });
-      }
+      // и пара у самой стены, по бокам от водопада
+      for (const side of [-1, 1]) { const [x, z] = at(s.pc - 0.5 + rnd() * 2, side * (7.5 + rnd() * 1.5)); group(x, z, 0.8 + rnd() * 0.8, p.level); }
       continue;
     }
     // чаша на первом кольце: u — вниз по течению от центра чаши, v — поперёк
     const at = (u, v) => [p.x + p.dx * u - p.dz * v, p.z + p.dz * u + p.dx * v];
-    for (const [u, v, sz, up, rot] of [[1.4, -3.3, 1.0, 0.5, 0.9], [2.3, -0.2, 1.15, 0.8, 2.6], [1.2, 3.1, 0.95, 0.55, 4.1]]) {
-      const [x, z] = at(u, v);
-      stone(x, z, { s: sz, sy: 2.0, sz: 0.9, top: p.level + up, rot, g: 0.5, warm: 0 });
-    }
-    for (const [u, v, sz, sy, rot, tilt] of [[-0.6, -6.8, 1.6, 0.75, 1.3, 0.15], [2.4, -7.3, 0.7, 0.85, 3.0, 0.3], [0.2, 6.6, 1.25, 0.8, 5.1, 0.2],
-      [3.4, 6.4, 0.6, 0.9, 0.8, 0.25], [5.9, -5.2, 0.9, 0.7, 2.0, 0.2]]) {
-      const [x, z] = at(u, v);
-      if (waterAt(x, z) > -1e8 || heightAt(x, z) > p.level + 1.2) continue;
-      stone(x, z, { s: sz, sy, rot, tilt });
+    for (const side of [-1, 1]) for (let k = 0; k < 3; k++) {
+      const [x, z] = at(-1 + k * 3 + rnd() * 2, side * (6.8 + rnd() * 3.2 + k * 0.8));
+      group(x, z, 0.7 + rnd() * 0.9, p.level);
     }
     for (const side of [-1, 1]) {
       const x = -p.dx * p.rTop + p.dz * side * 3.3, z = -p.dz * p.rTop - p.dx * side * 3.3;

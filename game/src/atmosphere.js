@@ -204,6 +204,10 @@ export function buildStreams(scene) {
         vec3 shallow = mix(vec3(0.20,0.50,0.54), vec3(0.36,0.68,0.70), n1);
         vec3 deepC = mix(vec3(0.04,0.17,0.22), vec3(0.07,0.26,0.30), n1);
         vec3 c = mix(shallow, deepC, dk);
+        // нарисованная вода: переливы и блики; течёт вместе с ручьём (вдоль потока — по v)
+        vec3 wt = texture2D(uWater, vec2(u*0.55 + 0.13, v*0.085)).rgb;
+        float wl = dot(wt, vec3(0.30,0.59,0.11));
+        c = mix(c, c * (0.62 + 1.1*wl) + (wt - c)*0.18, (1.0 - steep) * 0.9);
         float foam = smoothstep(0.74, 0.9, n2) * (0.35 - dk*0.28) + steep * (0.55 + 0.45*n1);
         // под водопадом вода кипит пеной, ниже по течению пена расходится полосами
         foam += vFoam * smoothstep(0.25 + 0.5*(1.0 - vFoam), 0.9, n1*0.6 + n2*0.5);
@@ -250,7 +254,7 @@ export function buildStreams(scene) {
       open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода уходит в туман
       if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: лента
       segs.push([start, i]);
-      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? -110 : lvl[j], open, half: halfAt(i) - 0.6, src: R[i] > W.SRC_R };
+      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? -110 : lvl[j], open, half: halfAt(i) * 0.74 - 0.2, src: R[i] > W.SRC_R };
       falls.push(f);
       if (open) break;
       // пена ниже места удара струи
@@ -268,10 +272,16 @@ export function buildStreams(scene) {
     const K = 7;
     let len = 0, vi = 0;
     const n = new THREE.Vector3();
-    for (const [a, b] of segs) {
+    for (let si = 0; si < segs.length; si++) {
+      const [a, b] = segs[si];
+      // участок кончается срывом (все, кроме последнего, и «в шахту»)
+      const endsFall = si < segs.length - 1 || open;
       let prev = null;
       for (let k = a; k <= b; k++) {
-        const r = R[k], wmid = lvl[k], half = halfAt(k);
+        // перед срывом русло сужается воронкой: вода собирается в струю, а не обрывается
+        // ровным прямоугольным краем во всю ширину ручья
+        const funnel = endsFall ? 1 - 0.26 * smoothstep(7, 0, (b - k) * 0.5) : 1;
+        const r = R[k], wmid = lvl[k], half = halfAt(k) * funnel;
         normalAt(cx * r, cz * r, n, 0.5);
         const wslope = k + 1 < R.length ? Math.abs(lvl[k] - lvl[k + 1]) / 0.5 : 0;
         const steep = smoothstep(0.2, 0.7, wslope);
