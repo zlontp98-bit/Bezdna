@@ -45,7 +45,8 @@ const store = {
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
 let running = false, fade = 0, falling = false;
-const camPos = new THREE.Vector3(), target = new THREE.Vector3();
+const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
+let camSmDt = -1;
 
 // ---- качество: держим плавность, а не разрешение ----
 const Q = {
@@ -307,12 +308,15 @@ function updateCamera(dt, inp) {
   };
   const N = 18, KMAX = 0.7;
   let want = camDist, kWant = 0;
+  const liftAt = (t) => (need(target.x - fx * t, target.y - fy * t + camLift * t, target.z - fz * t, t) + camLift * t) / t;
   for (let i = 1; i <= N; i++) {
-    const t = (i / N) * camDist;
-    const x = target.x - fx * t, y = target.y - fy * t, z = target.z - fz * t;
-    // во сколько нужно задрать луч, чтобы пройти над преградой в этой точке
-    const k = (need(x, y + camLift * t, z, t) + camLift * t) / t;
-    if (k > KMAX) { want = Math.max(0.35, t - camDist / N - 0.15); break; }
+    const t = (i / N) * camDist, k = liftAt(t);
+    if (k > KMAX) {
+      // граница уточняется делением пополам: расстояние меняется непрерывно, а не шагом пробы (0.36 м)
+      let lo = ((i - 1) / N) * camDist, hi = t;
+      for (let b = 0; b < 6; b++) { const m = (lo + hi) / 2; if (liftAt(m) > KMAX) hi = m; else lo = m; }
+      want = Math.max(0.35, lo - 0.15); break;
+    }
     if (k > kWant) kWant = k;
   }
   // к герою — быстро, но не скачком; обратно — не спеша
@@ -333,7 +337,20 @@ function updateCamera(dt, inp) {
   }
   const gh = groundAt(camPos.x, camPos.z, camPos.y, true) + 0.3;
   if (camPos.y < gh) camPos.y = gh;
-  camera.position.copy(camPos);
+  // Лёгкий фильтр положения (≈35 мс): гасит мелкую дрожь от граней скалы под камерой, но не
+  // запаздывает заметно за пальцем. Если сглаженная точка оказалась бы в камне или ниже земли —
+  // берём точную. При первом кадре и после телепорта фильтр сбрасывается.
+  if (camSm.distanceToSquared(camPos) > 100 || camSmDt < 0) camSm.copy(camPos);
+  else {
+    const k = 1 - Math.exp(-dt * 32);
+    _cs.copy(camSm).lerp(camPos, k);
+    // если сглаженная точка в камне — подтягиваем к точной ступенями (0.5, 0.8, 1), а не скачком
+    const ok = () => need(_cs.x, _cs.y, _cs.z, camCur) <= 0 && _cs.y > groundAt(_cs.x, _cs.z, _cs.y, true) + 0.3;
+    if (!ok()) { _cs.copy(camSm).lerp(camPos, 0.55); if (!ok()) { _cs.copy(camSm).lerp(camPos, 0.85); if (!ok()) _cs.copy(camPos); } }
+    camSm.copy(_cs);
+  }
+  camSmDt = 0; // первый кадр прошёл — дальше фильтруем
+  camera.position.copy(camSm);
   camera.lookAt(target);
 }
 
@@ -539,7 +556,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

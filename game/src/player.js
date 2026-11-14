@@ -410,12 +410,14 @@ export class Player {
       // скольжение вниз по той самой стене, на которую только что залезли. Отступаем
       // от края вглубь уступа и на секунду отключаем скольжение.
       if (hl > 1e-3) {
-        const ix = -n.x / hl, iz = -n.z / hl;
-        for (let d = 0.1; d <= 0.7; d += 0.1) {
-          const qx = p.x + ix * d, qz = p.z + iz * d, h = this.G(qx, qz);
-          if (h - p.y < -0.15 || h - p.y > 0.45) break;
+        const ix = -n.x / hl, iz = -n.z / hl, ox = p.x, oy = p.y, oz = p.z;
+        for (let d = 0.1; d <= 0.45; d += 0.1) {
+          const qx = p.x + ix * 0.1, qz = p.z + iz * 0.1, h = this.G(qx, qz);
+          if (h - p.y < -0.15 || h - p.y > 0.35) break;
           p.x = qx; p.z = qz; p.y = h;
         }
+        // физика уже на новом месте, а картинка догоняет за ~0.15 с — без «телепорта»
+        this.vOff.x += ox - p.x; this.vOff.y += oy - p.y; this.vOff.z += oz - p.z;
       }
       this.slideGrace = 1.0; this.sliding = false;
       return;
@@ -432,7 +434,8 @@ export class Player {
     p.x += mvx * CLIMB * dt; p.z += mvz * CLIMB * dt;
     this.collide();
     p.y = this.G(p.x, p.z);
-    this.facing = Math.atan2(ux, uz);
+    // лицом к стене: поворачиваемся плавно (нормаль на гранях скалы чуть «дрожит»)
+    { let d = Math.atan2(ux, uz) - this.facing; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; this.facing += d * Math.min(1, dt * 8); }
     this.climbLean = Math.asin(Math.min(1, n.y));
     this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
     this.climbAmt = amt;
@@ -619,7 +622,7 @@ export class Player {
       let d = want - this.facing;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
-      this.facing += d * Math.min(1, dt * 12);
+      this.facing += d * Math.min(1, dt * (this.climbing ? 7 : 9));
     }
     const m = this.m, run = Math.min(1, this.speed / RUN), mv = Math.min(1, this.speed / 1.5);
     const fast = Math.max(0, Math.min(1, (this.speed - WALK) / (RUN - WALK)));
