@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { W, heightAt, pitR, rockMat } from './terrain.js';
-import { addMeshTop, solidsNear, groundAt, lastSolid } from './solids.js';
+import { addMeshTop, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
 import { STACKS, PILLARS } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { part, merge, T, propMaterial } from './flora.js';
@@ -22,6 +22,7 @@ const LANE = 4.0;                   // «дорожка» героя: расст
 const FLOOR = -(W.LOW + W.DEEP);    // дно шахты
 export const DESCENT = { spines: [], lobes: [], links: [], stats: {}, ready: false };
 export const DBG = {};
+const PICKED = [2, 6, 1];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
 
 const rwAt = (th) => pitR(Math.cos(th) * W.PIT, Math.sin(th) * W.PIT);
 const toWorld = (s, u, sp) => {
@@ -39,7 +40,22 @@ function makeSpine(rnd, ringY) {
   let S = 0, Y = ringY, tm = 0, last = '', cs = 0;   // cs — наклон поверхности у конца пройденного куска
   const lobe = (o) => { lobes.push({ T: 5 + rnd() * 4, n: 3 + rnd() * 1.4, bump: 0.32, arch: 0, gu: 0, gs: 0, tm, ...o }); return lobes[lobes.length - 1]; };
   const link = (kind, wps) => links.push({ kind, wps, tm });
-  const wide = (L, gs, extra = {}) => { const l = lobe({ s0: S - 3, s1: S + L + 3, u0: -2.5, u1: 8.5 + rnd() * 2.5, sRef: S, yRef: Y, gs, gs0: cs, ...extra }); cs = gs; return l; };
+  const wide = (L, gs, extra = {}) => {
+    const l = lobe({ s0: S - 3, s1: S + L + 3, u0: -2.5, u1: 9 + rnd() * 3.5, sRef: S, yRef: Y, gs, gs0: cs, bump: 0.3 + rnd() * 0.5, ...extra });
+    const cs1 = cs; cs = gs;
+    // завал: россыпь валунов по поверхности — обходить или перелезать
+    if (!extra.noRubble && L > 18 && rnd() < 0.4) {
+      const n = 4 + Math.floor(rnd() * 5), placed = [];
+      for (let k = 0; k < n; k++) {
+        const sc = S + 3 + rnd() * (L - 6), u = 2.6 + rnd() * 5.2, a = 0.8 + rnd() * 0.8, b = 0.8 + rnd() * 0.8;
+        if (placed.some((q) => Math.hypot(q[0] - sc, q[1] - u) < q[2] + a + 1.1)) continue;
+        placed.push([sc, u, a]);
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 0.5 + rnd() * 1.1, gs: 0, gs0: 0, T: 1.8, n: 2.3, bump: 0.08, rubble: true });
+      }
+    }
+    return l;
+  };
+  const yAt = (s0, gs0) => Y + gs0 * (s0 - S);
 
   // вход: ровная площадка вровень с нижним уступом
   lobe({ s0: -3, s1: 11, u0: -2.5, u1: 9.5, sRef: 0, yRef: ringY - 0.05, gs: 0, bump: 0.1, T: 6 });
@@ -47,10 +63,10 @@ function makeSpine(rnd, ringY) {
   S = 10; Y = ringY - 0.05;
 
   const TEMPL = [
-    ['wide', 28], ['passage', 10], ['climb', 6], ['wall', 10], ['cliff', 16], ['jump', 8], ['bridge', 9], ['drop', 6], ['slide', 7],
+    ['wide', 28], ['passage', 10], ['climb', 6], ['wall', 10], ['cliff', 16], ['jump', 8], ['bridge', 9], ['drop', 6], ['slide', 7], ['stones', 9], ['fork', 10],
   ];
   const tot = TEMPL.reduce((a, t) => a + t[1], 0);
-  const need = ['cliff', 'wall', 'passage', 'cliff', 'climb', 'slide', 'cliff', 'bridge', 'wall', 'cliff', 'passage', 'jump', 'drop', 'cliff'];
+  const need = ['cliff', 'fork', 'wall', 'stones', 'passage', 'cliff', 'fork', 'climb', 'slide', 'cliff', 'stones', 'bridge', 'wall', 'fork', 'cliff', 'passage', 'jump', 'drop', 'cliff'];
   for (let guard = 0; guard < 90 && Y > FLOOR + 14; guard++) {
     tm++;
     let q = rnd() * tot, kind = 'wide';
@@ -111,6 +127,58 @@ function makeSpine(rnd, ringY) {
       cs = gs2;
       link('cliff', [[S - 3, LANE, Y - cs0 * 3], [S + Lt - 1.6, LANE, Y], [s2 + 5, LANE, Y2 + gs2 * 5]]);
       S = s2 + L2; Y = Y2 + gs2 * L2;
+    } else if (kind === 'stones') {
+      // россыпь маленьких камней над пропастью: прыжки с камня на камень
+      const n = 5 + Math.floor(rnd() * 3), wps = [[S - 3, LANE, Y - cs0 * 3]];
+      let sc = S + 3, yy = Y, uPrev = LANE, aPrev = 0;
+      for (let i = 0; i < n; i++) {
+        const a = 1.0 + rnd() * 0.6, b = 1.0 + rnd() * 0.6;
+        sc += aPrev + a + (i === 0 ? 1.7 + rnd() * 0.7 : 1.5 + rnd() * 1.0);
+        const u = Math.max(2.8, Math.min(6.8, uPrev + (rnd() - 0.5) * 3.4));
+        yy += (rnd() - 0.55) * 0.9;
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: yy, gs: 0, gs0: 0, T: 2.2, n: 2.4, bump: 0.05, stone: true });
+        wps.push([sc, u, yy]); uPrev = u; aPrev = a;
+      }
+      S = sc + aPrev + 2.0 + 3; Y = yy - 0.3; cs = 0;
+      const L = 14 + rnd() * 8, gsN = -(0.08 + rnd() * 0.16);
+      wide(L, gsN);
+      wps.push([S + 2.5, LANE, Y + gsN * 2.5]);
+      link('stones', wps);
+      S += L; Y += gsN * L;
+    } else if (kind === 'fork') {
+      // развилка: внизу широкая глыба, а над ней — «верхняя дорога»: на башню (лезть), по камням, и обратно вниз
+      // (или тупик с кристаллами). Две дороги расходятся и сходятся; по верхней — паркур и лазание.
+      const dead = rnd() < 0.4, Lf = 26 + rnd() * 10, gs = -(0.06 + rnd() * 0.14), H = 6.5 + rnd() * 2.5;
+      const Sm = S, Ym = Y, mainY = (s2) => Ym + gs * (s2 - Sm);
+      const startWp = [S - 3, LANE, Y - cs0 * 3];
+      wide(Lf, gs, { noRubble: true });
+      const tower = (sc, yTop) => lobe({ s0: sc - 2.0, s1: sc + 2.0, u0: 5.2, u1: 8.6, sRef: sc, yRef: yTop, gs: 0, gs0: 0, T: (H + 3.5) / 0.8, n: 2.4, bump: 0.05, tower: true });
+      const sA = Sm + 5.5;
+      tower(sA, mainY(sA) + H);
+      const wps = [startWp, [sA - 1, LANE, mainY(sA - 1)], [sA, 6.9, mainY(sA) + H]];
+      let sc = sA + 2.0, uPrev = 6.9, aPrev = 0;
+      const sEnd = Sm + Lf - 6;
+      for (let guard = 0; guard < 8; guard++) {
+        const a = 1.0 + rnd() * 0.5, b = 1.0 + rnd() * 0.4, nextC = sc + aPrev + a + 1.6 + rnd() * 0.9;
+        if (nextC + a + 4 > sEnd) break;
+        sc = nextC;
+        const u = Math.max(5.0, Math.min(7.6, uPrev + (rnd() - 0.5) * 2.4)), yy = mainY(sc) + H + (rnd() - 0.5) * 0.8;
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: yy, gs: 0, gs0: 0, T: 2.2, n: 2.4, bump: 0.05, stone: true });
+        wps.push([sc, u, yy]); uPrev = u; aPrev = a;
+      }
+      const sB = sc + aPrev + 2.0 + 2.2 + rnd() * 0.5;
+      if (dead) {
+        lobe({ s0: sB - 2.6, s1: sB + 2.6, u0: 4.8, u1: 9.4, sRef: sB, yRef: mainY(sB) + H, gs: 0, gs0: 0, T: 3, n: 2.8, bump: 0.1, view: true });
+        wps.push([sB, 7.0, mainY(sB) + H]);
+        link('dead', wps);
+      } else {
+        tower(sB, mainY(sB) + H);
+        wps.push([sB, 6.9, mainY(sB) + H], [sB, LANE, mainY(sB)]);
+        link('fork', wps);
+      }
+      // главная дорога внизу — по глыбе
+      link('wide', [[S - 3, LANE, Y - cs0 * 3], [S + Lf * 0.5, LANE, mainY(S + Lf * 0.5)], [S + Lf, LANE, mainY(S + Lf)]]);
+      S += Lf; Y = mainY(S);
     } else if (kind === 'jump' || kind === 'drop') {
       const gap = kind === 'jump' ? 2.6 + rnd() * 0.8 : 1.6 + rnd() * 1.0, drop = kind === 'jump' ? 0.3 + rnd() * 2.4 : 4 + rnd() * 3.5;
       const s0 = S + 3 + gap, Y1 = Y - drop, L = 12 + rnd() * 8, gs = -(0.05 + rnd() * 0.15);
@@ -209,7 +277,7 @@ function lobeMesh(l, sp, out, rnd) {
   // край виден над пропастью только если не вдавлен в стенку: для столкновений нужен весь верх
   const minTop = Math.min(...T0[2].map((p) => p[1]));
   const solid = addMeshTop(new Float32Array(topTris), 0.3, { slope: true, climb: true, under: minTop - l.T * 0.8 });
-  l.solid = solid;
+  l.solid = solid; solid.rub = !!l.rubble;
   // габариты для проверок пересечений
   let rad = 0; for (const p of T0[2]) rad = Math.max(rad, Math.hypot(p[0] - C0[0], p[2] - C0[2]));
   l.cx = C0[0]; l.cz = C0[2]; l.rad = rad; l.yTop = Math.max(...T0[2].map((p) => p[1])) + 1; l.yBot = AP[1];
@@ -230,7 +298,7 @@ function roughBounds(lobes, sp) {
     const sc = (l.s0 + l.s1) / 2, uc = (l.u0 + l.u1) / 2, a = (l.s1 - l.s0) / 2, b = (l.u1 - l.u0) / 2;
     const [cx, cz] = toWorld(sc, Math.max(uc, 3), sp);
     const yMid = l.yRef + l.gs * (sc - l.sRef);
-    return { cx, cz, rad: Math.max(a, 2) * 1.0, uVis: Math.max(l.u1 - 1.6, 0), yTop: yMid + Math.abs(l.gs) * a + 1.5, yBot: yMid - Math.abs(l.gs) * a - l.T * 1.4, l, sp, sc, uc, a, b };
+    return { cx, cz, rad: Math.max(a, 2) * 1.0, uVis: Math.max(l.u1 - 1.6, 0), yTop: yMid + Math.abs(l.gs) * a + 1.5, yBot: yMid - Math.abs(l.gs) * a - l.T * 1.6 - 1, l, sp, sc, uc, a, b };
   });
 }
 
@@ -276,6 +344,7 @@ function conflictCount(spines, obs) {
 }
 
 export function buildDescent(scene) {
+  const t0 = Date.now();
   const obs = obstacles();
   // входы: ровные места нижнего уступа
   const ringAt = (th) => {
@@ -283,49 +352,88 @@ export function buildDescent(scene) {
     const flat = [2.5, 4, 6].every((d) => Math.abs(heightAt(c * (rw + d), s * (rw + d)) - y) < 1.2);
     return flat && !solidsNear(c * (rw + 3.5), s * (rw + 3.5), 3).length ? y : null;
   };
-  // кандидатов — по кругу углов и семенам; берём лучший по числу пересечений (dev: window.__descPick — n-й по счёту)
-  const cands = [];
-  for (let k = 0; k < 8; k++) {
-    for (let a = 0; a < TAU; a += 0.35) {
-      const yA = ringAt(a), bAng = a + Math.PI + (hash(k, 3) - 0.5) * 0.6, yB = ringAt(bAng);
-      if (yA === null || yB === null) continue;
-      const dir = hash(k, 7) < 0.5 ? 1 : -1;
-      const rnd = mulberry32(SEED + 9001 + k * 977 + Math.floor(a * 10));
-      const spines = [{ th0: a, dir, plan: makeSpine(rnd, yA) }, { th0: bAng, dir, plan: makeSpine(rnd, yB) }];
-      const c = conflictCount(spines, obs);
-      cands.push({ spines, c, k, a, score: c * 100 - spines.reduce((q, s2) => q + s2.plan.lobes.length, 0) * 0.2 });
-    }
-  }
-  cands.sort((p, q) => p.score - q.score);
-  // Строим кандидата по-настоящему и проверяем пути героя: нигде над дорожкой не должно быть чужой скалы
-  // (острова, столбы, другие витки). Не прошёл — гасим его плиты и берём следующего.
-  const pick = (typeof window !== 'undefined' && window.__descPick) || 0;
-  let best = null, out = null, tried = 0;
+  // Кандидат раскладки: число маршрутов, семя, сдвиг угла. Строим по-настоящему и проверяем пути героя:
+  // нигде на дорожке не должно быть чужой скалы (острова, столбы, другие витки и маршруты).
+  const owner = new Map();
   const blocked = (cand) => {
     let bad = 0;
-    cand.spines.forEach((sp) => {
+    cand.spines.forEach((sp, si) => {
       for (const lk of sp.plan.links) {
-        if (!['wide', 'passage', 'arch', 'bridge', 'entry'].includes(lk.kind)) continue;
+        // на всём пути (ноги, торс, голова) не должно быть чужой скалы — другого витка или маршрута
+        {
+          let foreign = false;
+          for (let q = 0; q + 1 < lk.wps.length && !foreign; q++) {
+            const A = lk.wps[q], B = lk.wps[q + 1], n = Math.max(1, Math.ceil(Math.abs(B[0] - A[0])));
+            for (let k = 0; k <= n && !foreign; k++) {
+              const f = k / n, [x, z] = toWorld(A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f, sp), y = A[2] + (B[2] - A[2]) * f;
+              for (const dy of [0.3, 1.0, 1.8]) {
+                const rk = rockAt(x, z, y + dy), ow = rk && owner.get(rk);
+                if (rk && !rk.rub && ow && (ow.si !== si || Math.abs(ow.tm - lk.tm) > 1)) { foreign = ow.si + ':' + ow.tm; break; }
+              }
+            }
+          }
+          if (foreign) { bad++; (DBG.bk = DBG.bk || []).push('sp' + si + ' ' + lk.kind + ':' + lk.tm + ' foreign ' + foreign); continue; }
+        }
+        if (!['wide', 'passage', 'arch', 'bridge', 'entry'].includes(lk.kind)) {
+          // у остальных (лазание, камни…) путь не по прямой: смотрим только концы
+          for (const w of [lk.wps[0], lk.wps[lk.wps.length - 1]]) {
+            const [x, z] = toWorld(w[0], w[1], sp);
+            if (groundAt(x, z, w[2] + 0.4) > w[2] + 2.3) { bad++; break; }
+            if (w === lk.wps[0]) { const rk = rockAt(x, z, w[2] + 0.9); if (rk && !rk.rub) { bad++; break; } }
+          }
+          continue;
+        }
+        let gPrev = null;
         for (let q = 0; q + 1 < lk.wps.length; q++) {
           const A = lk.wps[q], B = lk.wps[q + 1], d = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1;
           for (let t = 0; t <= d; t += 1.0) {
             const f = t / d, [x, z] = toWorld(A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f, sp), y = A[2] + (B[2] - A[2]) * f;
             const g = groundAt(x, z, y + 0.4);
-            if (g > y + 1.1) { bad++; { let who = '?'; cand.spines.forEach((sp2, si2) => sp2.plan.lobes.forEach((l2) => { if (l2.solid === lastSolid) who = 'sp' + si2 + ' tm' + l2.tm + ' T' + l2.T.toFixed(0) + ' y' + l2.yRef.toFixed(0); })); (DBG.bk = DBG.bk || []).push(lk.kind + ':' + lk.tm + ' ' + (g - y).toFixed(1) + '@' + Math.round(y) + ' by ' + who); } break; }
+            // ступенька выше 0.9 м на дорожке (стык двух глыб на разной высоте) — упрёшься в стену
+            if (gPrev !== null && g - gPrev > 1.6 && !(lastSolid && lastSolid.rub)) { bad++; (DBG.bk = DBG.bk || []).push(lk.kind + ':' + lk.tm + ' step@' + Math.round(y)); break; }
+            gPrev = g;
+            if (g > y + 2.3) { bad++; { let who = '?'; cand.spines.forEach((sp2, si2) => sp2.plan.lobes.forEach((l2) => { if (l2.solid === lastSolid) who = 'sp' + si2 + ' tm' + l2.tm + ' T' + l2.T.toFixed(0) + ' y' + l2.yRef.toFixed(0); })); (DBG.bk = DBG.bk || []).push(lk.kind + ':' + lk.tm + ' ' + (g - y).toFixed(1) + '@' + Math.round(y) + ' by ' + who); } break; }
           }
         }
       }
     });
     return bad;
   };
-  for (let ci = pick; ci < cands.length && ci < pick + 40; ci++) {
-    const cand = cands[ci];
-    tried++;
+  const mkCand = (NSP, k, ai) => {
+    const a = ai * 0.3, angs = Array.from({ length: NSP }, (_, i) => a + (i * TAU) / NSP + (i ? (hash(k, 3 + i) - 0.5) * 0.5 : 0)), ys = angs.map(ringAt);
+    if (ys.some((y) => y === null)) return null;
+    const dir = hash(k, 7) < 0.5 ? 1 : -1, rnd = mulberry32(SEED + 9001 + k * 977 + ai * 31);
+    return { NSP, k, ai, spines: angs.map((th0, i) => ({ th0, dir, plan: makeSpine(rnd, ys[i]) })) };
+  };
+  const tryCand = (cand) => {
     const rnd = mulberry32(SEED + 9002), o = { pos: [] };
-    cand.spines.forEach((sp, si) => { for (const l of sp.plan.lobes) { l.si = si; lobeMesh(l, sp, o, rnd); } });
-    const bad = blocked(cand);
-    if (bad === 0 || ci === pick + 39) { best = cand; out = o; best.bad = bad; break; }
-    for (const sp of cand.spines) for (const l of sp.plan.lobes) l.solid.off = true;
+    owner.clear();
+    cand.spines.forEach((sp, si) => { for (const l of sp.plan.lobes) { l.si = si; lobeMesh(l, sp, o, rnd); owner.set(l.solid, { si, tm: l.tm }); } });
+    cand.bad = blocked(cand); cand.out = o;
+    return cand;
+  };
+  const off = (cand) => { for (const sp of cand.spines) for (const l of sp.plan.lobes) l.solid.off = true; };
+  // dev: перебор раскладок (window.__descScan) — какие проходят проверку; удачную запоминаем в PICKED
+  if (typeof window !== 'undefined' && window.__descScan) {
+    const res = [];
+    for (const NSP of [3, 2]) for (let k = 0; k < 14; k++) for (let ai = 0; ai < Math.ceil(TAU / NSP / 0.3); ai++) {
+      const c = mkCand(NSP, k, ai); if (!c) continue;
+      tryCand(c); res.push([NSP, k, ai, c.bad, c.spines.reduce((q, s2) => q + s2.plan.lobes.length, 0)]); off(c);
+    }
+    window.__descScanResult = res;
+    return DESCENT;
+  }
+  let best = null, out = null, tried = 0;
+  const tryList = [];
+  const PK = (typeof window !== 'undefined' && window.__descPicked) || PICKED;
+  if (PK) tryList.push(PK);
+  for (const NSP of [3, 2]) for (let k = 0; k < 6; k++) for (let ai = 0; ai < Math.ceil(TAU / NSP / 0.3); ai++) tryList.push([NSP, k, ai]);
+  for (const [NSP, k, ai] of tryList.slice(0, PK ? 80 : 120)) {
+    const c = mkCand(NSP, k, ai); if (!c) continue;
+    tried++;
+    tryCand(c);
+    if (c.bad === 0) { best = c; out = c.out; best.k = k; best.c = 0; break; }
+    off(c);
   }
   if (!best) return DESCENT;
   const geo = new THREE.BufferGeometry();
@@ -370,7 +478,8 @@ export function buildDescent(scene) {
       links.push({ si, kind: lk.kind, tm: lk.tm, wps: dense.map(([s2, u, y]) => { const [x, z] = toWorld(s2, u, sp); return [x, y, z]; }) });
     }
   });
+  DESCENT.lobes = best.spines.flatMap((sp) => sp.plan.lobes.map((l) => ({ si: l.si, tm: l.tm, cx: l.cx, cz: l.cz, rad: l.rad, yTop: l.yTop, yBot: l.yBot, T: l.T, rubble: !!l.rubble, tower: !!l.tower, solid: l.solid })));
   Object.assign(DESCENT, { spines: best.spines.map((s) => ({ th0: s.th0, dir: s.dir, n: s.plan.lobes.length, endY: s.plan.Y })), links, ready: true,
-    stats: { conflicts: best.c, blocked: best.bad, tried, seed: best.k, lobes: best.spines.reduce((q, s) => q + s.plan.lobes.length, 0), links: links.length, tris: out.pos.length / 9 } });
+    stats: { ms: Date.now() - t0, conflicts: 0, blocked: best.bad, tried, nsp: best.NSP, seed: best.k, lobes: best.spines.reduce((q, s) => q + s.plan.lobes.length, 0), links: links.length, tris: out.pos.length / 9 } });
   return DESCENT;
 }
