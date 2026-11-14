@@ -13,7 +13,7 @@ import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
 import { groundAt } from './solids.js';
 import { Woodcutter } from './chop.js';
-import { World } from './world.js';
+import { World, RULES } from './world.js';
 import { Settlement } from './npc.js';
 import { Pickups } from './pickups.js';
 import { Crafting } from './craft.js';
@@ -417,14 +417,38 @@ function start() {
 $('play').addEventListener('click', start);
 // есть ли что терять: сводка прогресса на главном экране
 function hasProgress() { return inv.count('log') > 0 || town.wallet > 0 || town.state !== 'none' || craft.known.length > 0; }
+// Сводка на главном экране: ресурсы сверху и карточка с ближайшей целью
 function showSave() {
-  const el = $('save'), parts = [];
-  if (town.wallet) parts.push(`✨ ${town.wallet}`);
-  if (inv.count('log')) parts.push(`🪵 ${inv.count('log')}`);
-  if (town.state !== 'none') parts.push(town.state === 'built' ? '🏠 дом' : '🏗️ стройка');
-  if (craft.known.length) parts.push(`📖 ${craft.known.length}`);
-  el.hidden = !parts.length;
-  el.innerHTML = parts.map((t) => `<span>${t}</span>`).join('');
+  const logs = inv.count('log'), st = town.state;
+  const chips = [`✨ ${town.wallet}`, `🪵 ${logs}`, st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка', `📖 ${craft.known.length}`];
+  $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
+  const T = RULES.treasury, cost = RULES.build.house.cost.log;
+  let ico, t, p, k;
+  if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
+  else if (st === 'building') { ico = '🏗️'; t = 'Дом строится'; p = `Осталось ${town.left()} с — заходи посмотреть.`; k = 1 - town.left() / (RULES.build.house.ms / 1000); }
+  else if (town.treasury.logs < T.goal) { ico = '🪙'; t = 'Казна лагеря'; p = `Внесено ${town.treasury.logs} из ${T.goal} 🪵 — дальше «${T.next}».`; k = town.treasury.logs / T.goal; }
+  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Казна собрана. Ищи старые ящики на островках над бездной.'; k = 1; }
+  $('goalIco').textContent = ico; $('goalT').textContent = t; $('goalP').textContent = p;
+  $('goalBar').style.width = Math.round(k * 100) + '%';
+  $('playSub').textContent = hasProgress() ? 'С последнего сохранения' : 'Новое приключение';
+}
+// появление меню: элементы выезжают по очереди, потом включаются «живые» анимации
+function menuEnter() {
+  const m = $('menu');
+  m.classList.remove('enter', 'live'); void m.offsetWidth; m.classList.add('enter');
+  setTimeout(() => { m.classList.remove('enter'); m.classList.add('live'); }, 1300);
+}
+// светлячки над лугом
+{
+  const box = $('ff');
+  for (let i = 0; i < 18; i++) {
+    const e = document.createElement('span');
+    if (i % 4 === 0) e.className = 'c';
+    e.style.left = (8 + Math.random() * 88) + '%'; e.style.top = (25 + Math.random() * 70) + '%';
+    e.style.setProperty('--d', (7 + Math.random() * 8).toFixed(1) + 's'); e.style.setProperty('--t', (-Math.random() * 10).toFixed(1) + 's');
+    const sc = 0.6 + Math.random() * 0.9; e.style.transform = `scale(${sc})`;
+    box.appendChild(e);
+  }
 }
 // Новая игра: стираем всё, что игрок изменил в мире, и строим его заново.
 // Мир строится из зерна, поэтому «чистый» — это тот же мир без следов прошлой игры
@@ -442,6 +466,7 @@ $('tomenu').addEventListener('click', () => {
   $('menu').classList.remove('hide');
   $('playText').textContent = 'Продолжить';
   showSave();
+  menuEnter();
   if (document.exitPointerLock) document.exitPointerLock();
 });
 $('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
@@ -502,6 +527,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     $('play').disabled = false;
     $('playText').textContent = hasProgress() ? 'Продолжить' : 'Играть';
     showSave();
+    menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
     window.__game = { player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
