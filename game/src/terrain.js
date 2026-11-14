@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { fbm, smoothstep, clamp } from './noise.js';
+import { fbm, smoothstep, clamp, hash2 } from './noise.js';
 import { U, mat } from './shaders.js';
 
 const TAU = Math.PI * 2;
@@ -113,38 +113,56 @@ export function shelfAt(th) {
 // A0..A1, L — прямоугольник, где рельеф хранится подробно (CELL м).
 // Высота стены у каждого истока своя (s.H): кромка водопада стоит на уровне гребня хребта
 // за ним, так что вода срывается с самого верха гор, а не из середины скалы.
-export const SRC = { RC: 11.5, POOL: 8, GORGE: 30, A0: -26, A1: 58, L: 76, CELL: 0.7, VH: 1.6, WING: 74 };
+export const SRC = { RC: 11.5, POOL: 8, GORGE: 52, A0: -26, A1: 70, L: 76, CELL: 0.7, VH: 1.6, WING: 110 };
 SRC.NA = Math.floor((SRC.A1 - SRC.A0) / SRC.CELL) + 1;
 SRC.NL = Math.floor((2 * SRC.L) / SRC.CELL) + 1;
 SRC.LR = ((SRC.NL - 1) * SRC.CELL) / 2;
 SRC.AR = SRC.A0 + (SRC.NA - 1) * SRC.CELL;
-export const SOURCES = W.STREAMS.map((tw) => ({ tw, base: 0, H: 100, lipA: 6.5, x: Math.cos(tw) * W.SRC_R, z: Math.sin(tw) * W.SRC_R }));
+export const SOURCES = W.STREAMS.map((tw) => ({ tw, base: 0, H: 100, Hm: 160, lipA: 6.5, x: Math.cos(tw) * W.SRC_R, z: Math.sin(tw) * W.SRC_R }));
 let srcOn = false;
 // дно ущелья: от кромки водопада поднимается в горы ступенями-перекатами
 export function gorgeBed(s, a) {
   const t = Math.max(0, a - s.lipA) / 5, k = Math.floor(t);
   // пологие перекаты: вверх по руслу можно пройти пешком
-  return s.base + s.H - 2.2 + (k + smoothstep(0.55, 1.0, t - k)) * 0.5;
+  return s.base + s.H - 2.2 + (k + smoothstep(0.55, 1.0, t - k)) * 0.8;
 }
 const srcEdge = (x, z) => SRC.RC + fbm(x * 0.22 + 3, z * 0.22, 2) * 1.1;
 // «расстояние» от центра заводи: вниз по течению вытянута, чтобы перейти в русло
 const basinDist = (s, a, l) => Math.hypot((a - s.pc) * (a < s.pc ? 0.55 : 1.3), l);
 function shapeSource(h, x, z, a, l, s) {
-  const { POOL, GORGE, WING } = SRC, H = s.H, base = s.base, al = Math.abs(l);
-  // план: прямая скальная стена поперёк ручья (концы чуть выгнуты к лугу) и полукруглая ниша под водопадом
-  const line = -2 - 0.02 * Math.min(26, Math.max(0, al - 8.5)) ** 2;
+  const { POOL, GORGE, WING } = SRC, H = s.H, Hm = s.Hm, base = s.base, al = Math.abs(l);
+  // План. Передняя линия массива рваная: глыбы шириной ~15 м то выдвинуты к лугу, то отступают
+  // (у самой ниши линия прямая). Посередине — полукруглая ниша под водопадом.
+  const bl = Math.floor((l + 200) / 15);
+  const jag = (hash2(bl, 9, 7) - 0.42) * 14 * smoothstep(13, 19, al);
+  const line = -2 - 0.02 * Math.min(26, Math.max(0, al - 8.5)) ** 2 + jag;
   const dc = Math.hypot(a + 2, l);
   const edge = srcEdge(x, z);
   const inside = Math.max(smoothstep(edge + 0.9, edge - 0.1, dc), smoothstep(0.9, -0.1, a - line + (edge - SRC.RC) * 0.6));
-  // за стеной — плато, к концам стены оно сходит на нет и сливается со склонами
-  // вершина над водопадом сходит склонами-плечами в хребет
-  // стена — не отдельная скала, а отрог хребта: широкие плечи уходят в соседние склоны
-  const side = smoothstep(WING - 2, 22, al) ** 1.15, far = smoothstep(120, 80, a);
-  const top = base + H * side + Math.max(0, a - line) * 0.12 + fbm(x * 0.12 + 5, z * 0.12, 3) * 2.2 * (0.3 + 0.7 * smoothstep(5, 9, al));
+  // Массив: это не отдельная горка, а передний край хребта — широкие плечи уходят в соседние
+  // склоны, а гора за истоком выше самой кромки водопада (Hm > H): вода берётся из расщелины
+  // между огромными глыбами, а не с вершины.
+  const side = smoothstep(WING - 2, 22, al) ** 1.15, far = smoothstep(130, 90, a);
+  const depth = Math.max(0, a - line);
+  // у ниши глыбы доходят до самого верха; по бокам передние глыбы ниже и сходят уступами
+  const bh = 0.5 + 0.5 * hash2(bl, 4, 7);
+  const bk = 1 - (1 - bh) * smoothstep(24, 34, al) * (1 - smoothstep(14, 80, depth));
+  let top = base + Hm * side * bk + depth * 0.1 + fbm(x * 0.12 + 5, z * 0.12, 3) * 2.2 * (0.3 + 0.7 * smoothstep(5, 9, al));
+  // грани и швы между глыбами (те же, что у хребта)
+  if (depth > 0) top += blocks(x, z).h * smoothstep(0, 25, depth) * smoothstep(WING, WING - 30, al) * 0.85;
+  // Фасад — не отвесная стена, а гигантская лестница уступов: пласты высотой 20–34 м с полками
+  // 5–12 м, у каждой глыбы свои. Рядом с нишей (она обрамляет воду) стены остаются высокими.
+  if (depth > 0) {
+    const sw = smoothstep(15, 23, al), hh = 20 + 14 * hash2(bl, 11, 7), tread = 5 + 7 * hash2(bl, 12, 7);
+    const t = depth / tread + hash2(bl, 13, 7), k = Math.floor(t), f = t - k;
+    const front = base + hh * (k + smoothstep(0.62, 1.0, f));
+    top = top + (Math.min(top, front) - top) * sw;
+  }
   let out = h + Math.max(0, top - h) * smoothstep(WING, WING - 24, al) * far;
-  // русло по плато к кромке водопада
+  // Расщелина: узкая, с почти отвесными стенами, вглубь массива — русло из родника
   if (a > s.lipA - 1.5 && a < GORGE + 6) {
-    const g = gorgeBed(s, a) + Math.max(0, al - 4.2) * 1.1;
+    const w = 3.2 + 1.8 * fbm(a * 0.11 + s.tw * 5, 3.1, 2); // ширина по дну гуляет
+    const g = gorgeBed(s, a) + Math.max(0, al - w) * 4.0;
     out += (Math.min(out, g) - out) * smoothstep(GORGE + 6, GORGE + 1, a);
   }
   // перед стеной: ровная галечная площадка, к лугу и к концам стены — естественный рельеф.
@@ -152,12 +170,22 @@ function shapeSource(h, x, z, a, l, s) {
   let floor = base + (h - base) * Math.max(smoothstep(-12, -24, a), smoothstep(20, 30, al));
   const pd = basinDist(s, a, l);
   floor -= 0.25 * smoothstep(POOL + 4, POOL, pd) + 2.4 * smoothstep(POOL + 0.6, POOL - 4.4, pd);
-  return floor * inside + out * (1 - inside);
+  let res = floor * inside + out * (1 - inside);
+  // Глыбы-контрфорсы по бокам от падающей воды: выдвинуты вперёд и перекрывают её края
+  // с боковых ракурсов — вода видна «в глубине» между скал
+  for (const sd of [-1, 1]) {
+    const lq = l * sd, k = sd > 0 ? 1 : 0.72;
+    for (const [a0, l0, wa, wl, hf] of [[-6.2, 14.2, 3.5, 3.4, 0.46], [-2.6, 19.8, 3.1, 2.8, 0.78]]) {
+      const w = smoothstep(wa + 1.0, wa, Math.abs(a - a0)) * smoothstep(wl + 1.0, wl, Math.abs(lq - l0));
+      if (w > 0) res += Math.max(0, base + H * hf * k + (a - a0) * 0.25 + (lq - l0) * 0.2 - res) * w;
+    }
+  }
+  return res;
 }
 function applySources(h, x, z, r, th) {
   if (!srcOn) return h;
   const a = r - W.SRC_R;
-  if (a < SRC.A0 - 10 || a > 122) return h;
+  if (a < SRC.A0 - 10 || a > 136) return h;
   for (const s of SOURCES) {
     const l = angDiff(th, s.tw) * r;
     if (Math.abs(l) < SRC.WING + 4) h = shapeSource(h, x, z, a, l, s);
@@ -176,6 +204,39 @@ function terraced(M, x, z) {
   const t = M / st + off, k = Math.floor(t), f = t - k;
   const Mt = st * (k + 0.1 * f + 0.9 * smoothstep(0.48, 0.86, f) - off);
   return M + (Mt - M) * smoothstep(4, 22, M) * 0.92;
+}
+
+// ---- крупные глыбы ----
+// Хребет и массив у истока разбиты на огромные неправильные глыбы (ячейки ~70 м): у каждой
+// свой наклон верха и своя высота, как у сколотых плит; между глыбами — глубокие швы.
+// Те же ячейки отдают шейдеру тёмный шов и оттенок каждой глыбы (атрибут вершины aB).
+const BLK = { cell: 70 };
+const _b = { h: 0, crease: 0, tint: 0 };
+function blocks(x, z) {
+  const X = x / BLK.cell, Z = z / BLK.cell, ix = Math.floor(X), iz = Math.floor(Z);
+  let f1 = 9, f2 = 9, bi = 0, bj = 0, bx = 0, bz = 0;
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+    const px = ix + i + 0.12 + 0.76 * hash2(ix + i, iz + j, 1), pz = iz + j + 0.12 + 0.76 * hash2(ix + i, iz + j, 2);
+    const d = Math.hypot(px - X, pz - Z);
+    if (d < f1) { f2 = f1; f1 = d; bi = ix + i; bj = iz + j; bx = px; bz = pz; } else if (d < f2) f2 = d;
+  }
+  // расстояние до шва между глыбами, м (разность расстояний до двух ближайших центров — половина)
+  const edge = (f2 - f1) * BLK.cell * 0.5;
+  const r = hash2(bi, bj, 3), sx = (hash2(bi, bj, 4) - 0.5) * 0.7, sz = (hash2(bi, bj, 5) - 0.5) * 0.7;
+  _b.h = (r - 0.5) * 38 + sx * (X - bx) * BLK.cell + sz * (Z - bz) * BLK.cell // плоская наклонная грань
+    - 16 * (1 - smoothstep(0, 6, edge));                                        // шов
+  _b.crease = 1 - smoothstep(0.5, 6.5, edge);
+  _b.tint = r - 0.5;
+  return _b;
+}
+// сила глыбистости: у подножия хребта нет, ближе к краю мира — полная
+const blockW = (r) => smoothstep(W.MEADOW - 22, W.MEADOW + 28, r);
+// для шейдера: шов и оттенок глыбы в точке (атрибут вершины)
+function blockAttr(x, z, out, o) {
+  const r = Math.hypot(x, z), w = blockW(r);
+  if (w < 0.01) { out[o] = 0; out[o + 1] = 0; return; }
+  blocks(x, z);
+  out[o] = _b.crease * w; out[o + 1] = _b.tint * w;
 }
 
 // Аналитическая высота — источник правды, из неё строится сетка
@@ -198,7 +259,11 @@ function rawHeight(x, z) {
       const d = Math.hypot(x - pk.x, z - pk.z) / pk.w;
       mh += pk.h * Math.max(0, 1 - d) ** 1.6 * (0.8 + 0.2 * r2);
     }
-    m += terraced(mt * mt * mh, x, z);
+    // хребет огромный: ×1.45, пласты-уступы и поверх них — глыбы со швами
+    let Mv = terraced(mt * mt * mh * 1.45, x, z);
+    const bw = blockW(r) * smoothstep(10, 60, Mv);
+    if (bw > 0.001) Mv += blocks(x, z).h * bw;
+    m += Mv;
   }
   m += smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
   // утёс-смотровая: столовая скала с отвесными боками
@@ -639,7 +704,9 @@ function setupSources() {
     let ridge = 0;
     for (let r = W.SRC_R + 20; r < W.OUTER - 10; r += 4)
       for (let l = -24; l <= 24; l += 8) ridge = Math.max(ridge, rawHeight(Math.cos(s.tw + l / r) * r, Math.sin(s.tw + l / r) * r));
-    s.H = clamp(ridge - s.base - 6, 80, 108);
+    // кромка водопада — на ~60% высоты массива: над ней ещё порядочно скалы, а родник в глубине
+    s.H = clamp(ridge * 0.62 - s.base, 95, 135);
+    s.Hm = clamp(ridge * 1.04 - s.base, s.H * 1.4, s.H * 2.0);
     // кромка: внешний край верха скалы на оси ручья
     let a = 0;
     for (; a < 14; a += 0.05) {
@@ -695,7 +762,7 @@ function buildPatches() {
 }
 function buildPatchMesh(scene, material, P) {
   const { NA, NL, CELL, A0, LR } = SRC, n = new THREE.Vector3();
-  const pos = new Float32Array(NA * NL * 3), nor = new Float32Array(NA * NL * 3), idx = [];
+  const pos = new Float32Array(NA * NL * 3), nor = new Float32Array(NA * NL * 3), bb = new Float32Array(NA * NL * 2), idx = [];
   for (let i = 0; i < NA; i++) {
     const r = W.SRC_R + A0 + i * CELL;
     for (let j = 0; j < NL; j++) {
@@ -704,6 +771,7 @@ function buildPatchMesh(scene, material, P) {
       pos[k] = x; pos[k + 1] = P.F[i * NL + j] + 0.03; pos[k + 2] = z;
       normalAt(x, z, n, 0.35);
       nor[k] = n.x; nor[k + 1] = n.y; nor[k + 2] = n.z;
+      blockAttr(x, z, bb, (i * NL + j) * 2);
     }
   }
   for (let i = 0; i < NA - 1; i++)
@@ -714,6 +782,7 @@ function buildPatchMesh(scene, material, P) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('aB', new THREE.BufferAttribute(bb, 2));
   g.setIndex(idx);
   const mesh = new THREE.Mesh(g, material);
   mesh.matrixAutoUpdate = false;
@@ -809,24 +878,27 @@ function buildChannelStrips(scene, material) {
 
 const terrainMat = () => mat({
   vertexShader: /* glsl */ `
+    attribute vec2 aB; varying vec2 vB;
     varying vec3 vW; varying vec3 vN;
     void main(){
-      vW = position; vN = normal;
+      vW = position; vN = normal; vB = aB;
       gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D uHmap, uRockWall, uRockPlain, uGround, uRockMtn, uGrass, uPath;
-    varying vec3 vW; varying vec3 vN;
+    varying vec3 vW; varying vec3 vN; varying vec2 vB;
     float lumOf(vec3 c){ return dot(c, vec3(0.30, 0.59, 0.11)); }
     void main(){
       vec3 n = normalize(vN);
       float camD = distance(vW, cameraPosition);
-      float mtnK = smoothstep(14.0, 34.0, vW.y);
+      float rr = length(vW.xz);
+      float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr));
       float deepK = smoothstep(8.0, 50.0, -vW.y);
       // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
       fn *= sign(fn.y + 1e-5);
-      vec3 ng = normalize(mix(n, fn, 0.4));
+      // в горах грани чуть жёстче; а крупные плоскости глыб и так заданы самой формой
+      vec3 ng = normalize(mix(n, fn, 0.4 + 0.2*mtnK));
       float steepM = smoothstep(0.2, 0.5, 1.0 - ng.y);
       float facet = vnoise(vW.xz*0.035 + 3.0);
       float facet2 = vnoise(vW.xz*0.012 - 5.0);
@@ -841,9 +913,16 @@ const terrainMat = () => mat({
       vec3 rock = mix(tP, tW, steepM);
       // Внешние горы — серый камень с мхом в трещинах (отдельная текстура, плитка 20 м):
       // стены кольца и бездны остаются тёплыми, а хребет вокруг долины — каменный
-      vec3 tM = texture2D(uRockMtn, vW.zy*0.05).rgb * wx + texture2D(uRockMtn, vW.xy*0.05 + 0.31).rgb * (1.0 - wx);
-      tM = mix(texture2D(uRockMtn, vW.xz*0.06 + 0.17).rgb, tM, steepM);
-      tM = mix(vec3(lumOf(tM)), tM, 0.72) * vec3(0.97,0.98,1.03); // серее: меньше розового и охры
+      vec3 tM = texture2D(uRockMtn, vW.zy*0.017).rgb * wx + texture2D(uRockMtn, vW.xy*0.017 + 0.31).rgb * (1.0 - wx);
+      tM = mix(texture2D(uRockMtn, vW.xz*0.024 + 0.17).rgb, tM, steepM);
+      tM = mix(vec3(lumOf(tM)), tM, 0.78) * vec3(0.98,0.98,1.02);
+      // Глыбы: у каждой свой оттенок (серо-бурые, песочные, тёплые), между ними тёмные швы
+      // (vB.x — шов, vB.y — оттенок из ячеек глыб в terrain.js)
+      float bt = vB.y;
+      tM *= 1.0 + bt*0.42;
+      tM = mix(tM, tM * vec3(1.16,1.04,0.84), smoothstep(0.05, 0.4, bt));     // песочные
+      tM = mix(tM, tM * vec3(0.86,0.9,1.0), smoothstep(-0.05, -0.4, bt));      // холодные серые
+      tM *= 1.0 - vB.x * 0.62;
       rock = mix(rock, tM, mtnK);
       // контраст: картинка нарисована мягко, а в игре её надо читать издалека
       rock = pow(rock, vec3(1.3)) * 1.2;
@@ -853,10 +932,10 @@ const terrainMat = () => mat({
       float tang = atan(vW.z, vW.x) * length(vW.xz);
       float strata = vnoise(vec2(tang*0.006, yw*0.11));
       float thin = vnoise(vec2(tang*0.025, yw*0.5));
-      float seam = smoothstep(0.1, 0.0, abs(fract(yw*0.09) - 0.5) - 0.42) * steepM;
-      float jn = vnoise(vec2(tang*0.11 + floor(yw*0.09)*3.7, vW.y*0.004));
+      float seam = smoothstep(0.1, 0.0, abs(fract(yw*0.05) - 0.5) - 0.43) * steepM;
+      float jn = vnoise(vec2(tang*0.07 + floor(yw*0.05)*3.7, vW.y*0.004));
       float joint = smoothstep(0.06, 0.0, abs(jn - 0.5)) * steepM;
-      rock *= (0.84 + 0.3*strata) * (0.94 + 0.12*thin);
+      rock *= (0.88 + 0.24*strata) * (0.97 + 0.06*thin);
       rock *= mix(1.1, 0.8, steepM) * (1.0 - seam*0.2 * (1.0 - mtnK*0.6) - joint*0.14);
       rock *= mix(1.0, 0.9 + 0.2*facet2, mtnK);
       // глубже — холоднее и темнее; высоко и вдали — серее (воздух и камень, а не охра)
@@ -872,7 +951,7 @@ const terrainMat = () => mat({
       float bumpK = smoothstep(0.15, 0.45, steepM) * smoothstep(60.0, 12.0, camD) * 0.12;
       vec3 nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
       // снег — только на самых высоких вершинах и в их складках
-      float snowLine = 92.0 + facet2*16.0 + (1.0 - ng.y)*30.0;
+      float snowLine = 168.0 + facet2*18.0 + (1.0 - ng.y)*30.0; // хребет стал выше — снег только на самых пиках
       float snow = smoothstep(snowLine, snowLine + 10.0, vW.y) * smoothstep(0.45, 0.72, ng.y + (facet - 0.5)*0.25);
 
       // ---- трава ----
@@ -966,8 +1045,9 @@ export function buildTerrain(scene) {
   for (let s = 0; s < SECT; s++) {
     const pos = new Float32Array(ROWS * (per + 1) * 3);
     const nor = new Float32Array(ROWS * (per + 1) * 3);
+    const bb = new Float32Array(ROWS * (per + 1) * 2); // шов и оттенок глыбы
     const idx = [];
-    let p = 0;
+    let p = 0, q = 0;
     for (let ri = 0; ri < ROWS; ri++) {
       const r = radii[ri];
       for (let ci = 0; ci <= per; ci++) {
@@ -977,7 +1057,8 @@ export function buildTerrain(scene) {
         pos[p] = x; pos[p + 1] = MG[ri * COLS + c]; pos[p + 2] = z;
         normalAt(x, z, n, r < W.R + 10 ? 0.45 : 1.5);
         nor[p] = n.x; nor[p + 1] = n.y; nor[p + 2] = n.z;
-        p += 3;
+        if (r > W.MEADOW - 24) blockAttr(x, z, bb, q);
+        p += 3; q += 2;
       }
     }
     for (let ri = 0; ri < ROWS - 1; ri++) {
@@ -989,6 +1070,7 @@ export function buildTerrain(scene) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('aB', new THREE.BufferAttribute(bb, 2));
     g.setIndex(idx);
     const mesh = new THREE.Mesh(g, material);
     mesh.matrixAutoUpdate = false;

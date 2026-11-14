@@ -20,6 +20,8 @@ function hash(ix, iy) {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+export const hash2 = (ix, iy, k = 0) => hash(ix + k * 131, iy - k * 71);
+
 // Плавный value-noise, результат в [-1, 1]
 export function noise(x, y) {
   const ix = Math.floor(x), iy = Math.floor(y);
