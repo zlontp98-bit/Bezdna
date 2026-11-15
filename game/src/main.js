@@ -20,6 +20,7 @@ import { Crafting } from './craft.js';
 import { Miner } from './mine.js';
 import { Chests } from './chest.js';
 import { buildDescent } from './descent.js';
+import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
 
 const $ = (id) => document.getElementById(id);
@@ -46,7 +47,7 @@ const store = {
 
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
-let running = false, fade = 0, falling = false;
+let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
 let camSmDt = -1;
 
@@ -147,6 +148,7 @@ async function build() {
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
+  creative = initCreative({ scene, camera, player, input, hud: $('hud') });
   inv = new Inventory(store);
   bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
   // общий мир: всё, что игроки меняют (пока — в памяти телефона, потом — на сервере)
@@ -437,7 +439,8 @@ function frame(now) {
 
   const inp = input.poll();
   player.held = inv.held ? inv.held.id : null;
-  if (!falling) {
+  if (creative.on) creative.fly(dt, inp, yaw, pitch);
+  else if (!falling) {
     player.update(dt, inp, yaw);
     wood.update(dt, act === 'chop' && inp.chop);
     mine.update(dt, act === 'mine' && inp.chop);
@@ -461,9 +464,10 @@ function frame(now) {
   setCss('fade', 'opacity', fade.toFixed(2));
 
   updateCamera(dt, inp);
+  if (creative.on) creative.camera(yaw, pitch);
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
-  player.m.root.visible = !firstPerson && (camCur > 0.7 || !!debugCam);
+  player.m.root.visible = !creative.on && !firstPerson && (camCur > 0.7 || !!debugCam);
   player.haloPts.visible = player.m.root.visible;
 
   updateOuter(player.pos.x, player.pos.z);
@@ -539,6 +543,7 @@ $('wipe').addEventListener('click', () => {
   location.reload();
 });
 $('tomenu').addEventListener('click', () => {
+  if (creative) creative.toggle(false);
   running = false;
   $('panel').classList.remove('show');
   $('hud').classList.remove('show');
@@ -553,6 +558,7 @@ $('view').addEventListener('click', () => {
   firstPerson = !firstPerson;
   $('view').textContent = firstPerson ? 'Вид: от первого лица' : 'Вид: от третьего лица';
 });
+$('creaBtn').addEventListener('click', () => { if (creative) { $('panel').classList.remove('show'); creative.toggle(true); } });
 $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
 // дальность растительности (деревья, кусты, грибы, камни): близко — легче для телефона
@@ -618,7 +624,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

@@ -27,6 +27,16 @@ function insert(s, rad) {
       (grid.get(k) || grid.set(k, []).get(k)).push(s);
     }
 }
+// убрать объект из сетки совсем (редактор глыб: пересобранная глыба заменяет старую)
+export function removeSolid(s) {
+  s.off = true;
+  const rad = s.rad;
+  for (let cx = Math.floor((s.x - rad) / CELL); cx <= Math.floor((s.x + rad) / CELL); cx++)
+    for (let cz = Math.floor((s.z - rad) / CELL); cz <= Math.floor((s.z + rad) / CELL); cz++) {
+      const l = grid.get(cx + ',' + cz), i = l ? l.indexOf(s) : -1;
+      if (i >= 0) l.splice(i, 1);
+    }
+}
 export function addCyl(x, z, r, top, bottom = -1e9, climb = false, soft = false) {
   insert({ x, z, r, top, bottom, box: false, climb, soft }, r);
 }
