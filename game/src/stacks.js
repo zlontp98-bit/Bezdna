@@ -174,6 +174,8 @@ export function buildStacks(scene) {
     r += 0.6;
     planChain({ ring: true, x: cx * r, z: cz * r, top: heightAt(cx * r, cz * r), w: 0 }, B, rnd);
   }
+  // Цепочки столбов-ступеней убраны: бесполезные столбы только загораживали путь (спуск идёт по скалам и мостам)
+  PILLARS.length = 0; CHAINS.length = 0;
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);
