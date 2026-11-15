@@ -190,13 +190,13 @@ vec3 applyFog(vec3 c, vec3 w){
   // и чем ниже под ногами, тем гуще туман сам по себе
   // Глубина как сплошная завеса — только если смотришь на неё сверху. Когда камера сама глубоко в шахте,
   // всё рядом видно (туман идёт по расстоянию): иначе уступы и плиты спуска исчезали бы в тумане.
-  float camIn = smoothstep(-30.0, -75.0, cameraPosition.y);
-  f = max(f, smoothstep(-55.0, -100.0, w.y) * (1.0 - lakeK*0.92) * (1.0 - camIn*0.97));
+  float camIn = smoothstep(-4.0, -40.0, cameraPosition.y);
+  f = max(f, smoothstep(-55.0, -100.0, w.y) * (1.0 - lakeK*0.92) * (1.0 - smoothstep(-60.0, -100.0, cameraPosition.y)*0.97));
   // в глубине немного голубого света от кристаллов и воды: не чёрный провал
-  float inK = camIn * smoothstep(-30.0, -100.0, w.y) * (1.0 - f);
+  float inK = smoothstep(-6.0, -36.0, w.y) * (1.0 - f) * mix(0.7, 1.0, camIn);
   // скала в шахте почти чёрная (тень от стен, тёмная краска) — подсвечиваем: холодный рассеянный свет от тумана и кристаллов
   float lum = dot(c, vec3(0.33));
-  c = c * (1.0 + (1.15 - 0.6 * smoothstep(0.1, 0.4, lum)) * inK * (1.0 - lakeK)) + vec3(0.05 + 0.02 * (1.0 - lakeK), 0.085 + 0.03 * (1.0 - lakeK), 0.125 + 0.04 * (1.0 - lakeK)) * inK;
+  c = c * (1.0 + (1.9 - 1.1 * smoothstep(0.1, 0.45, lum)) * inK * (1.0 - lakeK)) + vec3(0.075 + 0.02 * (1.0 - lakeK), 0.12 + 0.03 * (1.0 - lakeK), 0.17 + 0.04 * (1.0 - lakeK)) * inK;
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-60.0, -100.0, w.y));
   fc = mix(fc, vec3(0.05, 0.16, 0.21), lakeK * 0.8);
