@@ -712,7 +712,7 @@ export function fieldTop(x, z) {
 
 function buildField(rnd) {
   const B = [], grid = new Map(), GC = 14;
-  const t0 = Date.now(), st = { giants: 0, ledges: 0, slabs: 0, bridges: 0, spires: 0, stones: 0, boulders: 0, fillers: 0 };
+  const t0 = Date.now(), st = { stumps: 0, rubble: 0 };
   const near = (x, z) => {
     const res = [], ix = Math.floor(x / GC), iz = Math.floor(z / GC);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const c = grid.get((ix + i) + ',' + (iz + j)); if (c) res.push(...c); }
@@ -740,141 +740,151 @@ function buildField(rnd) {
     const rv = Array.from({ length: 9 }, () => +rnd().toFixed(4));
     const spec = { x, z, y: o.y, A, B: Bb, ang, n, bump, dome: o.dome ?? 0.5, gs: o.gs || 0, arch: o.arch || 0, seg: o.seg || 12, T, prof, flt: !!o.float, hs: 1, col: true, kind: o.kind, rv };
     const st0 = addStone(spec), l = st0.l;
-    const b = { x, z, a, A, B: Bb, y: o.y + l.dome * 0.8, kind: o.kind, l, i: B.length };
+    const b = { x, z, a, r: Math.max(A, Bb), A, B: Bb, y: o.y + l.dome * 0.8, kind: o.kind, l, i: B.length };
     B.push(b);
     const k = Math.floor(x / GC) + ',' + Math.floor(z / GC);
     (grid.get(k) || grid.set(k, []).get(k)).push(b);
-    st[o.kind]++;
+    st[o.kind] = (st[o.kind] || 0) + 1;
     return b;
   };
-
-  // --- дорога: две ленты вдоль стены, от входа в обе стороны до дальнего берега ---
-  const road = [];                                                    // точки дороги [x, z, y]
-  for (const dir of [1, -1]) {
-    let prev = [FIELD.ex, FIELD.ez, FIELD.ye - 0.3, null, dir];          // от конца дороги вдоль стены
-    for (let a = 0.12; a < 3.0; a += 0.115) {
-      const th = FIELD.th + dir * a, c = Math.cos(th), s = Math.sin(th), k = smoothstep(0.15, 0.8, a);
-      // с той стороны, откуда пришла дорога вдоль стены, её глыбы нависают над завалом: там идём дальше от стены
-      const off = dir === -FIELD.dir ? 15 - 6.5 * smoothstep(0.7, 1.3, a) : 4 + 4.5 * k;
-      const rw = pitR(c * W.PIT, s * W.PIT), r = rw - off + Math.sin(a * 3.1 + dir) * 3.2 * k;
-      const x = c * r, z = s * r;
-      let y = fieldBase(x, z) + 0.5;
-      y = Math.min(prev[2] + 0.4, Math.max(prev[2] - 2.6, y));  // без резких ступеней
-      if (y < SHORE + 0.6) break;
-      road.push([x, z, y, prev, dir]);
-      prev = road[road.length - 1];
-    }
-  }
-  const roadNear = (x, z, rad) => { for (const p of road) if (Math.hypot(p[0] - x, p[1] - z) < rad) return p; return null; };
 
   // сохранённая в редакторе раскладка заменяет случайную
   const saved = loadLayout();
   if (saved) {
     for (const sp of saved) addStone(sp);
-    return { saved: saved.length, roadPts: road.map((p) => [+p[0].toFixed(1), +p[1].toFixed(1), +p[2].toFixed(1), p[4]]), road: road.length, ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
+    return { saved: saved.length, roadPts: [], ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
   }
 
-  // --- 1) гиганты ---
-  const giants = [];
-  for (let tries = 0; tries < 900 && giants.length < 15; tries++) {
-    const r = 15 + Math.sqrt(rnd()) * 38, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
-    const g = fieldBase(x, z);
-    if (g < SHORE + 3 || dEntry(x, z) < 20) continue;
-    const a = 6.5 + rnd() * 4.5, ratio = 0.75 + rnd() * 0.55, y = g + 3 + rnd() * 6;
-    if (!okAt(x, z, a * 1.6, y) || roadNear(x, z, a + 4.5)) continue;
-    if (giants.some((q) => Math.hypot(q.x - x, q.z - z) < 0.95 * (q.a + a) + 3)) continue;
-    const h = a * (0.9 + rnd() * 0.5);
-    giants.push(add(x, z, { kind: 'giants', A: a * ratio, B: a / ratio, y, n: 2.0 + rnd() * 0.5, dome: 1.8 + rnd() * 2.2, bump: 0.3, seg: 18, h,
-      prof: [[h * 0.12, 1.07], [h * 0.3, 1.12], [h * 0.55, 1.08], [h * 0.8, 0.92], [h, 0.7]], foot: 0.6 }));
+  // --- Каньон из гранёных столбов (как на референсе): высокие столбы с ровными верхами разной высоты,
+  // между ними щели 2–6 м, на боках — полки-козырьки, поверх щелей — мосты и плиты-пандусы.
+  const P = [];
+  const quant = (v, q) => Math.round(v / q) * q;
+  const pillar = (x, z, a, top, o = {}) => {
+    const ratio = o.ratio ?? 0.8 + rnd() * 0.45, ang = o.ang ?? rnd() * TAU, tw = 0.96 + rnd() * 0.1;
+    const t = rnd() < 0.4 ? (rnd() - 0.5) * 0.16 : 0;                                  // часть верхов чуть скошена
+    const b = add(x, z, { kind: o.kind || 'pillars', A: a * ratio, B: a / ratio, ang, y: top, n: o.n ?? 3.7 + rnd() * 1.3, dome: o.dome ?? 0.15 + rnd() * 0.3, bump: 0.05 + rnd() * 0.04,
+      gs: o.gs ?? t, seg: a > 5 ? 20 : 16, h: 11, prof: [[3, 1.0 * tw], [7, 1.0 / tw], [11, 0.99]], foot: 0.98 });
+    b.top = top; b.R = b.r; P.push(b);
+    return b;
+  };
+  const pitAt = (x, z) => pitR(x, z);
+  // площадка у входа: к ней подходит дорога вдоль стены
+  {
+    const dx = -FIELD.ex, dz = -FIELD.ez, dl = Math.hypot(dx, dz);
+    pillar(FIELD.ex + dx / dl * 5.5, FIELD.ez + dz / dl * 5.5, 5.2, FIELD.ye - 0.3, { ratio: 1, gs: 0, kind: 'entry' });
   }
-  // выступы-полки на боках гигантов: винтом вниз, по ним залезают наверх
-  for (const G of giants) {
-    const n = 2 + Math.floor(rnd() * 3), dirn = rnd() < 0.5 ? 1 : -1;
-    let ang = rnd() * TAU, y = G.l.yRef - 1.5 - rnd();
-    for (let k = 0; k < n; k++) {
-      const ca = Math.cos(ang - G.l.rot), sa = Math.sin(ang - G.l.rot), R = 1 / Math.hypot(ca / G.A, sa / G.B);   // радиус гиганта в эту сторону
-      const A = 2.0 + rnd() * 1.2, Bb = 1.5 + rnd() * 0.7, x = G.x + Math.cos(ang) * (R * 1.06 + Bb * 0.25), z = G.z + Math.sin(ang) * (R * 1.06 + Bb * 0.25);
-      if (okAt(x, z, 1, y) && y > fieldTop(x, z) + 1.2) add(x, z, { kind: 'ledges', A, B: Bb, ang: ang + Math.PI / 2, y, float: 1.3 + rnd() * 0.8, n: 2.6, dome: 0.12, bump: 0.05, seg: 10 });
-      ang += dirn * (0.9 + rnd() * 0.5); y -= 2.0 + rnd() * 1.1;
+  const cand = [];
+  for (let gx = -66; gx <= 66; gx += 10) for (let gz = -66; gz <= 66; gz += 10) cand.push([gx + (rnd() - 0.5) * 7, gz + (rnd() - 0.5) * 7]);
+  for (let i = cand.length - 1; i > 0; i--) { const j2 = Math.floor(rnd() * (i + 1)); [cand[i], cand[j2]] = [cand[j2], cand[i]]; }
+  for (const [x, z] of cand) {
+    const r = Math.hypot(x, z), rw = pitAt(x, z);
+    if (r < 10 || r > rw + 1 || dEntry(x, z) < 9) continue;
+    const a = 3.2 + rnd() * 3.2, ratio = 0.8 + rnd() * 0.45, ang = rnd() * TAU, rr = a * Math.max(ratio, 1 / ratio);
+    if (P.some((q) => Math.hypot(q.x - x, q.z - z) < q.R + rr + 1.8 + rnd() * 1.3)) continue;
+    if (STACKS.some((s) => { const c = colAt(s, FIELD.ye - 30); return Math.hypot(x - c.x, z - c.z) < c.r + a * 0.6 + 2; })) continue;
+    const base = fieldBase(x, z);
+    if (base < -1e8) continue;
+    let top = base + (rnd() - 0.5) * 12 + (rnd() < 0.2 ? 6 + rnd() * 12 : 0);
+    top = Math.max(top, SHORE + 3.5 + rnd() * 8);                          // в озере — выступают из воды
+    top = Math.min(top, FIELD.ye - 0.5 + (dEntry(x, z) > 24 ? 2 : -0.3));
+    top = quant(top, 2) + (rnd() - 0.5) * 0.5;
+    pillar(x, z, a, top, { ratio, ang });
+  }
+  // пеньки между столбами — ступени для прыжков
+  for (let tries = 0; tries < 900 && st.stumps < 34; tries++) {
+    const r = 12 + Math.sqrt(rnd()) * 46, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
+    if (r > pitAt(x, z) - 2) continue;
+    const a = 1.7 + rnd() * 1.5;
+    if (P.some((q) => Math.hypot(q.x - x, q.z - z) < q.R + a + 1.6)) continue;
+    const nb = P.filter((q) => Math.hypot(q.x - x, q.z - z) < q.R + a + 9).sort((m, n2) => m.top - n2.top);
+    if (!nb.length) continue;
+    const top = Math.max(SHORE + 2.5, nb[Math.floor(nb.length / 2)].top - 1.5 - rnd() * 3.5);
+    pillar(x, z, a, top, { kind: 'stumps', n: 3.2, dome: 0.3 });
+  }
+  // верхний уступ на высоких столбах: второй блок меньше, со сдвигом
+  for (const q of [...P]) {
+    if (q.kind !== 'pillars' || q.R < 4.2 || rnd() > 0.4) continue;
+    const ang = rnd() * TAU, off = q.R * 0.25;
+    pillar(q.x + Math.cos(ang) * off, q.z + Math.sin(ang) * off, q.R * (0.5 + rnd() * 0.2), q.top + 2 + rnd() * 2.6, { kind: 'caps', n: 4.2, gs: 0 });
+  }
+  // полки-козырьки на боках: торчат наружу на разной высоте; с уступами по кругу можно залезть
+  for (const q of [...P]) {
+    if (q.kind === 'caps' || q.kind === 'stumps') continue;
+    const cnt = Math.floor(rnd() * 3.2);
+    let ang = rnd() * TAU, y = q.top - 3.5 - rnd() * 3;
+    for (let k = 0; k < cnt; k++) {
+      const Ls = 2.6 + rnd() * 2.2, Wd = 1.9 + rnd() * 1.4, R = q.R * 0.95, cx = q.x + Math.cos(ang) * (R - 1 + Ls), cz = q.z + Math.sin(ang) * (R - 1 + Ls);
+      if (y > SHORE + 3 && Math.hypot(cx, cz) < pitAt(cx, cz) - 1) add(cx, cz, { kind: 'shelves', A: Ls, B: Wd, ang, y, float: 1.3 + rnd() * 0.9, n: 3.0, dome: 0.1, bump: 0.05, seg: 10, gs: (rnd() - 0.5) * 0.12 });
+      ang += (rnd() < 0.5 ? 1 : -1) * (1.3 + rnd() * 1.2); y -= 3 + rnd() * 3.5;
     }
   }
-
-  // --- 2) дорога: наклонные плиты, через ущелья — мосты-арки ---
-  for (const p of road) {
-    const q = p[3];
-    if (!q) continue;
-    const mx = (p[0] + q[0]) / 2, mz = (p[1] + q[1]) / 2, len = Math.hypot(p[0] - q[0], p[1] - q[1]), ang = Math.atan2(p[1] - q[1], p[0] - q[0]);
-    const gul = gullyAt(mx, mz), gs = (p[2] - q[2]) / len, my = (p[2] + q[2]) / 2;
-    if (!okAt(mx, mz, 2, my)) continue;
-    if (gul > 2.2) add(mx, mz, { kind: 'bridges', A: len / 2 + 1.6, B: 1.3 + rnd() * 0.4, ang, y: my - 0.25, gs, float: 1.7 + rnd() * 0.6, arch: 0.5, n: 3.2, dome: 0, bump: 0.06, seg: 10 });
-    else add(mx, mz, { kind: 'slabs', A: len / 2 + 1.3 + rnd() * 0.8, B: 2.3 + rnd() * 1.1, ang: ang + (rnd() - 0.5) * 0.3, y: my, gs, n: 2.6 + rnd() * 0.8, dome: 0.1, bump: 0.1, h: 2.2 });
+  // мосты и плиты-пандусы между соседними столбами
+  for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) {
+    const p1 = P[i], q1 = P[j];
+    if (p1.kind === 'caps' || q1.kind === 'caps') continue;
+    const d = Math.hypot(p1.x - q1.x, p1.z - q1.z), gap = d - p1.R - q1.R, dy = q1.top - p1.top;
+    if (gap < 1.8 || gap > 8 || Math.abs(dy) > 7 || rnd() > 0.42) continue;
+    const ang = Math.atan2(q1.z - p1.z, q1.x - p1.x), mx = (p1.x + q1.x) / 2, mz = (p1.z + q1.z) / 2, lo = Math.min(p1.top, q1.top), hi = Math.max(p1.top, q1.top);
+    if (Math.abs(dy) < 2.2) add(mx, mz, { kind: 'bridges', A: d / 2 - Math.min(p1.R, q1.R) * 0.3, B: 1.4 + rnd() * 0.9, ang, y: lo - 0.35, float: 1.5 + rnd() * 0.7, arch: 0.35, n: 3.4, dome: 0, bump: 0.05, seg: 12 });
+    else add(mx, mz, { kind: 'ramps', A: d / 2 - Math.min(p1.R, q1.R) * 0.3, B: 1.5 + rnd() * 0.8, ang, y: (lo + hi) / 2 - 0.35, gs: (q1.top - p1.top) / d, float: 1.5, n: 3.4, dome: 0, bump: 0.05, seg: 12 });
+  }
+  // обломки у подножий и на берегу
+  for (let tries = 0; tries < 2500 && st.rubble < 70; tries++) {
+    const r = 12 + Math.sqrt(rnd()) * 46, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
+    if (r > pitAt(x, z) - 2) continue;
+    const a = 1.2 + rnd() * 1.8, g = heightAt(x, z);
+    if (P.some((q) => Math.hypot(q.x - x, q.z - z) < q.R * 0.9 + a * 0.6)) continue;
+    if (!P.some((q) => Math.hypot(q.x - x, q.z - z) < q.R + a + 4)) continue;
+    const y = Math.max(g + 0.5 + rnd() * 1.4, SHORE + 0.2 + rnd() * 0.8);
+    add(x, z, { kind: 'rubble', A: a * (0.9 + rnd() * 0.3), B: a * (0.9 + rnd() * 0.3), y, dome: 0.5 + rnd() * 0.6, seg: 9, h: 1.6 + a * 0.4 });
   }
 
-  // --- 3) шпили: узкие высокие столбы ---
-  for (let tries = 0; tries < 400 && st.spires < 16; tries++) {
-    const r = 16 + Math.sqrt(rnd()) * 40, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
-    const g = fieldBase(x, z), a = 1.4 + rnd() * 0.9, y = g + 4.5 + rnd() * 6.5;
-    if (g < SHORE + 1 || dEntry(x, z) < 16 || !okAt(x, z, a, y) || roadNear(x, z, a + 3.4)) continue;
-    if (near(x, z).some((q) => q.kind !== 'ledges' && Math.hypot(q.x - x, q.z - z) < q.a + a + 1.2)) continue;
-    const h = y - g + 1;
-    add(x, z, { kind: 'spires', A: a, B: a * (0.8 + rnd() * 0.4), y, n: 2.2, dome: 0.5, bump: 0.05, seg: 9, h, prof: [[h * 0.2, 1.05], [h * 0.6, 1.1], [h, 1.18]], foot: 1.22 });
+  // --- проверка и достройка: от входа должна быть цепочка прыжков (щель до 3.4 м, подъём до 1.7 м, спуск до 16 м)
+  // вниз до берега. Если цепочка обрывается — ставим пеньки-ступени от самой нижней достигнутой глыбы к ближайшей ниже.
+  const start = B.findIndex((b) => b.kind === 'entry');
+  const bfs = () => {
+    const seen = new Uint8Array(B.length), q = [start];
+    seen[start] = 1;
+    while (q.length) {
+      const b = B[q.pop()];
+      for (const c of near(b.x, b.z)) {
+        if (seen[c.i] || c.kind === 'rubble') continue;
+        const dy = c.y - b.y;
+        if (Math.hypot(c.x - b.x, c.z - b.z) <= b.r + c.r + 3.4 && dy <= 1.7 && dy >= -16) { seen[c.i] = 1; q.push(c.i); }
+      }
+    }
+    return seen;
+  };
+  let seen = bfs(), fixes = 0;
+  for (let it = 0; it < 80; it++) {
+    let low = start;
+    B.forEach((b, i) => { if (seen[i] && b.y < B[low].y) low = i; });
+    if (B[low].y < SHORE + 6.5) break;
+    // ближайшая недостигнутая глыба, которая ниже (по зазору)
+    let best = -1, bg = 1e9;
+    B.forEach((c, i) => {
+      if (seen[i] || c.kind === 'rubble' || c.y > B[low].y + 1) return;
+      const g = Math.hypot(c.x - B[low].x, c.z - B[low].z) - c.r - B[low].r;
+      if (g < bg) { bg = g; best = i; }
+    });
+    const a = B[low];
+    if (best < 0) { // все нижние уже ниже достигнутых: ставим пенёк прямо в сторону центра
+      const l = Math.hypot(a.x, a.z) || 1, rr = 2.2, d = a.r + rr + 2.2;
+      pillar(a.x - a.x / l * d, a.z - a.z / l * d, rr, a.y - 3, { kind: 'stumps', n: 3.2, dome: 0.3 });
+    } else {
+      const c = B[best], l = Math.hypot(c.x - a.x, c.z - a.z) || 1, ux = (c.x - a.x) / l, uz = (c.z - a.z) / l, rr = 2.0 + rnd() * 0.8;
+      let d = a.r + rr + 2.4;
+      if (d >= l - c.r - 2.4 - 0.1) d = Math.max(a.r + 1, l - c.r - rr - 2.4);   // уже рядом: ступень между ними
+      const top = Math.max(SHORE + 1.5, a.y - 12, Math.min(a.y - 4, c.y - 0.6));
+      pillar(a.x + ux * d, a.z + uz * d, rr, top, { kind: 'stumps', n: 3.2, dome: 0.3 });
+    }
+    fixes++; seen = bfs();
   }
-
-  // --- 4) глыбы: круглые, плиты (плоские, наклонные, вытянутые) и блоки (угловатые) ---
-  for (let tries = 0; tries < 30000; tries++) {
-    const r = 14 + Math.sqrt(rnd()) * 47, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
-    const g = fieldTop(x, z);
-    if (g < SHORE) continue;
-    const u = rnd(), a = 2.2 + u * u * 4.6, t = rnd(), dE = dEntry(x, z);
-    let j = (rnd() - 0.45) * 4.0;
-    if (dE < 10) j = Math.min(j, 0.2);
-    let y = g + j;
-    const rp = roadNear(x, z, a * 0.75 + 2.2);
-    if (rp && y > rp[2] - 0.5) continue;                              // дорогу не загораживаем
-    if (!okAt(x, z, a, y)) continue;
-    if (near(x, z).some((q) => q.kind !== 'ledges' && q.kind !== 'bridges' && Math.hypot(q.x - x, q.z - z) < (q.kind === 'giants' ? 0.82 : 0.7) * (q.a + a))) continue;
-    if (t < 0.4) add(x, z, { kind: 'boulders', A: a * (0.85 + rnd() * 0.3), B: a * (0.85 + rnd() * 0.3), y, dome: 0.9 + rnd() * 1.6 });
-    else if (t < 0.75) { const k = 1.3 + rnd() * 0.6; add(x, z, { kind: 'boulders', A: a * k, B: a / k, y, n: 2.4 + rnd() * 0.8, dome: 0.15, gs: (rnd() - 0.5) * 0.5, h: 1.6 + a * 0.3 }); }
-    else add(x, z, { kind: 'boulders', A: a * (0.8 + rnd() * 0.3), B: a * (0.8 + rnd() * 0.3), y, n: 3.2 + rnd() * 0.8, dome: 0.25, gs: (rnd() - 0.5) * 0.2, prof: [[1.2, 1.02], [3, 1.0], [5, 0.9]] });
-  }
-
-  // --- 5) камни через ущелья: цепочки для прыжков ---
-  for (let tries = 0; tries < 1500 && st.stones < 40; tries++) {
-    const r = 18 + Math.sqrt(rnd()) * 40, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
-    if (gullyAt(x, z) < 2.5) continue;
-    const a = 1.1 + rnd() * 0.5, y = fieldBase(x, z) - 0.3 - rnd() * 1.2;
-    if (!okAt(x, z, a, y) || near(x, z).some((q) => Math.hypot(q.x - x, q.z - z) < (q.kind === 'stones' ? q.a + a + 1.2 : q.a * 0.6))) continue;
-    add(x, z, { kind: 'stones', A: a, B: a * (0.85 + rnd() * 0.3), y, n: 2.3, dome: 0.3, bump: 0.05, seg: 9, h: 1.8, foot: 0.85 });
-  }
-
-  // --- 6) дно щелей: где сверху ничего не лежит, кладём глыбы пониже ---
-  for (let x = -61; x <= 61; x += 1.5) for (let z = -61; z <= 61; z += 1.5) {
-    const g = fieldTop(x, z);
-    if (g < SHORE) continue;
-    if (near(x, z).some((q) => !q.l.prof || q.kind === 'ledges' || q.kind === 'bridges' ? false : Math.hypot(q.x - x, q.z - z) < q.a * 0.9)) continue;
-    const a = 2.8 + rnd() * 1.4, y = g - 0.8 - rnd() * 1.4;
-    if (!okAt(x, z, a, y)) continue;
-    add(x, z, { kind: 'fillers', A: a * (0.85 + rnd() * 0.3), B: a * (0.85 + rnd() * 0.3), y, dome: 0.5 + rnd() * 0.6, seg: 9 });
-  }
-
-  // --- проверка: куда можно дойти от входа, если только прыгать (щель до 2 м) и подниматься не выше 1.5 м ---
-  const N = B.length, seen = new Uint8Array(N), q = [];
-  let start = 0, sd = 1e9;
-  B.forEach((b, i) => { const d = dEntry(b.x, b.z); if (d < sd) { sd = d; start = i; } });
-  seen[start] = 1; q.push(start);
   let minY = 1e9, shore = 0;
-  while (q.length) {
-    const b = B[q.pop()];
-    minY = Math.min(minY, b.y);
-    if (b.y < SHORE + 2.5) shore++;
-    for (const c of near(b.x, b.z)) {
-      if (seen[c.i]) continue;
-      const dy = c.y - b.y;
-      if (Math.hypot(c.x - b.x, c.z - b.z) <= b.a + c.a + 2 && dy <= 1.5 && dy >= -9) { seen[c.i] = 1; q.push(c.i); }
-    }
-  }
+  B.forEach((b, i) => { if (!seen[i]) return; minY = Math.min(minY, b.y); if (b.y < SHORE + 6.5) shore++; });
+  const N = B.length;
   const reach = seen.reduce((s2, v) => s2 + v, 0);
-  return { ...st, roadPts: road.map((p) => [+p[0].toFixed(1), +p[1].toFixed(1), +p[2].toFixed(1), p[4]]), road: road.length, reach, total: N, minY: Math.round(minY), shore, ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
+  return { ...st, roadPts: [], fixes, reach, total: N, minY: Math.round(minY), shore, ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
 }
 
 // Нормали со сглаживанием: в общей вершине усредняем только грани, не расходящиеся круче ~55°.

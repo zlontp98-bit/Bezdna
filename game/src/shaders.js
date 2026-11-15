@@ -12,7 +12,7 @@ export const U = {
   uAmbLo: { value: new THREE.Color(0.25, 0.24, 0.31) },
   uFogCol: { value: new THREE.Color(0.80, 0.88, 0.93) },
   uAbyssA: { value: new THREE.Color(0.33, 0.45, 0.53) },
-  uAbyssB: { value: new THREE.Color(0.08, 0.10, 0.20) },
+  uAbyssB: { value: new THREE.Color(0.17, 0.30, 0.38) },
   uFogDen: { value: 0.0021 },
   uTime: { value: 0 },
   uSat: { value: 1 },
@@ -177,7 +177,7 @@ vec3 waterTex(vec2 xz, float speed){
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);
   // чем глубже, тем темнее: свет сверху туда почти не доходит
-  c *= mix(1.0, 0.62, smoothstep(-12.0, -60.0, w.y));
+  c *= mix(1.0, 0.86, smoothstep(-12.0, -60.0, w.y));
   float deep = smoothstep(-18.0, -70.0, w.y);
   // Тёплый свет фонарика: освещает всё вокруг героя метров на семь, но не слепит.
   //  — вплотную к лампочке (сам герой, его голова) свет втрое слабее — герой виден, но не горит;
@@ -208,7 +208,7 @@ vec3 applyFog(vec3 c, vec3 w){
   // В шахте скала в тени почти чёрная: поднимаем только тёмное (до холодного «пола» яркости),
   // светлое и средние тона не трогаем — без пересвета, плавно, как рассеянный свет тумана
   float lum = dot(c, vec3(0.33));
-  vec3 lifted = vec3(0.12, 0.15, 0.20) + c * 0.75;
+  vec3 lifted = vec3(0.17, 0.24, 0.31) + c * 0.8;
   c = mix(c, max(c, lifted), inK * (1.0 - smoothstep(0.08, 0.32, lum)) * (1.0 - lakeK * 0.5));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-60.0, -100.0, w.y));
@@ -218,7 +218,7 @@ vec3 applyFog(vec3 c, vec3 w){
 // Цвет травы: наверху сочная зелень, глубже — бирюза, ещё глубже — сиреневый мох
 vec3 grassCol(vec3 w){
   float t = vnoise(w.xz*0.06)*0.65 + vnoise(w.xz*0.27)*0.35;
-  vec3 g = mix(vec3(0.16,0.33,0.16), vec3(0.36,0.50,0.21), t);
+  vec3 g = mix(vec3(0.18,0.36,0.17), vec3(0.38,0.52,0.22), t);
   float d = -w.y;
   g = mix(g, mix(vec3(0.12,0.38,0.32), vec3(0.26,0.56,0.46), t), smoothstep(8.0, 45.0, d));
   return g;
