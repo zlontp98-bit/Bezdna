@@ -20,6 +20,7 @@ import { Crafting } from './craft.js';
 import { Miner } from './mine.js';
 import { Chests } from './chest.js';
 import { buildDescent } from './descent.js';
+import { initOuter, updateOuter, outerStats } from './outer.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -126,6 +127,7 @@ async function build() {
   const ruins = buildRuins(scene);
   // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
   buildDescent(scene);
+  initOuter(scene);
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   await loadStep(60, 'Разбиваем лагерь…');
@@ -464,6 +466,7 @@ function frame(now) {
   player.m.root.visible = !firstPerson && (camCur > 0.7 || !!debugCam);
   player.haloPts.visible = player.m.root.visible;
 
+  updateOuter(player.pos.x, player.pos.z);
   U.uCenter.value.copy(player.pos);
   U.uPlayer.value.copy(player.pos);
   clouds.rotation.y += dt * 0.003;
@@ -605,7 +608,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
+    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

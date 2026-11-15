@@ -93,6 +93,12 @@ export function pathAt(x, z) {
 }
 
 // отдельные вершины хребта: угол, радиус, высота, ширина
+// Перевал через горное кольцо. th — угол, hw — полуширина дна ущелья, м
+export const PASS = { th: 0.08, hw: 16 };
+export function passK(x, z, r = Math.hypot(x, z)) {
+  const d = Math.abs(angDiff(Math.atan2(z, x), PASS.th)) * r, w = PASS.hw + fbm(x * 0.05 + 3, z * 0.05, 2) * 4;
+  return smoothstep(w + 26, w, d) * smoothstep(W.MEADOW - 30, W.MEADOW + 5, r);
+}
 const PEAKS = [
   [0.35, 300, 85, 55], [1.3, 290, 60, 45], [2.0, 310, 95, 60], [2.9, 285, 55, 40],
   [3.7, 305, 80, 50], [4.6, 295, 70, 48], [5.4, 300, 90, 58], [6.0, 285, 50, 38],
@@ -266,7 +272,9 @@ function rawHeight(x, z) {
     let Mv = terraced(mt * mt * mh * 1.45, x, z);
     const bw = blockW(r) * smoothstep(10, 60, Mv);
     if (bw > 0.001) Mv += blocks(x, z).h * bw;
-    m += Mv;
+    // перевал: ущелье через хребет — дорога из долины в большой мир (он строится кусками, см. outer.js)
+    const pk = passK(x, z, r);
+    m += Mv * (1 - pk) + pk * smoothstep(W.MEADOW, W.OUTER, r) * 9;
   }
   m += smoothstep(W.MEADOW - 30, W.MEADOW + 20, r) * 5;
   // утёс-смотровая: столовая скала с отвесными боками
@@ -361,10 +369,17 @@ const DG = new Float32Array(ROWS * COLS); // глубина русла от кр
 // копия высот для отрисовки: под лентой русла сетка продавлена глубже, чтобы не торчать сквозь неё
 let MG = HG;
 const BAND = 12;
+const OUTER2 = W.OUTER * W.OUTER;
+// за кольцом гор — большой мир (outer.js); задаётся из main, чтобы не было круговой зависимости
+let outerHeight = () => 0;
+export const setOuterHeight = (f) => { outerHeight = f; };
+// высота кольца у самого края: с ней сшивается большой мир
+export const ringEdge = (th) => sampleGrid(HG, Math.cos(th) * (W.OUTER - 0.01), Math.sin(th) * (W.OUTER - 0.01));
 
 // Высота земли в любой точке. Очень дёшево: читает готовую сетку.
 // Этим же пользуется физика, поэтому ноги всегда совпадают с картинкой.
 export function heightAt(x, z) {
+  if (x * x + z * z > OUTER2) return outerHeight(x, z);
   if (PATCHES.length) {
     const v = patchAt(x, z);
     if (v !== null) return v;
@@ -911,7 +926,10 @@ const terrainMat = () => mat({
       if (!gl_FrontFacing) n = -n;
       float camD = distance(vW, cameraPosition);
       float rr = length(vW.xz);
-      float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr)); // «горность»: форма, трава, снег
+      // перевал и большой мир за кольцом: внизу — луг, а не горы
+      float passA = abs(mod(atan(vW.z, vW.x) - ${PASS.th.toFixed(3)} + 9.42478, 6.28319) - 3.14159) * rr;
+      float lowK = (1.0 - smoothstep(${PASS.hw + 6}.0, ${PASS.hw + 30}.0, passA)) + smoothstep(${W.OUTER + 30}.0, ${W.OUTER + 120}.0, rr);
+      float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr) * (1.0 - clamp(lowK, 0.0, 1.0) * (1.0 - smoothstep(18.0, 34.0, vW.y)))); // «горность»: форма, трава, снег
       float deepK = smoothstep(8.0, 50.0, -vW.y);
       // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
