@@ -49,6 +49,7 @@ export function colAt(s, y) {
 
 function stackGeo(s, pos, idx, SEG = 30) {
   const base = pos.length / 3;
+  CAPS.push([base, SEG]);
   // кольца сверху вниз: вершина подробно, ниже — реже
   const ys = [0.35, 0.05, -0.5, -1.4];
   // Длина тела: столбы-ступени и малые острова — висящие обломки (70 и 130 м), большой остров тянется до дна.
@@ -143,6 +144,8 @@ function planChain(A, B, rnd) {
   CHAINS.push(chain);
 }
 
+const CAPS = []; // [первая вершина, сегментов] — шапки, которым нужна нормаль вверх
+
 export function buildStacks(scene) {
   const pos = [], idx = [];
   const solid = (i0, SEG, under) => {
@@ -183,6 +186,11 @@ export function buildStacks(scene) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
+  // Верх островов и столбов: у центра и первого кольца нормаль — строго вверх. Иначе кольцо делит нормаль
+  // с боковой стенкой, вершина острова «наклонена» для шейдера, и на ней вместо травы тёмный голый камень.
+  const nrm = g.attributes.normal;
+  for (const [b, seg] of CAPS) for (let k = 0; k <= seg; k++) nrm.setXYZ(b + k, 0, 1, 0);
+  nrm.needsUpdate = true;
   const mesh = new THREE.Mesh(g, rockMat);
   mesh.matrixAutoUpdate = false;
   mesh.frustumCulled = false;
