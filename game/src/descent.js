@@ -22,7 +22,7 @@ const LANE = 4.0;                   // «дорожка» героя: расст
 const FLOOR = -(W.LOW + W.DEEP);    // дно шахты
 export const DESCENT = { spines: [], lobes: [], links: [], stats: {}, ready: false };
 export const DBG = {};
-const PICKED = [1, 11, 20];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
+const PICKED = [1, 7, 1];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
 
 const rwAt = (th) => pitR(Math.cos(th) * W.PIT, Math.sin(th) * W.PIT);
 const toWorld = (s, u, sp) => {
@@ -51,7 +51,7 @@ function makeSpine(rnd, ringY) {
         const sc = S + 3 + rnd() * (L - 6), u = 2.6 + rnd() * 5.2, a = 0.8 + rnd() * 0.8, b = 0.8 + rnd() * 0.8;
         if (placed.some((q) => Math.hypot(q[0] - sc, q[1] - u) < q[2] + a + 1.1)) continue;
         placed.push([sc, u, a]);
-        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 0.5 + rnd() * 1.1, gs: 0, gs0: 0, T: 1.8, n: 2.3, bump: 0.08, rubble: true });
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 0.1 + rnd() * 0.3, gs: 0, gs0: 0, T: 1.8, n: 2.0, bump: 0.05, dome: 0.5 + rnd() * 0.9, rubble: true });
       }
     }
     return l;
@@ -181,7 +181,7 @@ function makeSpine(rnd, ringY) {
       const nt = 1 + Math.floor(rnd() * 3);
       for (let k = 0; k < nt; k++) {
         const sc = S + 5 + rnd() * (L - 10), u = 8 + rnd() * 3, a = 2.5 + rnd() * 2.5, b = 1.6 + rnd() * 1.4;
-        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 1.1 + rnd() * 0.6, gs: 0, gs0: 0, T: 2.5, n: 2.8, bump: 0.15, rubble: true });
+        lobe({ s0: sc - a, s1: sc + a, u0: u - b, u1: u + b, sRef: sc, yRef: Y + gs * (sc - S) + 1.1 + rnd() * 0.6, gs: 0, gs0: 0, T: 2.5, n: 2.4, bump: 0.1, dome: 0.5, rubble: true });
       }
       link('plateau', [[S, LANE, Y], [S + L * 0.5, LANE + 1.5, Y + gs * L * 0.5], [S + L, LANE, Y + gs * L]]);
       S += L; Y += gs * L;
@@ -318,7 +318,7 @@ const topY = (l, s, u, bw = 1) => {
 };
 
 function lobeMesh(l, sp, out, rnd) {
-  const SEG = l.seg || (l.T < 3 ? 10 : 14), rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
+  const SEG = l.seg || (l.T < 3 ? 10 : l.T > 6 ? 18 : 14), rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
   const sc = l.rot !== undefined ? l.cs : (l.s0 + l.s1) / 2, uc = l.rot !== undefined ? l.cu : (l.u0 + l.u1) / 2;
   const a = l.rot !== undefined ? l.A : (l.s1 - l.s0) / 2, b = l.rot !== undefined ? l.B : (l.u1 - l.u0) / 2;
   l.sc = sc; l.uc = uc; l.a = a; l.b = b; l.ph = [rnd() * TAU, rnd() * TAU, rnd() * TAU];
@@ -481,7 +481,7 @@ function buildCanyon(best, out, rnd) {
     return { st, y, ang, x, z, A, B, T, ex: c.x + dx * (c.r + A * 1.35), ez: c.z + dz * (c.r + A * 1.35), mx: c.x + dx * (c.r + A * 0.8), mz: c.z + dz * (c.r + A * 0.8) };
   };
   const buildLedge = (L) => {
-    put(ell(L.x, L.z, L.ang, L.A, L.B, L.y, { T: L.T, n: 2.5, bump: 0.12, seg: 10 }));
+    put(ell(L.x, L.z, L.ang, L.A, L.B, L.y, { T: L.T, n: 2.3, bump: 0.1, seg: 14 }));
     (L.st._ledges || (L.st._ledges = [])).push(L);
     stats.ledges++;
     if (rnd() < 0.4) glow.push([L.mx + (rnd() - 0.5), L.y, L.mz + (rnd() - 0.5)]);
@@ -514,51 +514,29 @@ function buildCanyon(best, out, rnd) {
     }
   }
 
-  // 2) цепочки площадок на столбах между островами, на нескольких уровнях; уровни чередуют направление
-  CHAINS.forEach((chain, ci) => {
-    const poles0 = chain.slice(1, -1).filter((p) => !isHanging(p));
-    if (poles0.length < 2) return;
-    let lvl = 0;
-    for (let y0 = -34 - rnd() * 14; y0 > FLOOR + 12; y0 -= 26 + rnd() * 10, lvl++) {
-      const rev = (lvl + ci) % 2 === 1, poles = rev ? poles0.slice().reverse() : poles0, side = rnd() < 0.5 ? 1 : -1;
-      const A = rev ? chain.B : chain.A, B = rev ? chain.A : chain.B, dl = 0.3 + rnd() * 0.45;
-      let nodes = null;
-      for (let attempt = 0; attempt < 4 && !nodes; attempt++) {
-        const yb = y0 - attempt * 3.2, arr = [];
-        let good = true;
-        for (let k = 0; k < poles.length && good; k++) {
-          const y = yb - (k + 1) * dl + (rnd() - 0.5) * 0.15, c = colAt(poles[k], y), nb = poles[Math.min(poles.length - 1, k + 1)], pv = poles[Math.max(0, k - 1)];
-          let tx = nb.x - pv.x, tz = nb.z - pv.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-          const a = 1.45 + rnd() * 0.4, x = c.x - tz * side * (c.r + 1.0), z = c.z + tx * side * (c.r + 1.0);
-          good = free(x, z, a, y, 1.8);
-          arr.push({ x, z, y, a });
-        }
-        if (good) nodes = arr;
-      }
-      if (!nodes) continue;
-      const wps = [];
-      const end = (st, toward, y) => {
-        if (!st || st.ring || st.pillar) return null;
-        const c = colAt(st, y), L = ledgeAt(st, y, Math.atan2(toward.z - c.z, toward.x - c.x));
-        return L ? buildLedge(L) : null;
-      };
-      const LA = end(A, nodes[0], nodes[0].y + dl + 0.1), LB = end(B, nodes[nodes.length - 1], nodes[nodes.length - 1].y - dl);
-      for (const n of nodes) { put(circ(n.x, n.z, n.a, n.y, { T: 1.6, n: 2.3, bump: 0.05, seg: 8 })); stats.pole++; }
-      const span = (x1, z1, y1, r1, x2, z2, y2, r2) => {
-        const d = Math.hypot(x2 - x1, z2 - z1), g = d - r1 - r2;
-        if (g < 2.3) return;
-        const ux = (x2 - x1) / d, uz = (z2 - z1) / d;
-        put(segL(x1 + ux * (r1 - 0.5), z1 + uz * (r1 - 0.5), y1, x2 - ux * (r2 - 0.5), z2 - uz * (r2 - 0.5), y2, 0.75 + rnd() * 0.2, { T: 1.4 }));
-        stats.bridges++;
-      };
-      if (LA) { wps.push([LA.mx, LA.y, LA.mz]); span(LA.mx, LA.mz, LA.y, LA.A * 0.55, nodes[0].x, nodes[0].z, nodes[0].y, nodes[0].a); }
-      nodes.forEach((n, k) => { wps.push([n.x, n.y, n.z]); const m = nodes[k + 1]; if (m) span(n.x, n.z, n.y, n.a, m.x, m.z, m.y, m.a); });
-      const ln = nodes[nodes.length - 1];
-      if (LB) { span(ln.x, ln.z, ln.y, ln.a, LB.mx, LB.mz, LB.y, LB.A * 0.55); wps.push([LB.mx, LB.y, LB.mz]); }
-      links.push({ kind: 'run', wps });
-      stats.runs++;
+  // 2) мосты между колоннами соседних островов (и острова с центральным): на уровне, где у обоих есть уступ друг к другу;
+  //    толстый мост опирается на два уступа — ничего не висит само по себе
+  const pairs = [];
+  for (let a = 0; a < STACKS.length; a++) for (let b = a + 1; b < STACKS.length; b++) {
+    const d = Math.hypot(STACKS[a].x - STACKS[b].x, STACKS[a].z - STACKS[b].z) - STACKS[a].w - STACKS[b].w;
+    if (d < 30) pairs.push([a, b, d]);
+  }
+  for (const [ia, ib] of pairs) {
+    const A = STACKS[ia], B = STACKS[ib];
+    for (let y0 = Math.min(A.top, B.top) - 22 - rnd() * 8; y0 > FLOOR + 14; y0 -= 24 + rnd() * 10) {
+      const ca = colAt(A, y0), cb = colAt(B, y0), ang = Math.atan2(cb.z - ca.z, cb.x - ca.x);
+      const La = ledgeAt(A, y0, ang), Lb = ledgeAt(B, y0 + (rnd() - 0.5) * 0.6, ang + Math.PI);
+      if (!La || !Lb) continue;
+      const g = Math.hypot(Lb.mx - La.mx, Lb.mz - La.mz) - La.A - Lb.A;
+      let ok = g > 2.4 && g < 26;
+      for (const f of [0.25, 0.5, 0.75]) ok = ok && free(La.ex + (Lb.ex - La.ex) * f, La.ez + (Lb.ez - La.ez) * f, 1.5, La.y + (Lb.y - La.y) * f, 2.6);
+      if (!ok) continue;
+      buildLedge(La); buildLedge(Lb);
+      put(segL(La.mx, La.mz, La.y, Lb.mx, Lb.mz, Lb.y, 1.3 + rnd() * 0.4, { T: 2.6, seg: 10 }));
+      stats.bridges++; stats.runs++;
+      links.push({ kind: 'run', wps: [[La.mx, La.y, La.mz], [La.ex, La.y, La.ez], [Lb.ex, Lb.y, Lb.ez], [Lb.mx, Lb.y, Lb.mz]] });
     }
-  });
+  }
 
   // 3) винтовые уступы на колоннах островов: чтобы с любого уступа было куда спуститься ниже
   STACKS.forEach((st, si) => {
@@ -580,6 +558,32 @@ function buildCanyon(best, out, rnd) {
     }
   });
   return { links, glow, stats };
+}
+
+// Нормали со сглаживанием: в общей вершине усредняем только грани, не расходящиеся круче ~55°.
+// Поверхности и бока получаются округлыми, а настоящие рёбра (край плиты, излом) остаются острыми.
+function smoothNormals(pos) {
+  const n = pos.length / 9, fn = new Float32Array(n * 3), map = new Map(), key = (i) => Math.round(pos[i] * 8) + ',' + Math.round(pos[i + 1] * 8) + ',' + Math.round(pos[i + 2] * 8);
+  for (let t = 0; t < n; t++) {
+    const o = t * 9, ux = pos[o + 3] - pos[o], uy = pos[o + 4] - pos[o + 1], uz = pos[o + 5] - pos[o + 2], vx = pos[o + 6] - pos[o], vy = pos[o + 7] - pos[o + 1], vz = pos[o + 8] - pos[o + 2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    fn[t * 3] = nx; fn[t * 3 + 1] = ny; fn[t * 3 + 2] = nz;
+    for (let k = 0; k < 3; k++) { const kk = key(o + k * 3); (map.get(kk) || map.set(kk, []).get(kk)).push(t); }
+  }
+  const out = new Float32Array(n * 9);
+  for (let t = 0; t < n; t++) {
+    const o = t * 9, fx = fn[t * 3], fy = fn[t * 3 + 1], fz = fn[t * 3 + 2], fl = Math.hypot(fx, fy, fz) || 1;
+    for (let k = 0; k < 3; k++) {
+      let sx = 0, sy = 0, sz = 0;
+      for (const q of map.get(key(o + k * 3))) {
+        const qx = fn[q * 3], qy = fn[q * 3 + 1], qz = fn[q * 3 + 2], ql = Math.hypot(qx, qy, qz) || 1;
+        if ((fx * qx + fy * qy + fz * qz) / (fl * ql) > 0.57) { sx += qx / ql; sy += qy / ql; sz += qz / ql; }
+      }
+      const l = Math.hypot(sx, sy, sz) || 1;
+      out[o + k * 3] = sx / l; out[o + k * 3 + 1] = sy / l; out[o + k * 3 + 2] = sz / l;
+    }
+  }
+  return out;
 }
 
 export function buildDescent(scene) {
@@ -679,7 +683,7 @@ export function buildDescent(scene) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(out.pos, 3));
   geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(out.pos.length / 3 * 2), 2));
-  geo.computeVertexNormals();
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(smoothNormals(out.pos), 3));
   const mesh = new THREE.Mesh(geo, rockMat);
   mesh.matrixAutoUpdate = false; mesh.frustumCulled = false;
   scene.add(mesh);

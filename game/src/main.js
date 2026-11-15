@@ -473,7 +473,9 @@ function frame(now) {
 
   frames++; fpsT += dtMs;
   if (fpsT > 500) {
-    setText('fps', `${Math.round((frames * 1000) / fpsT)} FPS`);
+    const pp = player.pos, ri = renderer.info.render;
+    // координаты, высота, куда смотрит герой и нагрузка — чтобы по скриншоту сразу видно, где это и что тормозит
+    setText('fps', `${Math.round((frames * 1000) / fpsT)} FPS\n${pp.x.toFixed(0)} ${pp.y.toFixed(0)} ${pp.z.toFixed(0)}\nyaw ${player.facing.toFixed(2)}\n${ri.calls} вызовов · ${Math.round(ri.triangles / 1000)}k△`);
     frames = 0; fpsT = 0;
   }
 }

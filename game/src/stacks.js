@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm } from './noise.js';
 import { rockMat, heightAt, W } from './terrain.js';
-import { addMeshTop, addCyl, groundAt } from './solids.js';
+import { addMeshTop, addColumn, groundAt } from './solids.js';
 import { mulberry32, SEED } from './noise.js';
 
 // Скальные островки, торчащие из шахты. Плоская вершина с травой,
@@ -37,7 +37,7 @@ for (const s of STACKS) { s.x = Math.cos(s.th) * s.r; s.z = Math.sin(s.th) * s.r
 // и по уступам на них идёт спуск через центр. Столбы у самой стены — короткие висящие обломки:
 // там проходит спуск вдоль стены.
 const FLOOR_Y = -(W.LOW + W.DEEP);
-export const isHanging = (s) => !!s.pillar && s.r > 41;
+export const isHanging = (s) => !!s.pillar; // столбы-ступени — короткие висящие обломки; колонны до дна — только острова
 const bodyLen = (s) => (s.hang = isHanging(s)) ? 20 : s.top - FLOOR_Y + 12;
 const kAt = (dy) => (dy > -0.6 ? 1.0 : 0.96 - 0.22 * Math.min(1, -dy / 14) - 0.12 * Math.min(1, -dy / 90));
 const leanAt = (s, dy) => { const lean = Math.min(1, -Math.min(dy, 0) / 60); return [Math.cos(s.th * 3.1) * s.w * 0.5 * lean, Math.sin(s.th * 2.3) * s.w * 0.5 * lean]; };
@@ -155,13 +155,8 @@ export function buildStacks(scene) {
   // тело колонны — стопка цилиндров по её настоящей оси и толщине (она сужается и наклоняется):
   // за него можно хвататься и лезть; раньше телом был «столб» по форме шапки — невидимые стены в глубине
   const body = (s) => {
-    const bottom = s.hang ? s.top - 22 : FLOOR_Y - 12, step = s.pillar ? 6 : 3;
-    let y1 = s.top - 3.5;
-    while (y1 > bottom + 0.5) {
-      const d = s.top - y1, h = d < 60 ? step : 1e3, y0 = Math.max(bottom, y1 - h), c = colAt(s, (y1 + y0) / 2);
-      addCyl(c.x, c.z, c.r, y1, y0, true, !!s.pillar); // тонкие столбы камера не считает преградой: иначе рядом с ними она прыгает вплотную к герою
-      y1 = y0;
-    }
+    const bottom = s.hang ? s.top - 22 : FLOOR_Y - 12;
+    addColumn((y) => colAt(s, y), s.w * 1.05, s.x, s.z, s.top, s.top - 3.5, bottom, !!s.pillar);
   };
   for (const s of STACKS) {
     const i0 = idx.length;

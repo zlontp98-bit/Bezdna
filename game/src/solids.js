@@ -30,6 +30,12 @@ function insert(s, rad) {
 export function addCyl(x, z, r, top, bottom = -1e9, climb = false, soft = false) {
   insert({ x, z, r, top, bottom, box: false, climb, soft }, r);
 }
+// Колонна с меняющимся по высоте радиусом и осью (острова, столбы): одна запись вместо стопки цилиндров —
+// иначе на каждую точку опоры приходились десятки проверок. fn(y) → {x, z, r}; тело — от bottom до bodyTop,
+// выше него — шапка (отдельная карта высот), ниже — ничего.
+export function addColumn(fn, rmax, x, z, capTop, bodyTop, bottom, soft = false) {
+  insert({ x, z, r: rmax, col: fn, top: capTop, bodyTop, bottom, box: false, climb: true, soft }, rmax);
+}
 // Верх произвольной модели (валун, островок): треугольники в мире растеризуются
 // в маленькую карту высот, поэтому опора совпадает с картинкой по построению.
 // tris — плоский массив x,y,z по три вершины на треугольник.
@@ -95,6 +101,13 @@ export function groundAt(x, z, y, forCamera = false) {
   if (!list) return h;
   for (const s of list) {
     if (s.off || (forCamera && s.soft)) continue;
+    if (s.col) { // тело колонны: внутри — стена (опора на 2.5 м выше ног), шапку даёт её карта высот
+      if (y >= s.bodyTop || y < s.bottom) continue;
+      const c = s.col(y);
+      if ((x - c.x) ** 2 + (z - c.z) ** 2 > c.r * c.r) continue;
+      if (y + 2.5 > h) { h = y + 2.5; hitSolid = true; lastSolid = s; }
+      continue;
+    }
     const dx = x - s.x, dz = z - s.z;
     let top = s.top;
     if (s.field) {
@@ -113,14 +126,19 @@ export function groundAt(x, z, y, forCamera = false) {
 }
 
 // верх объекта в точке (−1e9 — точка вне его): для карт высот и для цилиндров
-export const fieldTop = (s, x, z) => (s.field ? fieldAt(s, x, z) : s.box ? -1e9 : (x - s.x) ** 2 + (z - s.z) ** 2 <= s.r * s.r ? s.top : -1e9);
+export const fieldTop = (s, x, z, y) => {
+  if (s.field) return fieldAt(s, x, z);
+  if (s.box) return -1e9;
+  if (s.col) { const c = s.col(y ?? s.bodyTop - 1); return (x - c.x) ** 2 + (z - c.z) ** 2 <= c.r * c.r ? s.top : -1e9; }
+  return (x - s.x) ** 2 + (z - s.z) ** 2 <= s.r * s.r ? s.top : -1e9;
+};
 // Лазание по бокам скал (climb: true): есть ли в точке (x, y, z) сама скала — а не только её верх?
 export function rockAt(x, z, y) {
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return null;
   for (const s of list) {
     if (s.off || !s.climb) continue;
-    const t = fieldTop(s, x, z);
+    const t = fieldTop(s, x, z, y);
     if (t > -1e8 && y < t && y > s.bottom) return s;
   }
   return null;
