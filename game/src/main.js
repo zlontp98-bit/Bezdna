@@ -3,7 +3,7 @@ import { U, setStyle, loadTerrainTextures } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
-import { buildFlora, buildGrass } from './flora.js';
+import { buildFlora, buildGrass, updateFloraDist } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks, STACKS } from './stacks.js';
@@ -467,6 +467,7 @@ function frame(now) {
   player.haloPts.visible = player.m.root.visible;
 
   updateOuter(player.pos.x, player.pos.z);
+  updateFloraDist(camera.position.x, camera.position.z, vegDist);
   U.uCenter.value.copy(player.pos);
   U.uPlayer.value.copy(player.pos);
   clouds.rotation.y += dt * 0.003;
@@ -554,6 +555,15 @@ $('view').addEventListener('click', () => {
 });
 $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
+// дальность растительности (деревья, кусты, грибы, камни): близко — легче для телефона
+const VEG = { near: 70, mid: 130, far: 260 };
+let vegDist = VEG[store.get('bezdna.veg', 'mid')] || VEG.mid;
+function setVeg(v) {
+  store.set('bezdna.veg', v); vegDist = VEG[v];
+  document.querySelectorAll('[data-veg]').forEach((b) => b.classList.toggle('on', b.dataset.veg === v));
+}
+document.querySelectorAll('[data-veg]').forEach((b) => b.addEventListener('click', () => setVeg(b.dataset.veg)));
+setVeg(store.get('bezdna.veg', 'mid'));
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') $('view').click();
   if (e.code === 'KeyC' && craft) toggleCraft();

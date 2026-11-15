@@ -242,6 +242,14 @@ function smallShroom() {
 }
 
 // ---------- расстановка ----------
+export const FLORA_CELLS = [];
+// Дальность растительности: клетки дальше dist от камеры скрываем (проверка раз в 10 кадров)
+let floraTick = 0;
+export function updateFloraDist(cx, cz, dist) {
+  if ((floraTick++ % 10) !== 0) return;
+  for (const c of FLORA_CELLS) c.im.visible = Math.hypot(c.x - cx, c.z - cz) - c.r < dist;
+}
+
 export function buildFlora(scene) {
   const rnd = mulberry32(SEED + 7);
   const material = propMaterial();
@@ -490,8 +498,15 @@ export function buildFlora(scene) {
     leaf: leafTree(), pine: pineTree(), shroom: giantShroom(),
     rock: rockGeo(), crystal: crystalGeo(), small: smallShroom(), bush: bushGeo(),
   };
+  // Растительность — «чанками»: каждый вид в каждой клетке 96×96 м — свой набор экземпляров.
+  // Клетки вне кадра не рисуются, дальше выбранной дальности — тоже (настройка «Растительность»).
+  const CELLS = 96;
   for (const key in lists) {
-    const L = lists[key];
+   const byCell = new Map();
+   // мелочь (мало треугольников всего) — одним набором на весь мир: лишние вызовы отрисовки дороже её
+   const gt = geos[key].index ? geos[key].index.count / 3 : geos[key].attributes.position.count / 3, split = gt * lists[key].length > 20000;
+   for (const t of lists[key]) { const k = split ? Math.floor(t.x / CELLS) + ',' + Math.floor(t.z / CELLS) : 'all'; (byCell.get(k) || byCell.set(k, []).get(k)).push(t); }
+   for (const L of byCell.values()) {
     const im = new THREE.InstancedMesh(geos[key], material, L.length);
     L.forEach((t, i) => {
       dummy.position.set(t.x, t.y, t.z);
@@ -524,9 +539,13 @@ export function buildFlora(scene) {
     // деревья можно рубить: запоминаем, где какое стоит и какой у него ствол-препятствие
     if (key === 'leaf' || key === 'pine') L.forEach((t, i) => trees.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, rot: t.rot,
       col: colliders.find((c) => c.x === t.x && c.z === t.z) || null }));
-    im.frustumCulled = false; // один вызов на вид; вершин немного
+    im.computeBoundingSphere();
+    if (!split) im.frustumCulled = false;
+    im.boundingSphere.radius += 6;              // запас на качание крон и падение срубленного дерева
     im.matrixAutoUpdate = false;
     scene.add(im);
+    if (split) FLORA_CELLS.push({ im, x: im.boundingSphere.center.x, z: im.boundingSphere.center.z, r: im.boundingSphere.radius });
+   }
   }
   return { colliders, blobs, spawn, trees, pebbles, boulders, rockGeo: geos.rock, berryBushes, berryGeo: berryGeo() };
 }
