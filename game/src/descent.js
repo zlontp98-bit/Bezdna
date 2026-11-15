@@ -1,9 +1,9 @@
 import * as THREE from '../vendor/three.min.js';
-import { W, heightAt, pitR, rockMat } from './terrain.js';
+import { W, LAKE, heightAt, pitR, rockMat } from './terrain.js';
+import { fbm, smoothstep } from './noise.js';
 import { addMeshTop, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
 import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
-import { part, merge, T, propMaterial } from './flora.js';
 import { chunkMesh } from './chunks.js';
 
 // Спуск в бездну — отдельный участок поверх шахты (остальную карту не трогает).
@@ -14,6 +14,9 @@ import { chunkMesh } from './chunks.js';
 // толстых асимметричных «глыб» (лопастей), которые перекрываются друг с другом: сверху у каждой
 // своя неровная поверхность (на ней стоят и по ней скользят), снизу — тяжёлое тело, нависающее над пропастью.
 //
+// Дорога вдоль стены идёт до −101 м; ниже до самого озера — поле глыб (buildField), как в PEAK.
+// Кристаллов пока нет: glow у каньона считается, но не рисуется.
+//
 // Два маршрута начинаются на противоположных сторонах шахты. Всё строится по семени (одинаково у всех);
 // проходимость каждого куска проверяется ботом на настоящей физике героя (dev-скрипт ntest).
 
@@ -23,6 +26,7 @@ const LANE = 4.0;                   // «дорожка» героя: расст
 const FLOOR = -(W.LOW + W.DEEP);    // дно шахты
 export const DESCENT = { spines: [], lobes: [], links: [], stats: {}, ready: false };
 export const DBG = {};
+const FIELD_TOP = -101;                // отсюда и до озера спуск — сплошное поле глыб
 const PICKED = [1, 7, 1];               // [маршрутов, семя, сдвиг угла] — раскладка, найденная перебором (dev: window.__descScan)
 
 const rwAt = (th) => pitR(Math.cos(th) * W.PIT, Math.sin(th) * W.PIT);
@@ -75,7 +79,7 @@ function makeSpine(rnd, ringY) {
   ];
   const tot = TEMPL.reduce((a, t) => a + t[1], 0);
   const need = ['wall', 'snake', 'cliff', 'traverse', 'fork', 'dome', 'wall', 'tunnel', 'snake', 'stones', 'cliff', 'wall', 'fork', 'traverse', 'climb', 'dome', 'slide', 'snake', 'cliff', 'stones', 'tunnel', 'bridge', 'wall', 'fork', 'cliff', 'jump', 'drop'];
-  for (let guard = 0; guard < 90 && Y > FLOOR + 14; guard++) {
+  for (let guard = 0; guard < 90 && Y > FIELD_TOP + 3; guard++) {   // ниже −101 м — поле глыб (buildField)
     tm++;
     let q = rnd() * tot, kind = 'wide';
     for (const [k, w] of TEMPL) { q -= w; if (q <= 0) { kind = k; break; } }
@@ -346,11 +350,12 @@ function lobeMesh(l, sp, out, rnd) {
   // вершины: центр, три кольца сверху, четыре кольца тела
   const cen = { s: sc, u: uc, y: topY(l, sc, uc) };
   const top = [pts(0.38, 0, 1, 1), pts(0.7, 0, 1, 2), pts(1, 0, 1, 3)];
-  const body = [[0.18 * l.T, 1.0], [0.55 * l.T, 0.98], [0.92 * l.T, 0.93]].map(([d, sh], ri) => {
+  // профиль тела: [глубина от верха, м; масштаб кольца]. У глыб поля — свой (выпуклый бок и колонна до дна)
+  const body = (l.prof || [[0.18 * l.T, 1.0], [0.55 * l.T, 0.98], [0.92 * l.T, 0.93]]).map(([d, sh], ri) => {
     const arr = pts(1, d, sh, 10 + ri);
     return arr.map((p) => ({ ...p, y: p.y - (hash(p.s, ri) - 0.5) * 0.5 }));
   });
-  const apexP = { s: sc, u: uc, y: Math.min(...body[2].map((p) => p.y)) - (l.flat ? 0.3 : l.T * 0.08) };   // T — полная глубина тела
+  const BL = body.length - 1, apexP = { s: sc, u: uc, y: Math.min(...body[BL].map((p) => p.y)) - (l.apex ?? (l.flat ? 0.3 : l.T * 0.08)) };   // T — полная глубина тела
   const W3 = (p) => wpt(p.s, p.u, p.y);
   const UP = [0, 1, 0], DN = [0, -1, 0];
   const tri = (A, B, C, hint) => {
@@ -373,7 +378,7 @@ function lobeMesh(l, sp, out, rnd) {
       const mid = [(rings[r][i][0] + rings[r][j][0]) / 2 - C0[0], 0, (rings[r][i][2] + rings[r][j][2]) / 2 - C0[2]];
       tri(rings[r][i], rings[r][j], rings[r + 1][j], mid); tri(rings[r][i], rings[r + 1][j], rings[r + 1][i], mid);
     }
-    tri(B0[2][i], B0[2][j], AP, DN);
+    tri(B0[BL][i], B0[BL][j], AP, DN);
   }
   // край виден над пропастью только если не вдавлен в стенку: для столкновений нужен весь верх
   const minTop = Math.min(...T0[2].map((p) => p[1]));
@@ -467,6 +472,7 @@ function buildCanyon(best, out, rnd) {
   // место свободно: нет чужих скал (глыб, шапок островов) ни на уровне тела, ни над головой, ни прямо под уступом
   const free = (x, z, rad, y, T) => {
     if (heightAt(x, z) > y - 1) return false;
+    if (y - T - 2 < Math.max(FIELD_TOP, fieldTop(x, z))) return false;   // ниже −101 м — только поле глыб
     for (let k = 0; k < 17; k++) {
       const a = k * 0.785, rr = k === 0 ? 0 : k <= 8 ? rad : rad * 0.5, px = x + Math.cos(a) * rr, pz = z + Math.sin(a) * rr;
       for (const yy of [y + 0.3, y + 1.4, y + 2.5, y - T * 0.5, y - T - 0.8, y - T - 2.6]) { const r = rockAt(px, pz, yy); if (r && r.field) return false; }
@@ -546,7 +552,7 @@ function buildCanyon(best, out, rnd) {
     let prev = { y: st.top, ang: rnd() * TAU, top: true }, qi = 0;
     for (let guard = 0; guard < 60; guard++) {
       while (qi < list.length && list[qi].y > prev.y - 3) qi++;
-      const next = list[qi], floorY = heightAt(st.x, st.z) + 2.5, ny = next ? next.y : floorY;
+      const next = list[qi], floorY = Math.max(heightAt(st.x, st.z), fieldTop(colAt(st, FIELD_TOP).x, colAt(st, FIELD_TOP).z)) + 2.5, ny = next ? next.y : floorY;
       if (prev.y - ny <= 8.5) { if (!next) break; prev = next; qi++; continue; }
       const y = prev.y - (5.2 + rnd() * 1.6), c = colAt(st, y), Rc = c.r + 1.2;
       const dA = 2 * Math.asin(Math.min(0.95, 3.6 / Rc));
@@ -559,6 +565,118 @@ function buildCanyon(best, out, rnd) {
     }
   });
   return { links, glow, stats };
+}
+
+// ---------- Поле глыб: от −101 м до озера ----------
+// Как в PEAK: ниже дороги вдоль стены нет ни пола, ни «стены с полками» — всё пространство шахты завалено
+// крупными округлыми глыбами, налезающими друг на друга. Верх каждой — неровная площадка (трава ложится
+// на пологое), бока выпуклые, под краем нависание; по бокам лезут, между глыбами прыгают, в щели спускаются.
+// Стены шахты — только граница: за них не цепляются.
+//
+// Форма завала задана высотой fieldTop(x, z): у входа (конец дороги вдоль стены) завал высокий и круто
+// обрывается грудой глыб к озеру — короткий рискованный путь; в обе стороны по кругу он понижается и
+// становится пологим — длинные лёгкие пути. Поверх — гряды и ложбины (шум) и ступени-террасы, а каждая
+// глыба ещё сдвинута вверх/вниз: так на любом участке несколько вариантов пути.
+const FIELD = { on: false, th: 0, ye: FIELD_TOP, ex: 0, ez: 0 };
+const FIELD_LOW = -165;              // высота завала у стены на дальней от входа стороне
+const SHORE = LAKE.level + 0.5;      // ниже — вода
+
+export function fieldTop(x, z) {
+  if (!FIELD.on) return -1e9;
+  const r = Math.hypot(x, z), rw = pitR(x, z);
+  if (r > rw + 2) return -1e9;
+  let d = Math.atan2(z, x) - FIELD.th;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  d = Math.abs(d) / Math.PI;                                          // 0 — у входа, 1 — напротив
+  const Hw = FIELD.ye - (FIELD.ye - FIELD_LOW) * (0.75 * d + 0.25 * smoothstep(0, 1, d));
+  const K = 1.6 + (0.28 - 1.6) * d;                                   // крутизна от стены к озеру
+  let g = Hw - K * Math.max(0, rw - r - 3);
+  g += fbm(x * 0.05 + 3, z * 0.05 - 8, 2) * 3.2 + fbm(x * 0.13 - 5, z * 0.13 + 1, 1) * 0.8;
+  // ступени-террасы: полки по 5 м
+  const q = g / 5, k = Math.floor(q), f = q - k;
+  g = g * 0.45 + 5 * (k + smoothstep(0.55, 0.95, f)) * 0.55;
+  // у входа — вровень с дорогой
+  const w = smoothstep(12, 5, Math.hypot(x - FIELD.ex, z - FIELD.ez));
+  return g + (FIELD.ye - 0.4 - g) * w;
+}
+
+function buildField(out, rnd) {
+  const sp = { cart: true, th0: 0, dir: 1 }, B = [], grid = new Map(), GC = 12;
+  const t0 = Date.now();
+  const cellK = (x, z) => Math.floor(x / GC) + ',' + Math.floor(z / GC);
+  const near = (x, z) => {
+    const res = [], ix = Math.floor(x / GC), iz = Math.floor(z / GC);
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const c = grid.get((ix + i) + ',' + (iz + j)); if (c) res.push(...c); }
+    return res;
+  };
+  // можно ли тут ставить глыбу: внутри шахты, над водой, не в колонне острова
+  const okAt = (x, z, a, y) => {
+    const r = Math.hypot(x, z);
+    if (r < 14 || r > pitR(x, z) - 0.5 || y < SHORE) return false;
+    for (const st of STACKS) { const c = colAt(st, y); if (Math.hypot(x - c.x, z - c.z) < c.r + a * 0.45) return false; }
+    return true;
+  };
+  const add = (x, z, a, y, filler) => {
+    const A = a * (0.85 + rnd() * 0.3), Bb = a * (0.85 + rnd() * 0.3), ang = rnd() * TAU;
+    const es = Math.abs(A * Math.cos(ang)) + Math.abs(Bb * Math.sin(ang)), eu = Math.abs(A * Math.sin(ang)) + Math.abs(Bb * Math.cos(ang));
+    const capT = 2.4 + a * 0.5, floor = heightAt(x, z), T = y - floor + 1.5;
+    const l = { rot: ang, cs: x, cu: z, A, B: Bb, s0: x - es, s1: x + es, u0: z - eu, u1: z + eu, sRef: x, uRef: z, dS: Math.cos(ang), dU: Math.sin(ang),
+      yRef: y, gs: 0, gs0: 0, gu: 0, arch: 0, tm: 0, T, n: 2.0 + rnd() * 0.6, bump: 0.12 + rnd() * 0.1, dome: filler ? 0.5 + rnd() * 0.6 : 0.9 + rnd() * 1.4, apex: 1,
+      seg: filler ? 9 : 12,
+      // выпуклый бок, под ним поджатие (нависание), ниже — колонна до дна, скрытая соседями
+      prof: [[capT * 0.3, 1.06], [capT * 0.7, 0.98], [capT, 0.78], [Math.max(capT + 1, T), 0.7]] };
+    lobeMesh(l, sp, out, rnd);
+    const b = { x, z, a, y: y + l.dome * 0.8, filler, l };
+    B.push(b);
+    const k = cellK(x, z);
+    (grid.get(k) || grid.set(k, []).get(k)).push(b);
+    return b;
+  };
+  // 1) крупные глыбы: «бросаем дротики», соседи налезают друг на друга примерно на четверть
+  for (let tries = 0; tries < 30000; tries++) {
+    const r = 14 + Math.sqrt(rnd()) * 47, th = rnd() * TAU, x = Math.cos(th) * r, z = Math.sin(th) * r;
+    const g = fieldTop(x, z);
+    if (g < SHORE) continue;
+    const wall = smoothstep(40, 58, r), a = 3.4 + rnd() * 3.0 + wall * 1.4;
+    const dE = Math.hypot(x - FIELD.ex, z - FIELD.ez);
+    let j = (rnd() - 0.45) * 4.0;
+    if (dE > 16 && rnd() < 0.12) j = 3 + rnd() * 4.5;                // высокая глыба-башня: на неё лезут
+    if (dE < 10) j = Math.min(j, 0.2);
+    const y = g + j;
+    if (!okAt(x, z, a, y)) continue;
+    if (near(x, z).some((q) => Math.hypot(q.x - x, q.z - z) < 0.7 * (q.a + a))) continue;
+    add(x, z, a, y, false);
+  }
+  const big = B.length;
+  // 2) заполнение щелей: где сверху не лежит ни одна глыба, кладём поменьше и пониже — дно щели
+  for (let x = -61; x <= 61; x += 1.5) for (let z = -61; z <= 61; z += 1.5) {
+    const g = fieldTop(x, z);
+    if (g < SHORE) continue;
+    if (near(x, z).some((q) => Math.hypot(q.x - x, q.z - z) < q.a * 0.8)) continue;
+    const a = 2.2 + rnd() * 1.0, y = g - 0.8 - rnd() * 1.4;
+    if (!okAt(x, z, a, y)) continue;
+    add(x, z, a, y, true);
+  }
+  // 3) проверка: куда можно дойти от входа, если только прыгать (щель до 2 м) и подниматься не выше 1.5 м
+  const N = B.length, seen = new Uint8Array(N), q = [];
+  let start = 0, sd = 1e9;
+  B.forEach((b, i) => { const d = Math.hypot(b.x - FIELD.ex, b.z - FIELD.ez); if (d < sd) { sd = d; start = i; } });
+  seen[start] = 1; q.push(start);
+  let minY = 1e9, shore = 0;
+  while (q.length) {
+    const i = q.pop(), b = B[i];
+    minY = Math.min(minY, b.y);
+    if (b.y < SHORE + 2.5) shore++;
+    for (const c of near(b.x, b.z)) {
+      const j = B.indexOf(c);
+      if (seen[j]) continue;
+      const dy = c.y - b.y;
+      if (Math.hypot(c.x - b.x, c.z - b.z) <= b.a + c.a + 2 && dy <= 1.5 && dy >= -9) { seen[j] = 1; q.push(j); }
+    }
+  }
+  const reach = seen.reduce((s2, v) => s2 + v, 0);
+  return { boulders: big, fillers: N - big, reach, total: N, minY: Math.round(minY), shore, startY: Math.round(B[start].y), ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
 }
 
 // Нормали со сглаживанием: в общей вершине усредняем только грани, не расходящиеся круче ~55°.
@@ -680,7 +798,11 @@ export function buildDescent(scene) {
     off(c);
   }
   if (!best) return DESCENT;
+  // поле глыб ниже −101 м: начинается там, где кончилась дорога вдоль стены
+  const wsp0 = best.spines[0], [ex, ez] = toWorld(wsp0.plan.S + 1, LANE, wsp0);
+  Object.assign(FIELD, { on: true, th: wsp0.th0 + wsp0.dir * wsp0.plan.S / RS, ye: wsp0.plan.Y, ex, ez });
   const cany = buildCanyon(best, out, mulberry32(SEED + 9004));
+  DESCENT.field = buildField(out, mulberry32(SEED + 9005));
   // Скалы спуска — кусками по секторам и высоте: три.js рисует их от ближних к дальним и не рисует
   // то, что вне кадра. Одним мешем шахта перерисовывалась по нескольку раз (дорого на телефоне).
   const nAll = smoothNormals(out.pos), bins = new Map();
@@ -699,26 +821,6 @@ export function buildDescent(scene) {
     scene.add(chunkMesh(geo, rockMat));
   }
 
-  // кристаллы на широких глыбах: ориентир в темноте
-  const cry = [], oct = new THREE.OctahedronGeometry(1, 0), col = new THREE.Color(), r3 = mulberry32(SEED + 9003);
-  best.spines.forEach((sp) => {
-    for (const l of sp.plan.lobes) {
-      if (l.T < 4 || l.rot !== undefined || l.flat || r3() < 0.5) continue;
-      const c = 1 + (r3() < 0.4 ? 1 : 0);
-      for (let k = 0; k < c; k++) {
-        const s = l.s0 + 2 + r3() * (l.s1 - l.s0 - 4), u = Math.max(l.u1 - 1.4 - r3() * 2, 2.5);
-        const [x, z] = toWorld(s, u, sp), y = topY(l, s, u), h = 0.7 + r3() * 1.2;
-        col.setHSL(0.52 + r3() * 0.28, 0.7, 0.66);
-        cry.push(part(oct, col.getHex(), { glow: 0.85, m: T(x, y + h * 0.7, z, 0.28 * h, h, 0.28 * h, r3() * 6) }));
-      }
-    }
-  });
-  for (const [x, y, z] of cany.glow) { const h = 0.6 + r3() * 0.9; col.setHSL(0.5 + r3() * 0.3, 0.7, 0.66); cry.push(part(oct, col.getHex(), { glow: 0.85, m: T(x, y + h * 0.7, z, 0.26 * h, h, 0.26 * h, r3() * 6) })); }
-  if (cry.length) {
-    const cm = new THREE.Mesh(merge(cry), propMaterial());
-    cm.frustumCulled = false; cm.matrixAutoUpdate = false;
-    scene.add(cm);
-  }
   // звенья для проверки ботом: пути героя в мировых координатах
   const links = [];
   best.spines.forEach((sp, si) => {
