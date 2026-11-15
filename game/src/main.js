@@ -87,7 +87,7 @@ function adaptQuality(dtMs) {
     // снижаем, только если тяжело две секунды подряд
     if (!Q.bad) { Q.bad = true; return; }
     Q.bad = false; Q.good = 0;
-    if (Q.clock - Q.upT < 6000) Q.ceil = Math.max(0.55, Q.scale - 0.05); // только что подняли — зря
+    Q.ceil = Math.max(0.55, Math.min(Q.ceil, Q.scale - 0.05)); // уровень, который не потянули, больше не пробуем: каждая смена — рывок
     if (Q.scale > 0.56) { Q.scale = Math.max(0.55, Q.scale - 0.1); applyRes(); }
     else if (Q.density > 0.35) { Q.density -= 0.15; grass.setDensity(Q.density); }
   } else if (avg < 17.4) {

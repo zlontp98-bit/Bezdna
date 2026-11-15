@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm } from './noise.js';
 import { rockMat, heightAt, W } from './terrain.js';
+import { chunkMesh } from './chunks.js';
 import { addMeshTop, addColumn, groundAt } from './solids.js';
 import { mulberry32, SEED } from './noise.js';
 
@@ -161,10 +162,12 @@ export function buildStacks(scene) {
     const bottom = s.hang ? s.top - 22 : FLOOR_Y - 12;
     addColumn((y) => colAt(s, y), s.w * 1.05, s.x, s.z, s.top, s.top - 3.5, bottom, !!s.pillar);
   };
+  const groups = [];
   for (const s of STACKS) {
-    const i0 = idx.length;
+    const i0 = idx.length, v0 = pos.length / 3;
     stackGeo(s, pos, idx, s.big ? 48 : 30);
     solid(i0, s.big ? 48 : 30, s.top - 3.6); body(s);
+    groups.push([v0, pos.length / 3, i0, idx.length]);
   }
   // столбы ставим, когда острова уже твёрдые: края меряем по настоящей вершине
   const rnd = mulberry32(SEED + 404);
@@ -177,6 +180,7 @@ export function buildStacks(scene) {
     r += 0.6;
     planChain({ ring: true, x: cx * r, z: cz * r, top: heightAt(cx * r, cz * r), w: 0 }, B, rnd);
   }
+  const pv0 = pos.length / 3, pi0 = idx.length;
   for (const p of PILLARS) {
     const i0 = idx.length;
     stackGeo(p, pos, idx, 11);
@@ -191,8 +195,14 @@ export function buildStacks(scene) {
   const nrm = g.attributes.normal;
   for (const [b, seg] of CAPS) for (let k = 0; k <= seg; k++) nrm.setXYZ(b + k, 0, 1, 0);
   nrm.needsUpdate = true;
-  const mesh = new THREE.Mesh(g, rockMat);
-  mesh.matrixAutoUpdate = false;
-  mesh.frustumCulled = false;
-  scene.add(mesh);
+  // каждый остров — свой кусок (сортировка по удалённости и отсечение по кадру), столбы — одним куском
+  if (idx.length > pi0) groups.push([pv0, pos.length / 3, pi0, idx.length]);
+  const P = g.attributes.position.array, Nn = nrm.array;
+  for (const [v0, v1, i0, i1] of groups) {
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(P.slice(v0 * 3, v1 * 3), 3));
+    sg.setAttribute('normal', new THREE.Float32BufferAttribute(Nn.slice(v0 * 3, v1 * 3), 3));
+    sg.setIndex(idx.slice(i0, i1).map((k) => k - v0));
+    scene.add(chunkMesh(sg, rockMat));
+  }
 }

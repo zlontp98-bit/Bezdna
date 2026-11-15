@@ -4,6 +4,7 @@ import { addMeshTop, solidsNear, groundAt, lastSolid, rockAt } from './solids.js
 import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { part, merge, T, propMaterial } from './flora.js';
+import { chunkMesh } from './chunks.js';
 
 // Спуск в бездну — отдельный участок поверх шахты (остальную карту не трогает).
 //
@@ -680,13 +681,23 @@ export function buildDescent(scene) {
   }
   if (!best) return DESCENT;
   const cany = buildCanyon(best, out, mulberry32(SEED + 9004));
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(out.pos, 3));
-  geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(out.pos.length / 3 * 2), 2));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(smoothNormals(out.pos), 3));
-  const mesh = new THREE.Mesh(geo, rockMat);
-  mesh.matrixAutoUpdate = false; mesh.frustumCulled = false;
-  scene.add(mesh);
+  // Скалы спуска — кусками по секторам и высоте: три.js рисует их от ближних к дальним и не рисует
+  // то, что вне кадра. Одним мешем шахта перерисовывалась по нескольку раз (дорого на телефоне).
+  const nAll = smoothNormals(out.pos), bins = new Map();
+  for (let t = 0; t < out.pos.length / 9; t++) {
+    const o = t * 9, x = (out.pos[o] + out.pos[o + 3] + out.pos[o + 6]) / 3, y = (out.pos[o + 1] + out.pos[o + 4] + out.pos[o + 7]) / 3, z = (out.pos[o + 2] + out.pos[o + 5] + out.pos[o + 8]) / 3;
+    const k = Math.floor((Math.atan2(z, x) + Math.PI) / (TAU / 6)) + "," + Math.floor(y / 60);
+    (bins.get(k) || bins.set(k, []).get(k)).push(t);
+  }
+  for (const list of bins.values()) {
+    const p = new Float32Array(list.length * 9), nn = new Float32Array(list.length * 9);
+    list.forEach((t, i) => { p.set(out.pos.slice(t * 9, t * 9 + 9), i * 9); nn.set(nAll.subarray(t * 9, t * 9 + 9), i * 9); });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(list.length * 6), 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nn, 3));
+    scene.add(chunkMesh(geo, rockMat));
+  }
 
   // кристаллы на широких глыбах: ориентир в темноте
   const cry = [], oct = new THREE.OctahedronGeometry(1, 0), col = new THREE.Color(), r3 = mulberry32(SEED + 9003);
