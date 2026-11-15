@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { W, LAKE, heightAt, pitR, rockMat } from './terrain.js';
 import { fbm, smoothstep } from './noise.js';
-import { addMeshTop, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
+import { addMeshTop, removeSolid, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
 import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { chunkMesh } from './chunks.js';
@@ -582,6 +582,102 @@ const FIELD = { on: false, th: 0, ye: FIELD_TOP, ex: 0, ez: 0 };
 const FIELD_LOW = -165;              // высота завала у стены на дальней от входа стороне
 const SHORE = LAKE.level + 0.5;      // ниже — вода
 
+// ---------- Глыбы поля: паспорта, сборка и правка (редактор «Творчество», editor.js) ----------
+// Глыба поля = паспорт (spec) → меш + карта высот для опоры. Паспорт можно менять и собирать глыбу заново.
+// Меши кусками по ячейкам 24 м: правка пересобирает только свой кусок.
+const STONES = new Map(), SBINS = new Map(), SDIRTY = new Set();
+let stoneSeq = 0, fieldScene = null;
+const LAYOUT_KEY = 'bezdna_field_v1';
+function loadLayout() {
+  try {
+    if (typeof window !== 'undefined' && window.__fieldLayout) return window.__fieldLayout;
+    const t = typeof localStorage !== 'undefined' && localStorage.getItem(LAYOUT_KEY);
+    const a = t && JSON.parse(t);
+    return Array.isArray(a) ? a : null;
+  } catch (_) { return null; }
+}
+// собрать меш и опору по паспорту
+function buildStone(spec) {
+  let prof = spec.prof.map((r) => r.slice()), apex = spec.flt ? 0.3 : 1;
+  const hs = spec.hs ?? 1, nR = prof.length - 1;
+  if (spec.flt) prof.forEach((r) => { r[0] *= hs; });
+  else {
+    for (let i = 0; i < nR; i++) prof[i][0] *= hs;
+    if (spec.col === false) { const dl = prof[nR - 1][0]; prof[nR] = [dl * 1.4, 0.5]; apex = Math.max(0.6, dl * 0.3); }   // свой низ: закруглённый, без колонны до дна
+    else prof[nR][0] = Math.max(prof[nR - 1][0] + 1, prof[nR][0]);
+  }
+  const A = spec.A, Bb = spec.B, ang = spec.ang, x = spec.x, z = spec.z;
+  const es = Math.abs(A * Math.cos(ang)) + Math.abs(Bb * Math.sin(ang)), eu = Math.abs(A * Math.sin(ang)) + Math.abs(Bb * Math.cos(ang));
+  const l = { rot: ang, cs: x, cu: z, A, B: Bb, s0: x - es, s1: x + es, u0: z - eu, u1: z + eu, sRef: x, uRef: z, dS: Math.cos(ang), dU: Math.sin(ang),
+    yRef: spec.y, gs: spec.gs || 0, gs0: spec.gs || 0, gu: 0, arch: spec.arch || 0, tm: 0, T: spec.T, n: spec.n, bump: spec.bump,
+    dome: spec.dome, apex, seg: spec.seg || 12, prof };
+  let ri = 0;
+  const o = { pos: [] };
+  lobeMesh(l, { cart: true, th0: 0, dir: 1 }, o, () => spec.rv[ri++ % spec.rv.length]);
+  const pos = new Float32Array(o.pos);
+  return { l, pos, nrm: smoothNormals(pos) };
+}
+const binKey = (sp) => Math.floor(sp.x / 24) + ',' + Math.floor(sp.z / 24) + ',' + Math.floor(sp.y / 50);
+function addStone(spec, id) {
+  const b = buildStone(spec), s = { id: id ?? ++stoneSeq, spec, l: b.l, pos: b.pos, nrm: b.nrm, solid: b.l.solid, bin: binKey(spec) };
+  stoneSeq = Math.max(stoneSeq, s.id);
+  s.solid.sid = s.id;
+  STONES.set(s.id, s); SDIRTY.add(s.bin);
+  return s;
+}
+function dropStone(id) {
+  const s = STONES.get(id);
+  if (!s) return;
+  removeSolid(s.solid);
+  STONES.delete(id); SDIRTY.add(s.bin);
+}
+function flushStones() {
+  for (const k of SDIRTY) {
+    const old = SBINS.get(k);
+    if (old) { fieldScene.remove(old); old.geometry.dispose(); SBINS.delete(k); }
+    const list = [...STONES.values()].filter((s) => s.bin === k);
+    if (!list.length) continue;
+    let n = 0; for (const s of list) n += s.pos.length;
+    const p = new Float32Array(n), nn = new Float32Array(n);
+    let o = 0; for (const s of list) { p.set(s.pos, o); nn.set(s.nrm, o); o += s.pos.length; }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(n / 3 * 2), 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nn, 3));
+    const m = chunkMesh(geo, rockMat);
+    fieldScene.add(m); SBINS.set(k, m);
+  }
+  SDIRTY.clear();
+}
+// Для редактора
+export const STONEAPI = {
+  get count() { return STONES.size; },
+  get: (id) => STONES.get(id),
+  all: () => [...STONES.values()],
+  add(spec) { const s = addStone(spec); flushStones(); return s; },
+  // изменить паспорт (поля из patch) и собрать глыбу заново
+  update(id, patch) {
+    const s = STONES.get(id);
+    if (!s) return null;
+    const spec = { ...s.spec, ...patch };
+    removeSolid(s.solid); STONES.delete(id); SDIRTY.add(s.bin);
+    const n = addStone(spec, id);
+    flushStones();
+    return n;
+  },
+  remove(id) { dropStone(id); flushStones(); },
+  clear() { for (const id of [...STONES.keys()]) dropStone(id); flushStones(); },
+  byRock: (solid) => (solid && solid.sid ? STONES.get(solid.sid) : null),
+  json: () => JSON.stringify([...STONES.values()].map((s) => s.spec)),
+  save() { try { localStorage.setItem(LAYOUT_KEY, STONEAPI.json()); return true; } catch (_) { return false; } },
+  load(arr) { STONEAPI.clear(); for (const sp of arr) addStone(sp); flushStones(); },
+  reset() { try { localStorage.removeItem(LAYOUT_KEY); } catch (_) { /* нечего стирать */ } },
+  hasSaved: () => { try { return !!localStorage.getItem(LAYOUT_KEY); } catch (_) { return false; } },
+  entry: () => [FIELD.ex, FIELD.ye, FIELD.ez],
+  top: (x, z) => fieldTop(x, z),
+  shore: () => SHORE,
+};
+
 // глубина ущелья в точке, м (0 — не ущелье)
 function gullyAt(x, z) {
   const v = 1 - Math.abs(fbm(x * 0.03 + 20, z * 0.03 - 11, 2));
@@ -614,8 +710,8 @@ export function fieldTop(x, z) {
   return g < -1e8 ? g : g - gullyAt(x, z);
 }
 
-function buildField(out, rnd) {
-  const sp = { cart: true, th0: 0, dir: 1 }, B = [], grid = new Map(), GC = 14;
+function buildField(rnd) {
+  const B = [], grid = new Map(), GC = 14;
   const t0 = Date.now(), st = { giants: 0, ledges: 0, slabs: 0, bridges: 0, spires: 0, stones: 0, boulders: 0, fillers: 0 };
   const near = (x, z) => {
     const res = [], ix = Math.floor(x / GC), iz = Math.floor(z / GC);
@@ -631,19 +727,19 @@ function buildField(out, rnd) {
     return true;
   };
   // Глыба. o: A, B — полуоси; ang — поворот; y — верх; kind; n — «квадратность»; dome — купол; gs — наклон верха
-  // вдоль длинной оси; float — толщина (не до дна: полка, мост); prof — профиль бока
+  // вдоль длинной оси; float — толщина (не до дна: полка, мост); prof — профиль бока.
+  // Всё случайное разрешаем сразу в «паспорт» глыбы (spec): по нему её можно собрать заново и править в редакторе.
   const add = (x, z, o) => {
     const A = o.A, Bb = o.B ?? o.A, ang = o.ang ?? rnd() * TAU, a = Math.sqrt(A * Bb);
-    const es = Math.abs(A * Math.cos(ang)) + Math.abs(Bb * Math.sin(ang)), eu = Math.abs(A * Math.sin(ang)) + Math.abs(Bb * Math.cos(ang));
     const h = o.h ?? (2.4 + a * 0.5), T = o.float ?? (o.y - heightAt(x, z) + 1.5);
     const prof = o.float
       ? [[T * 0.3, 1.02], [T * 0.7, 0.93], [T, 0.62]]
       // выпуклый бок, под ним поджатие (нависание), ниже — колонна до дна, скрытая соседями
       : (o.prof || [[h * 0.3, 1.06], [h * 0.7, 0.98], [h, 0.78]]).concat([[Math.max(h + 1, T), o.foot ?? 0.7]]);
-    const l = { rot: ang, cs: x, cu: z, A, B: Bb, s0: x - es, s1: x + es, u0: z - eu, u1: z + eu, sRef: x, uRef: z, dS: Math.cos(ang), dU: Math.sin(ang),
-      yRef: o.y, gs: o.gs || 0, gs0: o.gs || 0, gu: 0, arch: o.arch || 0, tm: 0, T, n: o.n ?? 2.0 + rnd() * 0.6, bump: o.bump ?? 0.12 + rnd() * 0.1,
-      dome: o.dome ?? 0.5, apex: o.float ? 0.3 : 1, seg: o.seg || 12, prof };
-    lobeMesh(l, sp, out, rnd);
+    const n = o.n ?? 2.0 + rnd() * 0.6, bump = o.bump ?? 0.12 + rnd() * 0.1;
+    const rv = Array.from({ length: 9 }, () => +rnd().toFixed(4));
+    const spec = { x, z, y: o.y, A, B: Bb, ang, n, bump, dome: o.dome ?? 0.5, gs: o.gs || 0, arch: o.arch || 0, seg: o.seg || 12, T, prof, flt: !!o.float, hs: 1, col: true, kind: o.kind, rv };
+    const st0 = addStone(spec), l = st0.l;
     const b = { x, z, a, A, B: Bb, y: o.y + l.dome * 0.8, kind: o.kind, l, i: B.length };
     B.push(b);
     const k = Math.floor(x / GC) + ',' + Math.floor(z / GC);
@@ -670,6 +766,13 @@ function buildField(out, rnd) {
     }
   }
   const roadNear = (x, z, rad) => { for (const p of road) if (Math.hypot(p[0] - x, p[1] - z) < rad) return p; return null; };
+
+  // сохранённая в редакторе раскладка заменяет случайную
+  const saved = loadLayout();
+  if (saved) {
+    for (const sp of saved) addStone(sp);
+    return { saved: saved.length, roadPts: road.map((p) => [+p[0].toFixed(1), +p[1].toFixed(1), +p[2].toFixed(1), p[4]]), road: road.length, ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
+  }
 
   // --- 1) гиганты ---
   const giants = [];
@@ -897,7 +1000,9 @@ export function buildDescent(scene) {
   const wsp0 = best.spines[0], [ex, ez] = toWorld(wsp0.plan.S + 1, LANE, wsp0);
   Object.assign(FIELD, { dir: wsp0.dir, on: true, th: wsp0.th0 + wsp0.dir * wsp0.plan.S / RS, ye: wsp0.plan.Y, ex, ez });
   const cany = buildCanyon(best, out, mulberry32(SEED + 9004));
-  DESCENT.field = buildField(out, mulberry32(SEED + 9005));
+  fieldScene = scene;
+  DESCENT.field = buildField(mulberry32(SEED + 9005));
+  flushStones();
   // Скалы спуска — кусками по секторам и высоте: три.js рисует их от ближних к дальним и не рисует
   // то, что вне кадра. Одним мешем шахта перерисовывалась по нескольку раз (дорого на телефоне).
   const nAll = smoothNormals(out.pos), bins = new Map();
