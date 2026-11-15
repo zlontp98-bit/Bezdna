@@ -18,6 +18,7 @@ export const U = {
   uSat: { value: 1 },
   uZenith: { value: new THREE.Color(0.22, 0.47, 0.86) },
   uShadow: { value: null },
+  uShadowH: { value: null },
   uHmap: { value: null },
   uExt: { value: 232 },
   uCenter: { value: new THREE.Vector3() },
@@ -133,7 +134,7 @@ uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
 uniform vec4 uLure;
-uniform sampler2D uShadow, uNoise, uDetail, uLeaf, uBark, uWater;
+uniform sampler2D uShadow, uShadowH, uNoise, uDetail, uLeaf, uBark, uWater;
 
 // общая цветокоррекция стиля
 vec3 grade(vec3 c){ return mix(vec3(dot(c, vec3(0.3,0.59,0.11))), c, uSat); }
@@ -144,6 +145,14 @@ float shadowAt(vec2 xz){
   float s = texture2D(uShadow, xz/(2.0*uExt)+0.5).r;
   float e = max(abs(xz.x), abs(xz.y));
   return mix(s, 1.0, smoothstep(uExt-18.0, uExt-2.0, e));
+}
+// Тень для точки в пространстве. Карта uShadow — тень у самой земли; а предмет, стоящий выше
+// линии загораживания (uShadowH — высота, выше которой солнце уже видно), освещён, даже если земля
+// под ним в тени. Иначе острова, уступы и деревья над дном шахты были чёрными от тени дна.
+float shadowAt3(vec3 w){
+  float s = shadowAt(w.xz);
+  float L = texture2D(uShadowH, w.xz/(2.0*uExt)+0.5).r * 320.0 - 220.0;
+  return max(s, smoothstep(L + 0.3, L + 3.5, w.y));
 }
 // Мягкий «мультяшный» свет: тёплое солнце, холодная тень
 vec3 shade(vec3 alb, vec3 n, float sh){

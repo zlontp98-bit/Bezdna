@@ -93,7 +93,7 @@ export function propMaterial() {
         vN = normalize(mat3(mm) * normal);
         vC = color * tint;
         vGlow = aFx.x; vStone = aFx.z; vL = position;
-        vSh = shadowAt(o.xz + uSun.xz*2.5);
+        vSh = shadowAt3(vec3(o.x + uSun.x*2.5, o.y + 1.0, o.z + uSun.z*2.5));
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
     fragmentShader: /* glsl */ `

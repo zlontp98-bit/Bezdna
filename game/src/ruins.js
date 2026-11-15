@@ -86,24 +86,7 @@ export function buildRuins(scene) {
     blobs.push({ x: cx, z: cz, r: 5, h: 2 });
   }
 
-  // ---- тропа над туманом: столбы дугой от кольца и обратно, на середине — кристалл ----
-  {
-    const [cx, cz] = P(65, 3.19), g = new Group(cx, cz);
-    for (let i = 0; i < 10; i++) {
-      const k = i / 9, [x, z] = P(69.2 - Math.sin(k * Math.PI) * 5, 3.0 + i * 0.039);
-      const mid = i === 5, r = mid ? 1.7 : 0.9 + (i % 2) * 0.15;
-      const top = -12.4 + Math.sin(i * 1.9) * 0.45;
-      g.pillar(x, z, r, top, -52, mid ? 9 : 7);
-      if (mid) {
-        const o = new THREE.OctahedronGeometry(1, 0);
-        g.add(o, 0xb6f7ff, x, top + 1.0, z, { glow: 0.9 }, [0.42, 1.25, 0.42]);
-        g.add(o, 0x9be9ff, x + 0.55, top + 0.5, z + 0.2, { glow: 0.9 }, [0.26, 0.7, 0.26], 0, -0.4);
-        g.add(o, 0xd2c1ff, x - 0.45, top + 0.42, z - 0.35, { glow: 0.9 }, [0.22, 0.6, 0.22], 0, 0.45);
-        addCyl(x, z, 0.45, top + 2.2);
-      }
-    }
-    g.done(scene);
-  }
+  // («тропа над туманом» — дуга столбов от кольца с кристаллом — убрана: мешала, никуда не вела)
 
   // ---- у каждого ручья: дощатый мостик на кольце (камни-переступки в ряд убраны) ----
   for (const th of W.STREAMS) {

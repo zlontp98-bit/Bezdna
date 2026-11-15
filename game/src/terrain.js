@@ -495,7 +495,7 @@ function bakeShadows(blobs) {
   const sun = U.uSun.value;
   const hl = Math.hypot(sun.x, sun.z);
   const dx = sun.x / hl, dz = sun.z / hl, tan = sun.y / hl;
-  const f = new Float32Array(SH * SH).fill(1);
+  const f = new Float32Array(SH * SH).fill(1), lh = new Float32Array(SH * SH).fill(-1e9);
   const cell = (2 * W.EXT) / SH;
   for (let j = 0; j < SH; j++) {
     const z = (j + 0.5) * cell - W.EXT;
@@ -504,13 +504,16 @@ function bakeShadows(blobs) {
       const r2 = x * x + z * z;
       if (r2 > 235 * 235) continue;
       const y0 = heightAt(x, z) + 0.4;
-      let occ = 1;
-      // идём лучом к солнцу; чем ближе луч к скале, тем мягче тень
+      let occ = 1, L = -1e9;
+      // идём лучом к солнцу; чем ближе луч к скале, тем мягче тень. Заодно — высота, выше которой
+      // в этом месте солнце не загорожено ничем (для предметов над землёй: островов, уступов, деревьев)
       for (let t = 1.6; t < 150; t *= 1.22) {
-        const d = (y0 + t * tan - heightAt(x + dx * t, z + dz * t)) / t;
-        if (d * 7 < occ) { occ = d * 7; if (occ <= 0) { occ = 0; break; } }
+        const hh = heightAt(x + dx * t, z + dz * t), d = (y0 + t * tan - hh) / t;
+        if (d * 7 < occ) occ = Math.max(0, d * 7);
+        L = Math.max(L, hh - t * tan);
       }
       f[j * SH + i] = occ;
+      lh[j * SH + i] = L;
     }
   }
   // пятна тени под деревьями и камнями, сдвинутые от солнца
@@ -544,6 +547,12 @@ function bakeShadows(blobs) {
       shadowData[j * SH + i] = Math.round(clamp(s / n, 0, 1) * 255);
     }
   }
+  const hd = new Uint8Array(SH * SH);
+  for (let k = 0; k < SH * SH; k++) hd[k] = Math.round(clamp((lh[k] + 220) / 320, 0, 1) * 255);
+  const th = new THREE.DataTexture(hd, SH, SH, THREE.RedFormat, THREE.UnsignedByteType);
+  th.magFilter = th.minFilter = THREE.LinearFilter;
+  th.needsUpdate = true;
+  U.uShadowH.value = th;
   const tex = new THREE.DataTexture(shadowData, SH, SH, THREE.RedFormat, THREE.UnsignedByteType);
   tex.magFilter = tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
@@ -1037,7 +1046,7 @@ const terrainMat = () => mat({
       float deepGlow = smoothstep(-150.0, -230.0, vW.y) * (1.0 - smoothstep(52.0, 84.0, rr));
       alb = alb * (1.0 + deepGlow * 0.6);
       float ao = 1.0 - mtnK*0.1*(1.0-facet2);
-      vec3 c = shade(alb, nn, shadowAt(vW.xz)) * ao;
+      vec3 c = shade(alb, nn, shadowAt3(vW)) * ao;
       c += alb * vec3(0.10, 0.20, 0.25) * deepGlow;
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
