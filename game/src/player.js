@@ -595,8 +595,9 @@ export class Player {
     const dist = Math.hypot(v.x, v.z) * dt, n = Math.max(1, Math.ceil(dist / 0.2));
     for (let i = 0; i < n; i++) {
       const nx = p.x + (v.x * dt) / n, nz = p.z + (v.z * dt) / n;
-      const h = this.G(nx, nz);
-      if (h - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; } // крутой берег — упёрлись
+      // крутой берег или бок глыбы — упёрлись; щупаем и на толщину тела вперёд, чтобы не вплыть в камень
+      const sl = Math.hypot(nx - p.x, nz - p.z) || 1, ux = (nx - p.x) / sl, uz = (nz - p.z) / sl;
+      if (this.G(nx, nz) - p.y > 0.9 || this.G(nx + ux * BODY, nz + uz * BODY) - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; }
       p.x = nx; p.z = nz;
     }
     this.collide();

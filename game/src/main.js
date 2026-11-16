@@ -11,7 +11,7 @@ import { buildWaterfalls } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
-import { groundAt } from './solids.js';
+import { groundAt, solidAt } from './solids.js';
 import { Woodcutter } from './chop.js';
 import { World, RULES } from './world.js';
 import { Settlement } from './npc.js';
@@ -46,7 +46,7 @@ const store = {
 };
 
 let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
-let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, camLift = 0, firstPerson = false;
+let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
 let camSmDt = -1;
@@ -287,6 +287,33 @@ function toast(text) {
   toastT = setTimeout(() => $('toast').classList.remove('show'), 1800);
 }
 
+// Толстый луч камеры: точка занята, если камень есть в ней или в шаре радиусом CAM_R вокруг неё
+// (ближняя плоскость кадра — примерно такого размера; так край камня не «срезается» кадром).
+const CAM_R = 0.28;
+const _cr = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0.7, -0.7, 0], [-0.7, -0.7, 0]];
+function camBlocked(x, y, z, r = CAM_R) {
+  for (const [a, b, c] of _cr) if (solidAt(x + a * r, y + b * r, z + c * r)) return true;
+  return false;
+}
+// на каком расстоянии от головы героя луч назад упирается в камень (или вся длина, если свободно).
+// Желаемое место ищем шаром пошире (CAM_R2): камера начинает подъезжать чуть заранее и плавно,
+// а «в камне ли она» проверяем обычным шаром (CAM_R)
+const CAM_R2 = 0.5;
+function camHit(fx, fy, fz, len, r = CAM_R2) {
+  const STEP = 0.15;
+  let lo = 0;
+  for (let d = STEP; d <= len + 1e-6; d += STEP) {
+    if (camBlocked(target.x - fx * d, target.y - fy * d, target.z - fz * d, r)) {
+      if (r > CAM_R && lo < 0.6) return camHit(fx, fy, fz, len, CAM_R); // вплотную к стене — точнее, обычным шаром
+      let hi = d; // уточняем делением пополам: расстояние меняется плавно, без ступенек
+      for (let k = 0; k < 5; k++) { const m = (lo + hi) / 2; if (camBlocked(target.x - fx * m, target.y - fy * m, target.z - fz * m, r)) hi = m; else lo = m; }
+      return Math.max(0.05, lo - 0.05); // вплотную к стене камера у самой головы (герой тогда скрыт), но не в камне
+    }
+    lo = d;
+  }
+  return len;
+}
+
 function updateCamera(dt, inp) {
   yaw -= inp.lookX; pitch += inp.lookY;
   pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(firstPerson ? 1.45 : 1.3, pitch));
@@ -336,48 +363,25 @@ function updateCamera(dt, inp) {
     setNear(0.05); setRockSides(true);
     return;
   }
-  const N = 18, KMAX = 0.7;
-  let want = camDist, kWant = 0;
-  const liftAt = (t) => (need(target.x - fx * t, target.y - fy * t + camLift * t, target.z - fz * t, t) + camLift * t) / t;
-  for (let i = 1; i <= N; i++) {
-    const t = (i / N) * camDist, k = liftAt(t);
-    if (k > KMAX) {
-      // граница уточняется делением пополам: расстояние меняется непрерывно, а не шагом пробы (0.36 м)
-      let lo = ((i - 1) / N) * camDist, hi = t;
-      for (let b = 0; b < 6; b++) { const m = (lo + hi) / 2; if (liftAt(m) > KMAX) hi = m; else lo = m; }
-      want = Math.max(0.35, lo - 0.15); break;
-    }
-    if (k > kWant) kWant = k;
-  }
-  // к герою — быстро, но не скачком; обратно — не спеша
-  camCur = want < camCur ? Math.max(want, camCur - dt * 40) : Math.min(want, camCur + dt * 4);
-  camLift += Math.max(-dt * 1.2, Math.min(dt * 10, kWant - camLift));
-  const at = (d, k) => camPos.set(target.x - fx * d, target.y - fy * d + k * d, target.z - fz * d);
-  // итоговую точку проверяем отдельно: если сглаживание не успело — сразу ставим как надо
-  at(camCur, camLift);
-  if (need(camPos.x, camPos.y, camPos.z, camCur) > 0) {
-    camLift = Math.max(camLift, kWant);
-    camCur = Math.min(camCur, want);
-    for (let k = 0; k < 40 && camCur > 0.35; k++) {
-      at(camCur, camLift);
-      if (need(camPos.x, camPos.y, camPos.z, camCur) <= 0) break;
-      camCur = Math.max(0.35, camCur - 0.1);
-    }
-    at(camCur, camLift);
-  }
-  const gh = groundAt(camPos.x, camPos.z, camPos.y, true) + 0.3;
-  if (camPos.y < gh) camPos.y = gh;
-  // Лёгкий фильтр положения (≈35 мс): гасит мелкую дрожь от граней скалы под камерой, но не
-  // запаздывает заметно за пальцем. Если сглаженная точка оказалась бы в камне или ниже земли —
-  // берём точную. При первом кадре и после телепорта фильтр сбрасывается.
-  if (camSm.distanceToSquared(camPos) > 100 || camSmDt < 0) camSm.copy(camPos);
+  // Третье лицо — как в обычных играх: камера на «штанге» за героем. Из головы героя назад пускаем
+  // толстый луч (шар радиусом CAM_R) и ищем, где он впервые упирается в камень — рельеф, глыбу, столб.
+  // Камера встаёт чуть ближе этой точки: к герою подъезжает сразу (чтобы не заглянуть внутрь камня),
+  // а назад отъезжает плавно. Камера никогда не «перепрыгивает» через камни вверх — только скользит по лучу.
+  // Если голова героя сама упёрлась в камень (низкий свод) — луч начинаем чуть ниже.
+  if (solidAt(target.x, target.y, target.z, 0.1)) target.y = p.y + 1.0;
+  const want = camHit(fx, fy, fz, camDist);
+  // к герою — быстро, но не скачком (если на пути лишь тонкий камень, а сама точка свободна);
+  // если промежуточная точка оказалась бы в камне — сразу на безопасное место
+  if (want < camCur) {
+    const c = Math.max(want, camCur - dt * 22);
+    camCur = camBlocked(target.x - fx * c, target.y - fy * c, target.z - fz * c) ? want : c;
+  } else camCur += (want - camCur) * (1 - Math.exp(-dt * 3));
+  camPos.set(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur);
+  // лёгкий фильтр только против дрожи (≈30 мс); в камень сглаженная точка не заходит
+  if (camSm.distanceToSquared(camPos) > 4 || camSmDt < 0) camSm.copy(camPos);
   else {
-    const k = 1 - Math.exp(-dt * 32);
-    _cs.copy(camSm).lerp(camPos, k);
-    // если сглаженная точка в камне — подтягиваем к точной ступенями (0.5, 0.8, 1), а не скачком
-    const ok = () => need(_cs.x, _cs.y, _cs.z, camCur) <= 0 && _cs.y > groundAt(_cs.x, _cs.z, _cs.y, true) + 0.3;
-    if (!ok()) { _cs.copy(camSm).lerp(camPos, 0.55); if (!ok()) { _cs.copy(camSm).lerp(camPos, 0.85); if (!ok()) _cs.copy(camPos); } }
-    camSm.copy(_cs);
+    _cs.copy(camSm).lerp(camPos, 1 - Math.exp(-dt * 35));
+    camSm.copy(camBlocked(_cs.x, _cs.y, _cs.z) ? camPos : _cs);
   }
   camSmDt = 0; // первый кадр прошёл — дальше фильтруем
   camera.position.copy(camSm);
@@ -385,7 +389,7 @@ function updateCamera(dt, inp) {
   // Вплотную к стене ближняя плоскость (20 см) отсекала кусок скалы, и сквозь срез было видно небо.
   // Когда камера прижата к герою или к скале, плоскость подходит ближе; в открытом поле — как раньше
   // (у далёких предметов точность глубины падает, когда плоскость слишком близко).
-  const tight = camCur < 1.8 || camLift > 0.25;
+  const tight = camCur < 1.8 || want < camDist - 0.3;
   setNear(tight ? 0.05 : 0.2); setRockSides(tight);
 }
 
