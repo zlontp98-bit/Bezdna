@@ -608,13 +608,28 @@ const packLayout = (stones) => JSON.stringify({ v: LAYOUT_V, game: 'bezdna-field
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (_) { return false; } };
 const lsDel = (k) => { try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } };
-// своя карта на телефоне → карта, встроенная в игру (game/maps/field.json) → генерация по семени
+// Порядок: новая встроенная карта (game/maps/field.json) → своя карта на телефоне → генерация по семени.
+// У встроенной карты есть номер rev. Когда в игру приходит карта с новым rev, она один раз заменяет
+// сохранённую на телефоне (старая уходит в запас — «Вернуть прошлую»). Дальше правки на телефоне снова главнее.
+const LAYOUT_REV = 'bezdna_field_rev';
 function loadLayout() {
   if (typeof window !== 'undefined' && window.__fieldLayout) return migrateLayout(window.__fieldLayout);
+  let bi = null, rev = '';
+  try {
+    if (typeof window !== 'undefined' && window.__builtinField) {
+      const d = JSON.parse(window.__builtinField);
+      bi = migrateLayout(d); rev = String(d.rev || '');
+    }
+  } catch (_) { bi = null; }
+  if (bi && bi.length && rev && lsGet(LAYOUT_REV) !== rev) {
+    const old = lsGet(LAYOUT_KEY);
+    if (old) lsSet(LAYOUT_BACKUP, old);
+    lsDel(LAYOUT_KEY); lsSet(LAYOUT_REV, rev);
+    return bi;
+  }
   const own = migrateLayout(lsGet(LAYOUT_KEY));
   if (own && own.length) return own;
-  if (typeof window !== 'undefined' && window.__builtinField) return migrateLayout(window.__builtinField);
-  return null;
+  return bi && bi.length ? bi : null;
 }
 // код для переноса: «BZ2.» + сжатый JSON в base64 (раз в 5 короче простого JSON)
 async function inflate(bytes, pack) {
