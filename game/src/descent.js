@@ -323,6 +323,7 @@ const topY = (l, s, u, bw = 1) => {
 };
 
 function lobeMesh(l, sp, out, rnd) {
+  const o0 = out.pos.length; // с этого места в out.pos — треугольники этой глыбы
   const SEG = l.seg || (l.T < 3 ? 10 : l.T > 6 ? 18 : 14), rot = l.rot || 0, cr = Math.cos(rot), sr = Math.sin(rot);
   const sc = l.rot !== undefined ? l.cs : (l.s0 + l.s1) / 2, uc = l.rot !== undefined ? l.cu : (l.u0 + l.u1) / 2;
   const a = l.rot !== undefined ? l.A : (l.s1 - l.s0) / 2, b = l.rot !== undefined ? l.B : (l.u1 - l.u0) / 2;
@@ -382,7 +383,8 @@ function lobeMesh(l, sp, out, rnd) {
   }
   // край виден над пропастью только если не вдавлен в стенку: для столкновений нужен весь верх
   const minTop = Math.min(...T0[2].map((p) => p[1]));
-  const solid = addMeshTop(new Float32Array(topTris), 0.3, { slope: true, climb: true, under: AP[1] + 0.05, roof: !!l.flat });   // низ тела — настоящий низ: под ним проходим, а не упираемся в невидимое
+  // опора — по всему телу глыбы (верх и низ в каждой точке): выпуклые бока твёрдые, под скруглённым низом проходим
+  const solid = addMeshTop(new Float32Array(topTris), 0.3, { slope: true, climb: true, under: AP[1] + 0.05, roof: !!l.flat, full: new Float32Array(out.pos.slice(o0)) });
   l.solid = solid; solid.rub = !!l.rubble;
   // габариты для проверок пересечений
   let rad = 0; for (const p of T0[2]) rad = Math.max(rad, Math.hypot(p[0] - C0[0], p[2] - C0[2]));

@@ -43,8 +43,14 @@ export function addCyl(x, z, r, top, bottom = -1e9, climb = false, soft = false)
 // Колонна с меняющимся по высоте радиусом и осью (острова, столбы): одна запись вместо стопки цилиндров —
 // иначе на каждую точку опоры приходились десятки проверок. fn(y) → {x, z, r}; тело — от bottom до bodyTop,
 // выше него — шапка (отдельная карта высот), ниже — ничего.
-export function addColumn(fn, rmax, x, z, capTop, bodyTop, bottom, soft = false) {
-  insert({ x, z, r: rmax, col: fn, top: capTop, bodyTop, bottom, box: false, climb: true, soft }, rmax);
+// shape(x, z, y) → внутри ли тела (точная форма модели с рёбрами); без неё — круг fn(y)
+export function addColumn(fn, rmax, x, z, capTop, bodyTop, bottom, soft = false, shape = null) {
+  insert({ x, z, r: rmax, col: fn, shape, top: capTop, bodyTop, bottom, box: false, climb: true, soft }, rmax);
+}
+function colIn(s, x, z, y) {
+  if (s.shape) return s.shape(x, z, y);
+  const c = s.col(y);
+  return (x - c.x) ** 2 + (z - c.z) ** 2 <= c.r * c.r;
 }
 // Верх произвольной модели (валун, островок): треугольники в мире растеризуются
 // в маленькую карту высот, поэтому опора совпадает с картинкой по построению.
@@ -53,15 +59,33 @@ export function addColumn(fn, rmax, x, z, capTop, bodyTop, bottom, soft = false)
 // hang — модель висит (камень, торчащий из стены): под ней можно пройти
 // slope — верх наклонный: по нему можно скользить (нормаль берётся из карты высот плиты);
 // under — высота низа плиты: ниже неё проходят под ней (для висящих в воздухе плит)
-export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under, climb = false, roof = false } = {}) {
+// full — все треугольники модели (верх, бока, низ). Если даны, опора строится по всему телу:
+// в каждой клетке верх = самая высокая точка модели, низ = самая низкая. Так выпуклые бока
+// твёрдые там, где их видно, а под скруглённым низом можно пройти — без невидимых стен.
+export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slope = false, under, climb = false, roof = false, full = null } = {}) {
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, y0 = 1e9;
   for (let i = 0; i < tris.length; i += 3) {
     x0 = Math.min(x0, tris[i]); x1 = Math.max(x1, tris[i]);
     z0 = Math.min(z0, tris[i + 2]); z1 = Math.max(z1, tris[i + 2]);
     y0 = Math.min(y0, tris[i + 1]);
   }
+  if (full) for (let i = 0; i < full.length; i += 3) {
+    x0 = Math.min(x0, full[i]); x1 = Math.max(x1, full[i]);
+    z0 = Math.min(z0, full[i + 2]); z1 = Math.max(z1, full[i + 2]);
+    y0 = Math.min(y0, full[i + 1]);
+  }
   const nx = Math.ceil((x1 - x0) / cell) + 1, nz = Math.ceil((z1 - z0) / cell) + 1;
   const f = new Float32Array(nx * nz).fill(-1e9);
+  const bf = full ? new Float32Array(nx * nz).fill(1e9) : null;
+  rasterTris(tris, f, null, x0, z0, nx, nz, cell);
+  if (full) rasterTris(full, f, bf, x0, z0, nx, nz, cell);
+  const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
+  const s = { x: cxm, z: czm, field: f, bf, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang || full ? y0 : -1e9, soft, off: false, slope, climb, roof };
+  insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
+  return s; // off = true — объекта сейчас нет (разбитый валун)
+}
+// треугольники → карта верха f (максимум) и, если дана, карта низа bf (минимум)
+function rasterTris(tris, f, bf, x0, z0, nx, nz, cell) {
   for (let t = 0; t < tris.length; t += 9) {
     const ax = tris[t], ay = tris[t + 1], az = tris[t + 2];
     const bx = tris[t + 3], by = tris[t + 4], bz = tris[t + 5];
@@ -80,13 +104,24 @@ export function addMeshTop(tris, cell = 0.25, { soft = false, hang = false, slop
         const y = ay + (by - ay) * u + (cy - ay) * v;
         const k = j * nx + i;
         if (y > f[k]) f[k] = y;
+        if (bf && y < bf[k]) bf[k] = y;
       }
     }
   }
-  const cxm = (x0 + x1) / 2, czm = (z0 + z1) / 2;
-  const s = { x: cxm, z: czm, field: f, x0, z0, nx, nz, cell, top: -1e9, bottom: under !== undefined ? under : hang ? y0 : -1e9, soft, off: false, slope, climb, roof };
-  insert(s, Math.hypot(x1 - x0, z1 - z0) / 2 + cell);
-  return s; // off = true — объекта сейчас нет (разбитый валун)
+}
+// низ модели в точке: по карте низа (если есть), иначе общий низ
+function bottomAt(s, x, z) {
+  const bf = s.bf;
+  if (!bf) return s.bottom;
+  const fx = (x - s.x0) / s.cell, fz = (z - s.z0) / s.cell;
+  const i = Math.floor(fx), j = Math.floor(fz);
+  if (i < 0 || j < 0 || i >= s.nx - 1 || j >= s.nz - 1) return s.bottom;
+  const k = j * s.nx + i;
+  const a = bf[k], b = bf[k + 1], c = bf[k + s.nx], d = bf[k + s.nx + 1];
+  // на краю берём самый низкий из известных углов — край твёрдый на всю высоту
+  if (a > 1e8 || b > 1e8 || c > 1e8 || d > 1e8) { const m = Math.min(a, b, c, d); return m > 1e8 ? s.bottom : m; }
+  const tx = fx - i, tz = fz - j;
+  return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
 }
 function fieldAt(s, x, z) {
   const fx = (x - s.x0) / s.cell, fz = (z - s.z0) / s.cell;
@@ -112,9 +147,8 @@ export function groundAt(x, z, y, forCamera = false) {
   for (const s of list) {
     if (s.off || (forCamera && s.soft)) continue;
     if (s.col) { // тело колонны: внутри — стена (опора на 2.5 м выше ног), шапку даёт её карта высот
-      if (y >= s.bodyTop || y < s.bottom) continue;
-      const c = s.col(y);
-      if ((x - c.x) ** 2 + (z - c.z) ** 2 > c.r * c.r) continue;
+      if (y >= s.bodyTop || y + 1.3 < s.bottom) continue;
+      if (!colIn(s, x, z, Math.max(y, s.bottom))) continue;
       if (y + 2.5 > h) { h = y + 2.5; hitSolid = true; lastSolid = s; }
       continue;
     }
@@ -127,7 +161,8 @@ export function groundAt(x, z, y, forCamera = false) {
       if (Math.abs(dx * s.c - dz * s.s) > s.hx || Math.abs(dx * s.s + dz * s.c) > s.hz) continue;
     } else if (dx * dx + dz * dz > s.r * s.r) continue;
     if (forCamera && s.roof && y + 1.3 < top) continue; // крыши (арки, тоннели) камера не считает: иначе под ними она «сходит с ума»
-    if (y + 1.3 < s.bottom) { if (s.bottom < ceiling) ceiling = s.bottom; continue; } // проходим под ним
+    const bot = s.bf ? bottomAt(s, x, z) : s.bottom;
+    if (y + 1.3 < bot) { if (bot < ceiling) ceiling = bot; continue; } // проходим под ним
     // на уровне тела висящая плита — стена: отдаём её верх, и шаг/прыжок внутрь не пройдёт,
     // пока ноги не окажутся почти у верха (см. Player.tryMove)
     if (top > h) { h = top; hitSolid = true; lastSolid = s; }
@@ -139,7 +174,7 @@ export function groundAt(x, z, y, forCamera = false) {
 export const fieldTop = (s, x, z, y) => {
   if (s.field) return fieldAt(s, x, z);
   if (s.box) return -1e9;
-  if (s.col) { const c = s.col(y ?? s.bodyTop - 1); return (x - c.x) ** 2 + (z - c.z) ** 2 <= c.r * c.r ? s.top : -1e9; }
+  if (s.col) return colIn(s, x, z, y ?? s.bodyTop - 1) ? s.top : -1e9;
   return (x - s.x) ** 2 + (z - s.z) ** 2 <= s.r * s.r ? s.top : -1e9;
 };
 // Лазание по бокам скал (climb: true): есть ли в точке (x, y, z) сама скала — а не только её верх?
@@ -149,7 +184,7 @@ export function rockAt(x, z, y) {
   for (const s of list) {
     if (s.off || !s.climb) continue;
     const t = fieldTop(s, x, z, y);
-    if (t > -1e8 && y < t && y > s.bottom) return s;
+    if (t > -1e8 && y < t && y > (s.bf ? bottomAt(s, x, z) : s.bottom)) return s;
   }
   return null;
 }
@@ -206,4 +241,30 @@ export function solidsNear(x, z, rad) {
     if (Math.hypot(x - s.x, z - s.z) < s.rad + rad) out.push({ top: s.top, bottom: s.bottom, x: s.x, z: s.z });
   }
   return out;
+}
+
+// Занята ли точка (x, y, z) камнем: рельефом или твёрдым объектом (по его настоящему телу).
+// Для камеры: она ищет ближайшую к герою точку луча, где начинается камень.
+// soft (мелочь) не считается; pad — запас над землёй, м.
+export function solidAt(x, y, z, pad = 0) {
+  if (y < heightAt(x, z) + pad) return true;
+  const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
+  if (!list) return false;
+  for (const s of list) {
+    if (s.off || (s.soft && !s.col)) continue; // мелочь не в счёт, а столбы-ступени — да
+    if (s.col) {
+      if (y < s.bottom || y > s.bodyTop) continue;
+      if (colIn(s, x, z, y)) return true;
+      continue;
+    }
+    let top = s.top;
+    const dx = x - s.x, dz = z - s.z;
+    if (s.field) { top = fieldAt(s, x, z); if (top < -1e8) continue; }
+    else if (s.box) { if (Math.abs(dx * s.c - dz * s.s) > s.hx || Math.abs(dx * s.s + dz * s.c) > s.hz) continue; }
+    else if (dx * dx + dz * dz > s.r * s.r) continue;
+    if (y > top + pad) continue;
+    const bot = s.bf ? bottomAt(s, x, z) : s.bottom;
+    if (y >= bot - pad) return true;
+  }
+  return false;
 }

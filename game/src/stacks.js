@@ -58,13 +58,15 @@ function stackGeo(s, pos, idx, SEG = 30) {
   const maxD = bodyLen(s);
   for (let d = 3; d < maxD; d *= 1.35) ys.push(-d);
   ys.push(-maxD);
-  const P = [];
+  const P = [], R = []; // R — кольца тела для физики: высота, ось и радиусы по углам
   P.push(s.x, s.top + 0.45, s.z); // центр вершины
   for (let j = 0; j < ys.length; j++) {
     const dy = ys[j], y = s.top + dy;
     // шапка чуть нависает, ниже ствол сужается и слегка изгибается
     const k = dy > 0 ? 0.86 : kAt(dy);
     const [ox, oz] = leanAt(s, dy);
+    const ring = { y, x: s.x + ox, z: s.z + oz, r: new Float32Array(SEG) };
+    if (dy < 0) R.push(ring);
     for (let i = 0; i < SEG; i++) {
       const a = (i / SEG) * Math.PI * 2;
       const cx = Math.cos(a), cz = Math.sin(a);
@@ -75,8 +77,10 @@ function stackGeo(s, pos, idx, SEG = 30) {
       const rr = s.w * k * (1 + big * (s.pillar ? 0.12 : 0.35) + rib * (dy > -0.6 ? 0.08 : 0.16));
       const yy = y + (dy >= 0 ? fbm(cx * 3 + s.r, cz * 3, 2) * 0.25 : 0);
       P.push(s.x + ox + cx * rr, yy, s.z + oz + cz * rr);
+      ring.r[i] = rr;
     }
   }
+  s.rings = R;
   for (let i = 0; i < P.length; i++) pos.push(P[i]);
   // треугольники: веер на вершине и кольца вниз
   for (let i = 0; i < SEG; i++) idx.push(base, base + 1 + ((i + 1) % SEG), base + 1 + i);
@@ -158,9 +162,26 @@ export function buildStacks(scene) {
   };
   // тело колонны — стопка цилиндров по её настоящей оси и толщине (она сужается и наклоняется):
   // за него можно хвататься и лезть; раньше телом был «столб» по форме шапки — невидимые стены в глубине
+  // Форма тела — та же, что у картинки: кольца с выступами-контрфорсами, а не гладкий цилиндр внутри них
+  // (раньше рёбра были «призрачными»: герой и камера проходили сквозь них).
   const body = (s) => {
-    const bottom = s.hang ? s.top - 22 : FLOOR_Y - 12;
-    addColumn((y) => colAt(s, y), s.w * 1.05, s.x, s.z, s.top, s.top - 3.5, bottom, !!s.pillar);
+    const R = s.rings, SEG = R[0].r.length, bottom = s.hang ? R[R.length - 1].y : FLOOR_Y - 12;
+    let rmax = 0;
+    for (const g of R) { let m = 0; for (const v of g.r) m = Math.max(m, v); rmax = Math.max(rmax, Math.hypot(g.x - s.x, g.z - s.z) + m); }
+    const shape = (x, z, y) => {
+      let j = 0;
+      while (j < R.length - 1 && R[j + 1].y > y) j++;   // кольца идут сверху вниз
+      const A = R[j], B = R[Math.min(j + 1, R.length - 1)];
+      const t = A === B || y >= A.y ? 0 : Math.min(1, (A.y - y) / (A.y - B.y));
+      const cx = A.x + (B.x - A.x) * t, cz = A.z + (B.z - A.z) * t, dx = x - cx, dz = z - cz;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > rmax * rmax) return false;
+      let a = Math.atan2(dz, dx) / (Math.PI * 2) * SEG; if (a < 0) a += SEG;
+      const i = Math.floor(a) % SEG, i1 = (i + 1) % SEG, f = a - Math.floor(a);
+      const r = (A.r[i] + (A.r[i1] - A.r[i]) * f) * (1 - t) + (B.r[i] + (B.r[i1] - B.r[i]) * f) * t;
+      return d2 <= r * r;
+    };
+    addColumn((y) => colAt(s, y), rmax + 0.1, s.x, s.z, s.top, s.top - 3.5, bottom, !!s.pillar, shape);
   };
   const groups = [];
   for (const s of STACKS) {
