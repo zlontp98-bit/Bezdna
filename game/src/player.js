@@ -210,6 +210,7 @@ const CLIMBV = 2.2, CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 // толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
 const MANTLE_MIN = 0.45, MANTLE_MAX = 1.9; // перелезть можно уступ такой высоты, м
 const FALL_MAX = 1e9; // срыв при падении отключён на время тестов // падение выше этого — срыв, возврат на последний уступ
+const SWIM_R = 0.4; // радиус тела в воде
 const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
 const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
@@ -417,6 +418,8 @@ export class Player {
   grabFace(ux, uz, minUp = 1.5) {
     const f = this.findFace(ux, uz, minUp);
     if (!f) return false;
+    const hx = f.bx + f.nx * 0.42, hz = f.bz + f.nz * 0.42;
+    if (rockAt(hx, hz, this.pos.y + 0.8)) return false; // на этом месте грудь была бы в камне
     const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
     this.pos.x = f.bx + f.nx * 0.42; this.pos.z = f.bz + f.nz * 0.42;
     this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
@@ -469,20 +472,31 @@ export class Player {
     // переходят одна в другую). Точку принимаем, только если там есть за что держаться и тело не
     // оказывается внутри породы стены или под чужой скалой: тогда просто упираемся, без «телепорта».
     const ml = inp.mx * CLIMB * dt, dy = inp.my * CLIMBV * dt;
-    const seat = (qx, qz, y) => {
-      for (let d = -0.6; d <= 1.5; d += 0.05) {
-        const r = rockAt(qx + ux * d, qz + uz * d, y + 0.6);
-        if (!r) continue;
-        const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05), hx = bx + f.nx * 0.42, hz = bz + f.nz * 0.42;
-        if (heightAt(hx, hz) > y + 0.35) return null;                              // там порода стены шахты
-        if (rockAt(hx, hz, y + 0.3) || rockAt(hx, hz, y + 1.25)) return null;        // там чужая скала (голова или ноги)
-        return [bx, bz, r];
+    // Грань ищем на уровне ног, груди и рук и прижимаемся к самой близкой её части: на неровной глыбе
+    // герой не висит в воздухе, когда камень на уровне ног отступил, а у груди — рядом.
+    // stay — остаёмся на месте: тут держимся всегда, даже если рядом нависает чужая глыба
+    // (раньше в таком месте герой срывался — «не получается зацепиться»)
+    const seat = (qx, qz, y, stay) => {
+      let best = null;
+      for (const yh of [0.35, 0.8, 1.2]) {
+        for (let d = -0.6; d <= 1.5; d += 0.05) {
+          const r = rockAt(qx + ux * d, qz + uz * d, y + yh);
+          if (!r) continue;
+          if (!best || d < best[0]) best = [d, r];
+          break;
+        }
       }
-      return null;
+      if (!best) return null;
+      const [d, r] = best;
+      const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05), hx = bx + f.nx * 0.42, hz = bz + f.nz * 0.42;
+      if (stay) return rockAt(hx, hz, y + 0.8) || heightAt(hx, hz) > y + 0.8 ? null : [bx, bz, r];   // но не грудью в камне
+      if (heightAt(hx, hz) > y + 0.35) return null;                              // там порода стены шахты
+      if (rockAt(hx, hz, y + 0.3) || rockAt(hx, hz, y + 1.25)) return null;        // там чужая скала (голова или ноги)
+      return [bx, bz, r];
     };
     let b = null, ny = p.y;
     for (const [kl, kv] of [[1, 1], [0, 1], [1, 0], [0, 0]]) {
-      b = seat(p.x - uz * ml * kl, p.z + ux * ml * kl, p.y + dy * kv);
+      b = seat(p.x - uz * ml * kl, p.z + ux * ml * kl, p.y + dy * kv, kl === 0 && kv === 0);
       if (b) { ny = p.y + dy * kv; break; }
     }
     if (!b) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; return; }
@@ -597,8 +611,22 @@ export class Player {
       const nx = p.x + (v.x * dt) / n, nz = p.z + (v.z * dt) / n;
       // крутой берег или бок глыбы — упёрлись; щупаем и на толщину тела вперёд, чтобы не вплыть в камень
       const sl = Math.hypot(nx - p.x, nz - p.z) || 1, ux = (nx - p.x) / sl, uz = (nz - p.z) / sl;
-      if (this.G(nx, nz) - p.y > 0.9 || this.G(nx + ux * BODY, nz + uz * BODY) - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; }
+      if (this.G(nx, nz) - p.y > 0.9 || this.G(nx + ux * SWIM_R, nz + uz * SWIM_R) - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; }
       p.x = nx; p.z = nz;
+    }
+    // Тело пловца — круг радиусом с героя: если бок глыбы зашёл в него (подплыли боком, течение),
+    // мягко отталкиваемся наружу — герой не «тонет» в камне
+    for (let it = 0; it < 4; it++) {
+      let sx = 0, sz = 0;
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
+        if (this.G(p.x + cx * SWIM_R, p.z + cz * SWIM_R) - p.y > 0.9) { sx -= cx; sz -= cz; }
+      }
+      const l = Math.hypot(sx, sz);
+      if (l < 0.01) break;
+      p.x += (sx / l) * 0.06; p.z += (sz / l) * 0.06;
+      const vn = v.x * (sx / l) + v.z * (sz / l);
+      if (vn < 0) { v.x -= (sx / l) * vn; v.z -= (sz / l) * vn; }
     }
     this.collide();
     const g = this.G(p.x, p.z);
@@ -609,6 +637,29 @@ export class Player {
     if (inp.jump && this.swimT > 0.3 && p.y > want - 0.15) { // выпрыгнуть из воды
       this.swimming = false; this.grounded = false; this.airT = 1;
       v.y = 6.2;
+    }
+  }
+
+  // Тело героя — круг радиусом BODY. Шаг щупает стену только впереди, поэтому боком (идя вдоль глыбы,
+  // съезжая, приземляясь рядом) герой мог зайти в камень по плечо. Если стена зашла в круг —
+  // мягко отодвигаемся от неё, но только туда, где не выше ступеньки.
+  pushOutOfWalls() {
+    const p = this.pos;
+    for (let it = 0; it < 3; it++) {
+      let sx = 0, sz = 0;
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
+        if (this.G(p.x + cx * BODY, p.z + cz * BODY) - p.y > WALL_H) { sx -= cx; sz -= cz; }
+      }
+      const l = Math.hypot(sx, sz);
+      if (l < 0.01) return;
+      const qx = p.x + (sx / l) * 0.05, qz = p.z + (sz / l) * 0.05, h = this.G(qx, qz);
+      if (h - p.y > 0.36) return;
+      if (this.grounded && h < p.y - 0.3) return; // не сталкиваемся с обрыва
+      p.x = qx; p.z = qz;
+      if (this.grounded) p.y = Math.max(p.y, h);
+      const vn = this.vel.x * (sx / l) + this.vel.z * (sz / l);
+      if (vn < 0) { this.vel.x -= (sx / l) * vn; this.vel.z -= (sz / l) * vn; }
     }
   }
 
@@ -689,6 +740,11 @@ export class Player {
     if (!this.climbing && wl > -1e8 && p.y < wl - 0.85 && wl - this.G(p.x, p.z) > 1.0) {
       if (!this.swimming) { this.swimming = true; this.grounded = false; this.swimT = 0; v.y = Math.max(v.y, -1.5); }
     }
+    // из воды можно схватиться за бок глыбы («Хват» лицом к камню) и лезть наверх
+    if (this.swimming && inp.grab && this.climbCd <= 0) {
+      const a = ml > 0.3 ? Math.atan2(mx, mz) : this.facing;
+      if (this.grabFace(Math.sin(a), Math.cos(a), 0.3)) { this.swimming = false; inp = { ...inp, grab: false }; } // это нажатие — «схватиться», а не «отпустить»
+    }
     if (this.swimming) this.swimStep(dt, inp, mx, mz, wl);
     else if (this.climbing) this.climbStep(dt, inp);
     else if (this.mantle) this.mantleStep(dt);
@@ -728,6 +784,7 @@ export class Player {
 
     const dist = Math.hypot(v.x, v.z) * dt, n = Math.max(1, Math.ceil(dist / 0.2));
     for (let i = 0; i < n; i++) this.tryMove((v.x * dt) / n, (v.z * dt) / n);
+    this.pushOutOfWalls();
     this.collide();
     this.steepT = this.sliding ? 0.2 : this.steepT - dt;
     if (this.steepT > 0) {

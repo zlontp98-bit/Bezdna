@@ -119,7 +119,10 @@ function bottomAt(s, x, z) {
   const k = j * s.nx + i;
   const a = bf[k], b = bf[k + 1], c = bf[k + s.nx], d = bf[k + s.nx + 1];
   // на краю берём самый низкий из известных углов — край твёрдый на всю высоту
-  if (a > 1e8 || b > 1e8 || c > 1e8 || d > 1e8) { const m = Math.min(a, b, c, d); return m > 1e8 ? s.bottom : m; }
+  if (a > 1e8 || b > 1e8 || c > 1e8 || d > 1e8) {
+    const tx = fx - i, tz = fz - j, m = tz < 0.5 ? (tx < 0.5 ? a : b) : (tx < 0.5 ? c : d);
+    return m > 1e8 ? s.bottom : m;
+  }
   const tx = fx - i, tz = fz - j;
   return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
 }
@@ -129,8 +132,12 @@ function fieldAt(s, x, z) {
   if (i < 0 || j < 0 || i >= s.nx - 1 || j >= s.nz - 1) return -1e9;
   const f = s.field, k = j * s.nx + i;
   const a = f[k], b = f[k + 1], c = f[k + s.nx], d = f[k + s.nx + 1];
-  // на самом краю (часть углов вне модели) берём ближайшую опору — не шире одной клетки
-  if (a < -1e8 || b < -1e8 || c < -1e8 || d < -1e8) return Math.max(a, b, c, d);
+  // на самом краю (часть углов вне модели) берём ближайший угол: край опоры совпадает с краем
+  // модели с точностью до полклетки (раньше брали любой угол — опора торчала на целую клетку наружу)
+  if (a < -1e8 || b < -1e8 || c < -1e8 || d < -1e8) {
+    const tx = fx - i, tz = fz - j;
+    return tz < 0.5 ? (tx < 0.5 ? a : b) : (tx < 0.5 ? c : d);
+  }
   const tx = fx - i, tz = fz - j;
   return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
 }
