@@ -6,7 +6,7 @@ import { U } from './shaders.js';
 
 // Режим «Творчество»: свободный полёт и сборка рельефа поля глыб (ниже −101 м) прямо в игре.
 // Глыбы ставятся в точку под прицелом, их можно выбрать, переставить, изменить (размер, форма, наклон…) и убрать.
-// Раскладка сохраняется на устройстве и подхватывается при запуске; код раскладки можно скопировать и прислать.
+// Раскладка сохраняется на устройстве и подхватывается при запуске; код раскладки можно скопировать и вставить на другом телефоне.
 const TAU = Math.PI * 2;
 const PRESETS = {
   boulder: { label: 'Валун', n: 2.1, dome: 1.2, ratio: 1, hs: 1, gs: 0, flt: false },
@@ -103,16 +103,33 @@ export function initCreative({ scene, camera, player, input, hud, onToggle }) {
   const lightBtn = btn('☀ Светлее', () => setLight(!lit), sg);
   btn('К полю', () => { const e = STONEAPI.entry(); player.pos.set(e[0], e[1] + 3, e[2]); }, sg);
   btn('Сохранить', () => { save(true); }, sg);
-  btn('Код', () => { ta.style.display = 'block'; ta.value = STONEAPI.json(); ta.select(); try { navigator.clipboard.writeText(ta.value); } catch (_) { /* скопируй вручную */ } }, sg);
+  // код карты — чтобы перенести её на другой телефон: скопировать, отправить себе (почта, заметки, файл), вставить там
+  btn('Скопировать код', async () => {
+    const code = await STONEAPI.code();
+    ta.style.display = 'block'; ta.value = code; ta.focus(); ta.select();
+    let ok = false;
+    try { await navigator.clipboard.writeText(code); ok = true; } catch (_) { try { ok = document.execCommand('copy'); } catch (__) { /* скопируй вручную */ } }
+    toast(ok ? `Код скопирован (${Math.round(code.length / 1000)} тыс. знаков): отправь его себе` : 'Выдели текст в поле и скопируй');
+  }, sg);
   btn('Вставить код', () => { ta.style.display = 'block'; ta.value = ''; ta.placeholder = 'Вставь код сюда и нажми «Применить»'; applyBtn.style.display = 'block'; }, sg);
   const ta = el('textarea', {}, panel);
-  const applyBtn = btn('Применить', () => { try { const a = JSON.parse(ta.value); STONEAPI.load(a); select(null); save(); ta.style.display = 'none'; applyBtn.style.display = 'none'; toast('Раскладка применена: ' + a.length); } catch (e) { toast('Не получилось прочитать код'); } }, panel);
+  const applyBtn = btn('Применить', async () => {
+    let a = null;
+    try { a = await STONEAPI.decode(ta.value); } catch (_) { a = null; }
+    if (!a || !a.length) return toast('Не получилось прочитать код');
+    undo.length = 0; STONEAPI.backup();
+    const bad = STONEAPI.load(a); select(null); save();
+    ta.style.display = 'none'; applyBtn.style.display = 'none';
+    toast('Карта загружена: глыб ' + (a.length - bad) + (bad ? ', пропущено ' + bad : '')); refreshUI();
+  }, panel);
   applyBtn.style.display = 'none'; applyBtn.style.width = '100%';
   const dg = el('div', { className: 'g' }, panel);
   // опасные кнопки — с повторным нажатием (окна confirm в приложении могут не открываться)
   const sure = (label, fn) => { const b = btn(label, () => { if (b.dataset.arm) { delete b.dataset.arm; b.textContent = label; fn(); } else { b.dataset.arm = 1; b.textContent = 'Точно?'; setTimeout(() => { delete b.dataset.arm; b.textContent = label; }, 2500); } }, dg); };
-  sure('Очистить поле', () => { undo.length = 0; STONEAPI.clear(); select(null); save(); });
+  // перед «Очистить» и «Как было» текущая карта откладывается в запас — «Вернуть прошлую» её достаёт
+  sure('Очистить поле', () => { undo.length = 0; STONEAPI.backup(); STONEAPI.clear(); select(null); save(); });
   sure('Как было', () => { STONEAPI.reset(); location.reload(); });
+  sure('Вернуть прошлую', () => { const n = STONEAPI.restoreBackup(); undo.length = 0; select(null); toast(n ? 'Вернули прошлую карту: глыб ' + n : 'Запасной карты нет'); refreshUI(); });
   btn('Выйти', () => toggle(false), dg);
 
   btn('📌 Поставить', place, bar, 'pri'); btn('👆 Выбрать', pickSel, bar); btn('⤴ Сюда', moveSel, bar); btn('🗑 Убрать', removeSel, bar); btn('↩', doUndo, bar);

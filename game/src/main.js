@@ -611,6 +611,8 @@ requestAnimationFrame(() => setTimeout(async () => {
   try {
     // картинке заставки даём секунду на загрузку, чтобы не строить мир при пустом экране
     await Promise.race([Promise.all([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/loading.jpg'; }), loadTerrainTextures()]), new Promise((r) => setTimeout(r, 4000))]);
+    // карта поля, встроенная в игру (если есть): её получают все телефоны, у кого нет своей
+    try { const r = await fetch('./maps/field.json', { cache: 'no-store' }); if (r.ok) window.__builtinField = await r.text(); } catch (_) { /* нет — значит генерация */ }
     await build();
     await loadStep(100, 'Готово!');
     ready = true;

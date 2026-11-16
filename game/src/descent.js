@@ -587,14 +587,57 @@ const SHORE = LAKE.level + 0.5;      // ниже — вода
 // Меши кусками по ячейкам 24 м: правка пересобирает только свой кусок.
 const STONES = new Map(), SBINS = new Map(), SDIRTY = new Set();
 let stoneSeq = 0, fieldScene = null;
-const LAYOUT_KEY = 'bezdna_field_v1';
-function loadLayout() {
+// Сохранение раскладки. Формат версионный: { v, stones }. Старые сохранения (просто массив) — версия 1.
+// Если в будущем поменяется смысл полей паспорта, подними LAYOUT_V и допиши шаг в migrateLayout:
+// так старые карты игроков после обновления соберутся так же, как были.
+const LAYOUT_KEY = 'bezdna_field_v1';          // имя ключа не меняем — по нему лежат уже сохранённые карты
+const LAYOUT_BACKUP = 'bezdna_field_backup';   // прошлая раскладка перед «Очистить», «Как было» и вставкой кода
+const LAYOUT_V = 2;
+const r3 = (k, v) => (typeof v === 'number' ? Math.round(v * 1000) / 1000 : v);   // 1 мм хватает, а код короче
+// любая форма (массив v1, объект v2+, строка JSON) → массив паспортов текущей версии или null
+export function migrateLayout(d) {
   try {
-    if (typeof window !== 'undefined' && window.__fieldLayout) return window.__fieldLayout;
-    const t = typeof localStorage !== 'undefined' && localStorage.getItem(LAYOUT_KEY);
-    const a = t && JSON.parse(t);
-    return Array.isArray(a) ? a : null;
+    if (typeof d === 'string') d = JSON.parse(d);
+    if (Array.isArray(d)) d = { v: 1, stones: d };
+    if (!d || !Array.isArray(d.stones)) return null;
+    // v1 → v2: поля паспорта те же, поменялась только обёртка. Дальше шаги миграции добавлять сюда.
+    return d.stones.filter((sp) => sp && Number.isFinite(sp.x) && Number.isFinite(sp.z) && Number.isFinite(sp.y) && Array.isArray(sp.prof) && Array.isArray(sp.rv));
   } catch (_) { return null; }
+}
+const packLayout = (stones) => JSON.stringify({ v: LAYOUT_V, game: 'bezdna-field', stones }, r3);
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (_) { return false; } };
+const lsDel = (k) => { try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } };
+// своя карта на телефоне → карта, встроенная в игру (game/maps/field.json) → генерация по семени
+function loadLayout() {
+  if (typeof window !== 'undefined' && window.__fieldLayout) return migrateLayout(window.__fieldLayout);
+  const own = migrateLayout(lsGet(LAYOUT_KEY));
+  if (own && own.length) return own;
+  if (typeof window !== 'undefined' && window.__builtinField) return migrateLayout(window.__builtinField);
+  return null;
+}
+// код для переноса: «BZ2.» + сжатый JSON в base64 (раз в 5 короче простого JSON)
+async function inflate(bytes, pack) {
+  const s = new Blob([bytes]).stream().pipeThrough(pack ? new CompressionStream('deflate-raw') : new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function encodeLayout(json) {
+  if (typeof CompressionStream === 'undefined') return json;
+  const b = await inflate(json, true);
+  let bin = '';
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return 'BZ2.' + btoa(bin);
+}
+async function decodeLayout(code) {
+  code = String(code || '').trim();
+  const m = code.match(/BZ2\.([A-Za-z0-9+/=_\-\s]+)/);
+  if (m) {
+    const bin = atob(m[1].replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/'));
+    const b = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    return migrateLayout(new TextDecoder().decode(await inflate(b, false)));
+  }
+  const i = code.search(/[[{]/);                   // простой JSON (старая кнопка «Код») — тоже принимаем
+  return i < 0 ? null : migrateLayout(code.slice(i));
 }
 // собрать меш и опору по паспорту
 function buildStone(spec) {
@@ -668,11 +711,29 @@ export const STONEAPI = {
   remove(id) { dropStone(id); flushStones(); },
   clear() { for (const id of [...STONES.keys()]) dropStone(id); flushStones(); },
   byRock: (solid) => (solid && solid.sid ? STONES.get(solid.sid) : null),
-  json: () => JSON.stringify([...STONES.values()].map((s) => s.spec)),
-  save() { try { localStorage.setItem(LAYOUT_KEY, STONEAPI.json()); return true; } catch (_) { return false; } },
-  load(arr) { STONEAPI.clear(); for (const sp of arr) addStone(sp); flushStones(); },
-  reset() { try { localStorage.removeItem(LAYOUT_KEY); } catch (_) { /* нечего стирать */ } },
-  hasSaved: () => { try { return !!localStorage.getItem(LAYOUT_KEY); } catch (_) { return false; } },
+  json: () => packLayout([...STONES.values()].map((s) => s.spec)),
+  save() { return lsSet(LAYOUT_KEY, STONEAPI.json()); },
+  // перед тем как заменить или стереть раскладку — отложить текущую в запас
+  backup() { if (STONES.size) lsSet(LAYOUT_BACKUP, STONEAPI.json()); },
+  hasBackup: () => !!migrateLayout(lsGet(LAYOUT_BACKUP)),
+  restoreBackup() {
+    const a = migrateLayout(lsGet(LAYOUT_BACKUP));
+    if (!a) return 0;
+    const cur = STONEAPI.json();
+    STONEAPI.load(a); lsSet(LAYOUT_BACKUP, cur); STONEAPI.save();
+    return a.length;
+  },
+  load(arr) {
+    STONEAPI.clear();
+    let bad = 0;
+    for (const sp of migrateLayout(arr) || []) { try { addStone(sp); } catch (_) { bad++; } }   // одна битая глыба не ломает карту
+    flushStones();
+    return bad;
+  },
+  reset() { STONEAPI.backup(); lsDel(LAYOUT_KEY); },
+  hasSaved: () => !!lsGet(LAYOUT_KEY),
+  code: () => encodeLayout(STONEAPI.json()),
+  decode: (code) => decodeLayout(code),
   entry: () => [FIELD.ex, FIELD.ye, FIELD.ez],
   top: (x, z) => fieldTop(x, z),
   shore: () => SHORE,
@@ -750,8 +811,8 @@ function buildField(rnd) {
 
   // сохранённая в редакторе раскладка заменяет случайную
   const saved = loadLayout();
-  if (saved) {
-    for (const sp of saved) addStone(sp);
+  if (saved && saved.length) {
+    for (const sp of saved) { try { addStone(sp); } catch (_) { /* битая глыба — пропускаем */ } }
     return { saved: saved.length, roadPts: [], ye: Math.round(FIELD.ye), th: +FIELD.th.toFixed(2), ms: Date.now() - t0 };
   }
 
