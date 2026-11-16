@@ -289,36 +289,57 @@ function toast(text) {
 
 // Толстый луч камеры: точка занята, если камень есть в ней или в шаре радиусом CAM_R вокруг неё
 // (ближняя плоскость кадра — примерно такого размера; так край камня не «срезается» кадром).
-const CAM_R = 0.28;
+const CAM_R = 0.3;
 const _cr = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0.7, -0.7, 0], [-0.7, -0.7, 0]];
-function camBlocked(x, y, z, r = CAM_R) {
-  for (const [a, b, c] of _cr) if (solidAt(x + a * r, y + b * r, z + c * r)) return true;
+function camBlocked(x, y, z) {
+  for (const [a, b, c] of _cr) if (solidAt(x + a * CAM_R, y + b * CAM_R, z + c * CAM_R)) return true;
   return false;
 }
 // на каком расстоянии от головы героя луч назад упирается в камень (или вся длина, если свободно).
-// Желаемое место ищем шаром пошире (CAM_R2): камера начинает подъезжать чуть заранее и плавно,
-// а «в камне ли она» проверяем обычным шаром (CAM_R)
-const CAM_R2 = 0.5;
-function camHit(fx, fy, fz, len, r = CAM_R2) {
+// Один и тот же шар и для поиска, и для проверки: иначе у стены расстояние «прыгало» между двумя ответами.
+function camHit(fx, fy, fz, len) {
   const STEP = 0.15;
   let lo = 0;
   for (let d = STEP; d <= len + 1e-6; d += STEP) {
-    if (camBlocked(target.x - fx * d, target.y - fy * d, target.z - fz * d, r)) {
-      if (r > CAM_R && lo < 0.6) return camHit(fx, fy, fz, len, CAM_R); // вплотную к стене — точнее, обычным шаром
+    if (camBlocked(target.x - fx * d, target.y - fy * d, target.z - fz * d)) {
       let hi = d; // уточняем делением пополам: расстояние меняется плавно, без ступенек
-      for (let k = 0; k < 5; k++) { const m = (lo + hi) / 2; if (camBlocked(target.x - fx * m, target.y - fy * m, target.z - fz * m, r)) hi = m; else lo = m; }
+      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (camBlocked(target.x - fx * m, target.y - fy * m, target.z - fz * m)) hi = m; else lo = m; }
       return Math.max(0.05, lo - 0.05); // вплотную к стене камера у самой головы (герой тогда скрыт), но не в камне
     }
     lo = d;
   }
   return len;
 }
+// Точка, вокруг которой ходит камера, — голова героя. Когда герой лезет по скале, она отодвинута
+// от скалы наружу, а под низким сводом — опущена; сдвиг меняется плавно, без рывков камеры.
+const pivOff = new THREE.Vector3(), _pw = new THREE.Vector3();
+let heroShown = true;
 
 function updateCamera(dt, inp) {
   yaw -= inp.lookX; pitch += inp.lookY;
   pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(firstPerson ? 1.45 : 1.3, pitch));
   const p = player.viewPos;
   target.set(p.x, p.y + (firstPerson ? 1.28 : 1.5), p.z);
+  if (!firstPerson) {
+    // наружу: от скалы, по которой лезем, иначе — назад, к камере
+    let nx = -Math.sin(yaw), nz = -Math.cos(yaw), off = 0;
+    if (player.climbing) {
+      const f = player.face, ax = f ? f.nx : player.n.x, az = f ? f.nz : player.n.z, hl = Math.hypot(ax, az);
+      if (hl > 0.05) { nx = -ax / hl; nz = -az / hl; off = 0.45; }
+    }
+    // первое свободное место из списка: голова, ниже головы, дальше от скалы
+    let ok = false;
+    for (const [o, dy] of [[off, off ? -0.2 : 0], [off, -0.6], [off + 0.4, -0.3], [off + 0.4, -0.8], [0, -1.0], [off + 0.8, -0.6], [off + 1.3, -0.3], [off + 1.8, 0]]) {
+      _pw.set(-nx * o, dy, -nz * o);
+      if (!camBlocked(target.x + _pw.x, target.y + _pw.y, target.z + _pw.z)) { ok = true; break; }
+    }
+    if (!ok) _pw.set(0, -1.0, 0);
+    if (camSmDt < 0 || pivOff.distanceToSquared(_pw) > 4) pivOff.copy(_pw);
+    else pivOff.lerp(_pw, 1 - Math.exp(-dt * 6));
+    // сглаженная точка в камне — сразу на свободную
+    if (ok && camBlocked(target.x + pivOff.x, target.y + pivOff.y, target.z + pivOff.z)) pivOff.copy(_pw);
+    target.add(pivOff);
+  }
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
   // направление взгляда
   const fx = -Math.sin(yaw) * cp, fy = -sp, fz = -Math.cos(yaw) * cp;
@@ -367,8 +388,6 @@ function updateCamera(dt, inp) {
   // толстый луч (шар радиусом CAM_R) и ищем, где он впервые упирается в камень — рельеф, глыбу, столб.
   // Камера встаёт чуть ближе этой точки: к герою подъезжает сразу (чтобы не заглянуть внутрь камня),
   // а назад отъезжает плавно. Камера никогда не «перепрыгивает» через камни вверх — только скользит по лучу.
-  // Если голова героя сама упёрлась в камень (низкий свод) — луч начинаем чуть ниже.
-  if (solidAt(target.x, target.y, target.z, 0.1)) target.y = p.y + 1.0;
   const want = camHit(fx, fy, fz, camDist);
   // к герою — быстро, но не скачком (если на пути лишь тонкий камень, а сама точка свободна);
   // если промежуточная точка оказалась бы в камне — сразу на безопасное место
@@ -471,7 +490,9 @@ function frame(now) {
   if (creative.on) creative.camera(yaw, pitch);
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
-  player.m.root.visible = !creative.on && !firstPerson && (camCur > 0.7 || !!debugCam);
+  // камера у самой головы — героя прячем; с запасом (0.55 / 0.8 м), чтобы он не мигал у стены
+  heroShown = camCur > (heroShown ? 0.55 : 0.8);
+  player.m.root.visible = !creative.on && !firstPerson && (heroShown || !!debugCam);
   player.haloPts.visible = player.m.root.visible;
 
   updateOuter(player.pos.x, player.pos.z);
