@@ -362,7 +362,11 @@ export class Player {
     // дуга: сначала вверх, потом вперёд; в верхней точке чуть выше уступа
     p.y = m.sy + (m.ty - m.sy) * Math.min(1, k * 1.5) + Math.sin(k * Math.PI) * 0.35;
     this.vel.set(0, 0, 0); this.grounded = false; this.airT = 0.5;
-    if (k >= 1) { this.mantle = null; this.grounded = true; p.y = this.G(p.x, p.z); this.airT = 0; }
+    if (k >= 1) {
+      this.mantle = null; this.grounded = true; this.airT = 0;
+      const g = this.G(p.x, p.z);
+      if (g < m.ty + 0.6) p.y = g; else { p.y = m.ty; this.pushOutOfWalls(true); } // наверху не то, что ждали (тело столба) — не подбрасываем
+    }
   }
 
   // Упёрся в крутую стену и давит на неё: хватаемся сами (на уступах не нужно жать «Хват»
@@ -523,7 +527,7 @@ export class Player {
     }
     // дошли ногами до земли
     const g = this.G(p.x, p.z);
-    if (inp.my < 0 && p.y <= g + 0.04) {
+    if (inp.my < 0 && p.y <= g + 0.04 && g - p.y < 0.6) {
       this.face = null; this.climbing = false; this.grounded = true; p.y = g; this.airT = 0; this.climbCd = 0.3;
       return;
     }
@@ -549,7 +553,8 @@ export class Player {
     const p = this.pos, v = this.vel;
     const n = this.N(p.x, p.z, this.n, 0.35), hl = Math.hypot(n.x, n.z);
     if (n.y > 0.8 || hl < 1e-3) { // вылезли на ровное
-      this.climbing = false; this.grounded = true; p.y = this.G(p.x, p.z);
+      this.climbing = false; this.grounded = true;
+      { const g = this.G(p.x, p.z); if (g - p.y < 0.6) p.y = g; }
       // Мы стоим прямо на кромке: уклон «вниз от ног» тут огромный, и сразу включалось бы
       // скольжение вниз по той самой стене, на которую только что залезли. Отступаем
       // от края вглубь уступа и на секунду отключаем скольжение.
@@ -630,7 +635,7 @@ export class Player {
     }
     this.collide();
     const g = this.G(p.x, p.z);
-    if (p.y <= g) { // нащупали дно
+    if (p.y <= g && g - p.y < 0.6) { // нащупали дно (а не низ нависающей глыбы над головой)
       p.y = g; this.swimming = false; this.grounded = true; v.y = 0;
       return;
     }
@@ -643,21 +648,30 @@ export class Player {
   // Тело героя — круг радиусом BODY. Шаг щупает стену только впереди, поэтому боком (идя вдоль глыбы,
   // съезжая, приземляясь рядом) герой мог зайти в камень по плечо. Если стена зашла в круг —
   // мягко отодвигаемся от неё, но только туда, где не выше ступеньки.
-  pushOutOfWalls() {
+  pushOutOfWalls(force = false) {
     const p = this.pos;
-    for (let it = 0; it < 3; it++) {
+    // сами стоим внутри стены (тело столба) — выталкиваемся дальше и не ждём ровной площадки
+    const inside = force || this.G(p.x, p.z) - p.y > WALL_H;
+    for (let it = 0; it < (inside ? 30 : 3); it++) {
       let sx = 0, sz = 0;
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
         if (this.G(p.x + cx * BODY, p.z + cz * BODY) - p.y > WALL_H) { sx -= cx; sz -= cz; }
       }
       const l = Math.hypot(sx, sz);
-      if (l < 0.01) return;
+      if (l < 0.01) {
+        // кругом камень — ищем ближайшее свободное место до 3 м и переносим туда (картинка догонит плавно)
+        if (inside) for (let d = 0.4; d <= 3; d += 0.2) for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2, qx = p.x + Math.cos(a) * d, qz = p.z + Math.sin(a) * d, h = this.G(qx, qz);
+          if (h - p.y <= 0.36 && h > p.y - 3) { this.vOff.x += p.x - qx; this.vOff.z += p.z - qz; this.vOff.y += p.y - h; p.x = qx; p.z = qz; p.y = h; return; }
+        }
+        return;
+      }
       const qx = p.x + (sx / l) * 0.05, qz = p.z + (sz / l) * 0.05, h = this.G(qx, qz);
-      if (h - p.y > 0.36) return;
+      if (h - p.y > 0.36 && !inside) return;
       if (this.grounded && h < p.y - 0.3) return; // не сталкиваемся с обрыва
       p.x = qx; p.z = qz;
-      if (this.grounded) p.y = Math.max(p.y, h);
+      if (this.grounded && h - p.y <= 0.36) p.y = Math.max(p.y, h);
       const vn = this.vel.x * (sx / l) + this.vel.z * (sz / l);
       if (vn < 0) { this.vel.x -= (sx / l) * vn; this.vel.z -= (sz / l) * vn; }
     }
@@ -820,7 +834,14 @@ export class Player {
       }
     } else {
       this.airT = 0; v.y = 0;
-      const h = this.G(p.x, p.z);
+      let h = this.G(p.x, p.z);
+      // «опора» намного выше ног — это не ступенька, а бок или низ глыбы (под нависающим камнем
+      // голова коснулась его низа). Не подбрасываем на верх глыбы — возвращаемся на шаг назад.
+      if (h - p.y > 0.6) {
+        p.x = px0; p.z = pz0; v.x = 0; v.z = 0;
+        h = this.G(p.x, p.z);
+        if (h - p.y > 0.6) { this.pushOutOfWalls(true); h = Math.min(this.G(p.x, p.z), p.y); }
+      }
       if (p.y - h > 0.4) this.grounded = false;
       else { if (Math.abs(h - p.y) > 0.12) this.vOff.y += p.y - h; p.y = h; }
     }

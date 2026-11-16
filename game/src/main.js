@@ -9,6 +9,7 @@ import { buildRuins } from './ruins.js';
 import { buildStacks, STACKS } from './stacks.js';
 import { buildWaterfalls } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
+import { buildHands } from './fphands.js';
 import { Input } from './input.js';
 import { Inventory, bindInventoryUI } from './inventory.js';
 import { groundAt, solidAt } from './solids.js';
@@ -45,11 +46,11 @@ const store = {
   del(k) { pending.delete(k); try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
-let renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
+let hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
-let camSmDt = -1;
+let camSmDt = -1, camHold = 6.5, camHoldT = 0;
 
 // ---- качество: держим плавность, а не разрешение ----
 const Q = {
@@ -148,6 +149,7 @@ async function build() {
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
+  hands = buildHands(scene); // руки от первого лица
   creative = initCreative({ scene, camera, player, input, hud: $('hud') });
   inv = new Inventory(store);
   bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
@@ -291,8 +293,9 @@ function toast(text) {
 // (ближняя плоскость кадра — примерно такого размера; так край камня не «срезается» кадром).
 const CAM_R = 0.3;
 const _cr = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0.7, -0.7, 0], [-0.7, -0.7, 0]];
-function camBlocked(x, y, z) {
-  for (const [a, b, c] of _cr) if (solidAt(x + a * CAM_R, y + b * CAM_R, z + c * CAM_R)) return true;
+const EYE_R = 0.16; // шар «глаз» от первого лица
+function camBlocked(x, y, z, r = CAM_R) {
+  for (const [a, b, c] of _cr) if (solidAt(x + a * r, y + b * r, z + c * r, 0, true)) return true;
   return false;
 }
 // на каком расстоянии от головы героя луч назад упирается в камень (или вся длина, если свободно).
@@ -315,7 +318,10 @@ function camHit(fx, fy, fz, len) {
 const pivOff = new THREE.Vector3(), _pw = new THREE.Vector3();
 let heroShown = true;
 
+function fpHands(dt) { hands.update(dt, camera, player); }
+
 function updateCamera(dt, inp) {
+  hands.hide();
   yaw -= inp.lookX; pitch += inp.lookY;
   pitch = Math.max(firstPerson ? -1.45 : -1.2, Math.min(firstPerson ? 1.45 : 1.3, pitch));
   const p = player.viewPos;
@@ -363,24 +369,31 @@ function updateCamera(dt, inp) {
   // или на скале оказывалась внутри камня: мир виден снизу и «сквозь текстуры». Теперь выводим
   // её из камня так же, как у третьего лица: сначала отодвигаем от стены, потом поднимаем над землёй.
   if (firstPerson) {
-    _cs.copy(target);
-    if (player.climbing) { // лезем лицом к стене: глаза чуть отодвинуты от неё
-      const nx = player.n.x, nz = player.n.z, hl = Math.hypot(nx, nz);
-      if (hl > 0.05) { _cs.x += (nx / hl) * 0.3; _cs.z += (nz / hl) * 0.3; }
+    // Глаза героя. Если голова у самой скалы (лезем, протиснулись в щель), глаза отодвигаем от неё:
+    // наружу от грани, назад от взгляда, чуть ниже — первое место, где шар глаз (16 см) свободен.
+    // Так взгляд не уходит внутрь камня и не видно мир «сквозь текстуры».
+    let ox = -fx, oz = -fz;
+    if (player.climbing) {
+      const f = player.face, ax = f ? f.nx : player.n.x, az = f ? f.nz : player.n.z;
+      if (Math.hypot(ax, az) > 0.05) { ox = ax; oz = az; }
     }
-    for (let it = 0; it < 10 && need(_cs.x, _cs.y, _cs.z, 3) > 0; it++) {
-      let bx = 0, bz = 0, bh = 1e9;
-      for (let a = 0; a < 6.2832; a += 0.7854) {
-        const qx = _cs.x + Math.cos(a) * 0.12, qz = _cs.z + Math.sin(a) * 0.12, h = groundAt(qx, qz, _cs.y, true);
-        if (h < bh) { bh = h; bx = qx; bz = qz; }
-      }
-      _cs.x = bx; _cs.z = bz;
-      _cs.y = Math.max(_cs.y, groundAt(_cs.x, _cs.z, _cs.y, true) + 0.35);
+    const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;
+    const base = player.climbing ? 0.2 : 0;
+    let found = false;
+    for (const [o, dy] of [[base, 0], [base + 0.2, 0], [base + 0.4, -0.1], [base + 0.2, -0.35], [base + 0.6, -0.3], [0, -0.5], [base + 0.9, -0.4]]) {
+      _cs.set(target.x + ox * o, target.y + dy, target.z + oz * o);
+      if (!camBlocked(_cs.x, _cs.y, _cs.z, EYE_R)) { found = true; break; }
     }
-    if (camSm.distanceToSquared(_cs) > 4 || camSmDt < 0) camSm.copy(_cs); else camSm.lerp(_cs, 1 - Math.exp(-dt * 30));
+    if (!found) _cs.copy(camSmDt < 0 ? target : camSm); // свободного места нет — глаза не двигаем в камень
+    if (camSm.distanceToSquared(_cs) > 4 || camSmDt < 0) camSm.copy(_cs);
+    else {
+      _pw.copy(camSm).lerp(_cs, 1 - Math.exp(-dt * 25));
+      camSm.copy(camBlocked(_pw.x, _pw.y, _pw.z, EYE_R) ? _cs : _pw);
+    }
     camSmDt = 0;
     camera.position.copy(camSm);
     camera.lookAt(camSm.x + fx, camSm.y + fy, camSm.z + fz);
+    fpHands(dt);
     setNear(0.05); setRockSides(true);
     return;
   }
@@ -388,11 +401,17 @@ function updateCamera(dt, inp) {
   // толстый луч (шар радиусом CAM_R) и ищем, где он впервые упирается в камень — рельеф, глыбу, столб.
   // Камера встаёт чуть ближе этой точки: к герою подъезжает сразу (чтобы не заглянуть внутрь камня),
   // а назад отъезжает плавно. Камера никогда не «перепрыгивает» через камни вверх — только скользит по лучу.
-  const want = camHit(fx, fy, fz, camDist);
+  // В тесноте расстояние до камня меняется каждый кадр (шаг, поворот), и камера моталась «туда-сюда».
+  // Ближе подъезжаем сразу, а отъезжаем, только когда путь свободен дольше 0.3 с.
+  const hit = camHit(fx, fy, fz, camDist);
+  if (hit <= camHold) { camHold = hit; camHoldT = 0; }
+  else if ((camHoldT += dt) > 0.3) camHold = hit;
+  else camHold = Math.min(hit, camHold + dt * 0.5);
+  const want = camHold;
   // к герою — быстро, но не скачком (если на пути лишь тонкий камень, а сама точка свободна);
   // если промежуточная точка оказалась бы в камне — сразу на безопасное место
   if (want < camCur) {
-    const c = Math.max(want, camCur - dt * 22);
+    const c = Math.max(want, camCur - Math.max(dt * 3, (camCur - want) * (1 - Math.exp(-dt * 12))));
     camCur = camBlocked(target.x - fx * c, target.y - fy * c, target.z - fz * c) ? want : c;
   } else camCur += (want - camCur) * (1 - Math.exp(-dt * 3));
   camPos.set(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur);
@@ -430,6 +449,7 @@ function setNear(v) {
 // Главное меню: герой стоит перед камерой, она медленно ходит вокруг него
 const IDLE = { mx: 0, my: 0, jump: false, grab: false, sprint: false };
 function menuFrame(dt, t) {
+  if (hands) hands.hide();
   player.update(dt, IDLE, yaw);
   player.m.root.visible = true;
   const p = player.pos, wide = camera.aspect > 1;
@@ -487,7 +507,7 @@ function frame(now) {
   setCss('fade', 'opacity', fade.toFixed(2));
 
   updateCamera(dt, inp);
-  if (creative.on) creative.camera(yaw, pitch);
+  if (creative.on) { creative.camera(yaw, pitch); hands.hide(); }
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
   // камера у самой головы — героя прячем; с запасом (0.55 / 0.8 м), чтобы он не мигал у стены
@@ -651,7 +671,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
+    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;

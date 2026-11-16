@@ -3,6 +3,7 @@ import { heightAt } from './terrain.js';
 // Твёрдые объекты поверх ландшафта: столбы, плиты, арки.
 // На них можно стоять и запрыгивать, под арками — проходить.
 const CELL = 6;
+export const COL_WALL = 40; // насколько «выше ног» считается тело колонны
 const grid = new Map();
 export let hitSolid = false; // последняя точка опирается на объект, а не на землю
 export let ceiling = 1e9;    // низ ближайшего объекта над головой
@@ -156,7 +157,9 @@ export function groundAt(x, z, y, forCamera = false) {
     if (s.col) { // тело колонны: внутри — стена (опора на 2.5 м выше ног), шапку даёт её карта высот
       if (y >= s.bodyTop || y + 1.3 < s.bottom) continue;
       if (!colIn(s, x, z, Math.max(y, s.bottom))) continue;
-      if (y + 2.5 > h) { h = y + 2.5; hitSolid = true; lastSolid = s; }
+      // внутри тела — отвесная стена «до неба»: на неё нельзя ни шагнуть, ни вылезти. Раньше тут было
+      // +2.5 м, и герой, попав ногами в тело столба, «поднимался» по 2.5 м за шаг — бросок на десятки метров
+      if (y + COL_WALL > h) { h = y + COL_WALL; hitSolid = true; lastSolid = s; }
       continue;
     }
     const dx = x - s.x, dz = z - s.z;
@@ -253,12 +256,13 @@ export function solidsNear(x, z, rad) {
 // Занята ли точка (x, y, z) камнем: рельефом или твёрдым объектом (по его настоящему телу).
 // Для камеры: она ищет ближайшую к герою точку луча, где начинается камень.
 // soft (мелочь) не считается; pad — запас над землёй, м.
-export function solidAt(x, y, z, pad = 0) {
+// soft = true — считать и мелкие камни (для камеры: иначе валун у камеры закрывал героя)
+export function solidAt(x, y, z, pad = 0, soft = false) {
   if (y < heightAt(x, z) + pad) return true;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return false;
   for (const s of list) {
-    if (s.off || (s.soft && !s.col)) continue; // мелочь не в счёт, а столбы-ступени — да
+    if (s.off || (s.soft && !s.col && !soft)) continue; // мелочь не в счёт (если не просят), а столбы-ступени — да
     if (s.col) {
       if (y < s.bottom || y > s.bodyTop) continue;
       if (colIn(s, x, z, y)) return true;
