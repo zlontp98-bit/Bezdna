@@ -19,6 +19,7 @@ export const U = {
   uZenith: { value: new THREE.Color(0.22, 0.47, 0.86) },
   uShadow: { value: null },
   uShadowH: { value: null },
+  uWet: { value: null }, // мокрые скалы у водопадов: r — сила, g/b — от какой до какой высоты (см. waterfall.js)
   uHmap: { value: null },
   uExt: { value: 232 },
   uCenter: { value: new THREE.Vector3() },
@@ -134,7 +135,7 @@ uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
 uniform vec4 uLure;
-uniform sampler2D uShadow, uShadowH, uNoise, uDetail, uLeaf, uBark, uWater;
+uniform sampler2D uShadow, uShadowH, uNoise, uDetail, uLeaf, uBark, uWater, uWet;
 
 // общая цветокоррекция стиля
 vec3 grade(vec3 c){ return mix(vec3(dot(c, vec3(0.3,0.59,0.11))), c, uSat); }
@@ -176,6 +177,19 @@ vec3 waterTex(vec2 xz, float speed){
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);
+#ifndef NO_WET
+  // мокрые скалы рядом с водопадом: темнее и с редкими бликами (карта сверху + полоса высот)
+  {
+    vec4 wt = texture2D(uWet, w.xz/(2.0*uExt)+0.5);
+    float y0 = wt.g * 320.0 - 220.0, y1 = wt.b * 320.0 - 220.0;
+    float wet = wt.r * smoothstep(y0 - 0.5, y0 + 1.5, w.y) * smoothstep(y1 + 0.5, y1 - 1.5, w.y);
+    if (wet > 0.01) {
+      c *= 1.0 - 0.4 * wet;
+      float gl = vnoise(w.xz * 5.0 + vec2(w.y * 3.0, -uTime * 0.8));
+      c += vec3(0.55, 0.65, 0.70) * smoothstep(0.78, 0.95, gl) * wet * 0.3;
+    }
+  }
+#endif
   // чем глубже, тем темнее: свет сверху туда почти не доходит
   c *= mix(1.0, 0.86, smoothstep(-12.0, -60.0, w.y));
   float deep = smoothstep(-18.0, -70.0, w.y);

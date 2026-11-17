@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
-import { mat } from './shaders.js';
+import { mat, U } from './shaders.js';
 import { SRC, POOLS, LAKE, poolDist, heightAt } from './terrain.js';
 // озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
 const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
@@ -11,9 +11,72 @@ import { groundAt } from './solids.js';
 // Список перепадов строит buildStreams; здесь только картинка.
 const G = 9.8;
 
+// ---- мокрые скалы: карта сверху 512×512 на весь мир (как карта теней), r — сила, g/b — полоса высот ----
+const WN = 512;
+let wetData = null;
+function wetDisc(x, z, rad, y0, y1) {
+  const ext = U.uExt.value, k = WN / (2 * ext);
+  if (!wetData) { wetData = new Uint8Array(WN * WN * 4); for (let i = 0; i < WN * WN; i++) { wetData[i * 4 + 1] = 255; wetData[i * 4 + 2] = 0; } }
+  const cx = (x + ext) * k, cz = (z + ext) * k, rr = rad * k;
+  const enc = (y) => Math.max(0, Math.min(255, Math.round(((y + 220) / 320) * 255)));
+  for (let j = Math.max(0, Math.floor(cz - rr)); j <= Math.min(WN - 1, Math.ceil(cz + rr)); j++)
+    for (let i = Math.max(0, Math.floor(cx - rr)); i <= Math.min(WN - 1, Math.ceil(cx + rr)); i++) {
+      const d = Math.hypot(i + 0.5 - cx, j + 0.5 - cz) / rr;
+      if (d > 1) continue;
+      const o = (j * WN + i) * 4, w = Math.round(255 * Math.min(1, (1 - d) * 1.6));
+      wetData[o] = Math.max(wetData[o], w);
+      wetData[o + 1] = Math.min(wetData[o + 1], enc(y0));
+      wetData[o + 2] = Math.max(wetData[o + 2], enc(y1));
+    }
+}
+function finishWet() {
+  if (!wetData) return;
+  const t = new THREE.DataTexture(wetData, WN, WN, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter; // высоты нельзя смешивать с соседями
+  t.needsUpdate = true;
+  U.uWet.value = t;
+}
+
+// ---- течение под струёй: ряды всех водопадов в сетке 4 м ----
+const FLOW = [], FGRID = new Map(), FC = 4;
+function buildFlowGrid() {
+  for (const r of FLOW) {
+    const R = r.hw + 1;
+    for (let gx = Math.floor((r.x - R) / FC); gx <= Math.floor((r.x + R) / FC); gx++)
+      for (let gz = Math.floor((r.z - R) / FC); gz <= Math.floor((r.z + R) / FC); gz++) {
+        const key = gx + ',' + gz;
+        if (!FGRID.has(key)) FGRID.set(key, []);
+        FGRID.get(key).push(r);
+      }
+  }
+}
+// Сила воды в точке (x, y, z) — у груди героя. out.x/out.z — куда сносит (м/с), out.down — давит вниз (0..1).
+export function fallPush(x, y, z, out) {
+  out.x = 0; out.z = 0; out.down = 0;
+  const list = FGRID.get(Math.floor(x / FC) + ',' + Math.floor(z / FC));
+  if (!list) return out;
+  let best = 0;
+  for (const r of list) {
+    const dy = y - r.y;
+    if (dy < -1.6 || dy > 1.6) continue;
+    const ox = x - r.x, oz = z - r.z;
+    const across = Math.abs(ox * r.sd[0] + oz * r.sd[1]);
+    if (across > r.hw * 0.9) continue;
+    const th = Math.hypot(r.tx, r.tz), hx = th > 1e-3 ? r.tx / th : 0, hz = th > 1e-3 ? r.tz / th : 0;
+    if (Math.abs(ox * hx + oz * hz) > 1.3) continue;
+    const k = (1 - across / (r.hw * 0.9)) * (1 - Math.abs(dy) / 1.6);
+    if (k <= best) continue;
+    best = k;
+    const sp = r.air ? 1.6 : 2.6; // по камню вода тащит вдоль, в падении — больше давит вниз
+    out.x = hx * sp * Math.min(1, k * 2); out.z = hz * sp * Math.min(1, k * 2);
+    out.down = Math.min(1, k * 2) * (r.air ? 1 : 0.3);
+  }
+  return out;
+}
+
 export function buildWaterfalls(scene, falls) {
   const sheetMat = mat({
-    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, defines: { NO_WET: 1 },
     vertexShader: /* glsl */ `
       attribute vec4 aUv; attribute vec3 aOut;
       varying vec3 vW; varying vec4 vUv; varying vec3 vN; varying float vHb;
@@ -22,36 +85,38 @@ export function buildWaterfalls(scene, falls) {
         vN = normalize(vec3(aOut.x, 0.35, aOut.y));
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
+    // Поток — одна широкая полупрозрачная масса из трёх слоёв (задний — дымка, средний — тело, передний — пена),
+    // а не отдельные полосы: крупный мягкий шум даёт толщину, мелкие струи едва заметны, края рваные и бегут вниз.
     fragmentShader: /* glsl */ `
       varying vec3 vW; varying vec4 vUv; varying vec3 vN; varying float vHb;
       void main(){
         float u = vUv.x, q = vUv.y, L = vUv.z, d = vUv.w;
-        // q растёт как корень из пройденной высоты: при равномерной прокрутке струи ускоряются
-        float f = q * 3.2 - uTime * (1.5 + L * 0.35);
-        float n1 = vnoise(vec2(u * 6.0 + L * 11.0, f));
-        float n2 = vnoise(vec2(u * 16.0 + L * 3.0, f * 2.3 + 1.7));
-        float streak = n1 * 0.65 + n2 * 0.35;
-        // у кромки — та же бирюза, что в ручье, ниже — белая пена ручья
-        float aer = smoothstep(0.0, 0.18, d);
-        vec3 water = mix(vec3(0.20, 0.50, 0.54), vec3(0.36, 0.68, 0.70), n1);
-        vec3 foam = mix(vec3(0.72, 0.80, 0.82), vec3(0.94, 0.98, 1.0), smoothstep(0.35, 0.72, streak));
-        vec3 c = mix(water, foam, aer);
-        c = shade(c, vN, 0.75 + 0.25 * shadowAt(vW.xz)) * mix(0.9, 1.0, L);
-        // у самой воды струя разбивается в белую пену (vHb — высота над гладью чаши)
-        c = mix(c, vec3(0.90, 0.94, 0.96), smoothstep(6.0, 0.0, vHb) * 0.55);
-        float edge = abs(u) + (n2 - 0.5) * 0.4 * (0.25 + d);
-        float a = smoothstep(1.0, 0.72, edge);
-        // разрывы в пелене, через них видна мокрая скала
-        a *= mix(0.95, 0.45 + 0.6 * smoothstep(0.25, 0.65, streak), aer);
-        // пелена доходит до самой воды и входит в неё — без просвета между струёй и чашей
-        a = mix(a, max(a, 0.85 * smoothstep(1.0, 0.8, abs(u))), smoothstep(3.0, 0.0, vHb));
-        a *= mix(1.0, 0.75, L) * smoothstep(-0.35, 0.1, vHb);
-        gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 1.0));
+        float f = q * 2.6 - uTime * (1.3 + L * 0.4);
+        float body = vnoise(vec2(u * 2.2 + L * 7.0, f * 0.55));
+        float fine = vnoise(vec2(u * 9.0 + L * 3.0, f * 1.7 + 1.7));
+        float aer = smoothstep(0.0, 0.22, d);
+        vec3 water = mix(vec3(0.30, 0.58, 0.62), vec3(0.52, 0.77, 0.80), body);
+        vec3 foam = mix(vec3(0.76, 0.85, 0.88), vec3(0.95, 0.98, 1.0), fine);
+        vec3 c = mix(water, foam, aer * (0.45 + 0.4 * body + 0.15 * L));
+        c = shade(c, vN, 0.8 + 0.2 * shadowAt(vW.xz));
+        // у самой воды струя разбивается в белую пену (vHb — высота над гладью)
+        c = mix(c, vec3(0.92, 0.95, 0.97), smoothstep(5.0, 0.0, vHb) * 0.5);
+        // рваные края: шум бежит вниз вместе с водой, у каждой стороны свой
+        float sd = u < 0.0 ? 3.0 : 9.0;
+        float rag = vnoise(vec2(q * 2.0 - uTime * 1.1 + L * 5.0, sd)) * 0.6 + vnoise(vec2(q * 5.5 - uTime * 2.2, sd + 4.0)) * 0.4;
+        float edge = abs(u) + (rag - 0.5) * (0.45 + 0.3 * d);
+        float a = smoothstep(1.0, 0.68, edge);
+        // плотность слоя: задний — лёгкая дымка, средний — тело, передний — пятна пены
+        float dens = L < 0.25 ? 0.32 : L < 0.75 ? 0.55 : 0.28 + 0.4 * smoothstep(0.45, 0.8, fine);
+        a *= dens * mix(0.75, 1.15, body);
+        a *= mix(0.85, 1.0, aer); // у кромки вода плотнее и темнее, ниже — светлая и воздушная
+        a *= smoothstep(-0.35, 0.1, vHb);
+        gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 0.9));
       }`,
   });
 
   const mistMat = mat({
-    transparent: true, depthWrite: false,
+    transparent: true, depthWrite: false, defines: { NO_WET: 1 },
     uniforms: { uPx: { value: 1 } },
     vertexShader: /* glsl */ `
       uniform float uPx; attribute vec4 aS; attribute vec2 aDir;
@@ -81,6 +146,32 @@ export function buildWaterfalls(scene, falls) {
   });
 
   const rnd = mulberry32(SEED + 131);
+  const MP = [], MS = [], MD = [], SP = [], SS = [];
+  // капли: каждая летит по своей дуге от места удара и пропадает, потом всё сначала
+  const sprayMat = mat({
+    transparent: true, depthWrite: false, defines: { NO_WET: 1 },
+    uniforms: { uPx: mistMat.uniforms.uPx },
+    vertexShader: /* glsl */ `
+      uniform float uPx; attribute vec4 aS;
+      varying float vA;
+      void main(){
+        float t = fract(uTime * (0.8 + aS.x * 0.7) + aS.x * 7.13);
+        float sp = 1.2 + aS.y * 2.6;
+        vec3 p = position + vec3(cos(aS.w), 0.0, sin(aS.w)) * sp * t;
+        p.y += (2.0 + aS.y * 3.5) * t - 4.9 * t * t;
+        vec4 mv = viewMatrix * vec4(p, 1.0);
+        float dist = max(-mv.z, 0.3);
+        vA = (1.0 - t) * smoothstep(0.0, 0.08, t) * 0.85 * smoothstep(60.0, 20.0, dist);
+        gl_PointSize = clamp(uPx * 583.0 * aS.z / dist, 1.0, 40.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */ `
+      varying float vA;
+      void main(){
+        float r = length(gl_PointCoord - 0.5);
+        gl_FragColor = vec4(grade(vec3(0.92, 0.97, 1.0)), vA * smoothstep(0.5, 0.2, r));
+      }`,
+  });
   for (const f of falls) {
     const cx = Math.cos(f.th), cz = Math.sin(f.th), px = -cz, pz = cx;
     const outX = -cx, outZ = -cz; // от стены к центру провала
@@ -111,7 +202,7 @@ export function buildWaterfalls(scene, falls) {
         if (i > 0 && y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
         oPrev = o;
         const [x, z] = P(o, 0);
-        rows.push({ c: [x, y, z], sd: [px, pz], nr: [outX, 0, outZ], d, q: Math.sqrt(f.y0 - y + 0.3), hb: y - f.y1 });
+        rows.push({ c: [x, y, z], air: 1, tx: 0, ty: -1, tz: 0, sd: [px, pz], nr: [outX, 0, outZ], d, q: Math.sqrt(f.y0 - y + 0.3), hb: y - f.y1 });
       }
       // последний ряд уходит под гладь чаши: линия входа в воду ровная, без щели
       const b = rows[rows.length - 1];
@@ -119,15 +210,15 @@ export function buildWaterfalls(scene, falls) {
     }
     const NR = rows.length, end = rows[NR - 1];
     const pos = [], uv = [], dir = [], idx = [];
-    for (const L of [0, 1]) {
+    // три слоя: задний (шире, ближе к скале), средний, передний (уже, выгнут вперёд)
+    for (const [L, wAdd, off, bulge] of [[0, 0.7, -0.3, 0.2], [0.5, 0.15, 0, 0.45], [1, -0.2, 0.22, 0.6]]) {
       const base = pos.length / 3;
       for (const { c, sd, nr, d, q, hb } of rows) {
-        const half = halfAt(d) + L * 0.3;
+        const half = halfAt(d) + wAdd;
         const nl = Math.hypot(nr[0], nr[2]) || 1;
         for (let j = 0; j < COLSN; j++) {
           const u = -1 + (2 * j) / (COLSN - 1);
-          // посередине струя выгнута вперёд, задний слой ближе к скале
-          const oo = (1 - u * u) * (0.3 + 0.4 * d) * (L ? 1 : 0.5) - (L ? 0 : 0.25);
+          const oo = (1 - u * u) * bulge * (0.6 + 0.6 * d) + off;
           pos.push(c[0] + sd[0] * u * half + nr[0] * oo, c[1] + nr[1] * oo, c[2] + sd[1] * u * half + nr[2] * oo);
           uv.push(u, q, L, d);
           dir.push(nr[0] / nl, nr[2] / nl, hb);
@@ -151,31 +242,59 @@ export function buildWaterfalls(scene, falls) {
     // куда бьёт струя: чаша под ней рисует здесь кипящую пену и расходящиеся круги
     {
       const hx = end.c[0], hz = end.c[2];
-      for (const p of [...POOLS, lakePool]) if (poolDist(p, hx, hz) < 1) p.splash = { x: hx, z: hz, rad: halfAt(1) * 0.55 + Math.min(1.2, H * 0.02) };
+      for (const p of [...POOLS, lakePool]) if (poolDist(p, hx, hz) < 1) (p.splashes ||= []).push({ x: hx, z: hz, rad: halfAt(1) * 0.6 + Math.min(1.5, H * 0.025) });
     }
 
     // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
     const big = Math.min(1, H / 45), N = Math.round(10 + 22 * big), hw = halfAt(1);
     const eo = Math.hypot(end.nr[0], end.nr[2]) || 1, ex = end.nr[0] / eo, ez = end.nr[2] / eo;
-    const mp = new Float32Array(N * 3), aS = new Float32Array(N * 4), md = new Float32Array(N * 2);
+    const fog = (x, y, z, size, alpha, dx, dz) => { MP.push(x, y, z); MS.push(size, alpha, rnd(), rnd()); MD.push(dx, dz); };
     for (let i = 0; i < N; i++) {
-      const a = (rnd() - 0.5) * 2.5, l = (rnd() - 0.5) * 2 * hw;
-      const x = end.c[0] + ex * a + end.sd[0] * l, z = end.c[2] + ez * a + end.sd[1] * l;
-      mp[i * 3] = x; mp[i * 3 + 1] = f.y1 + 0.3 + rnd() * 1.5 * big; mp[i * 3 + 2] = z;
-      aS[i * 4] = (2 + rnd() * 3) * (0.6 + 1.4 * big); aS[i * 4 + 1] = 0.1 + rnd() * 0.14;
-      aS[i * 4 + 2] = rnd(); aS[i * 4 + 3] = rnd();
-      const sp = (rnd() - 0.5) * 1.6;
-      md[i * 2] = ex * 0.8 - ez * sp; md[i * 2 + 1] = ez * 0.8 + ex * sp;
+      const a = (rnd() - 0.5) * 2.5, l = (rnd() - 0.5) * 2 * hw, sp = (rnd() - 0.5) * 1.6;
+      fog(end.c[0] + ex * a + end.sd[0] * l, f.y1 + 0.3 + rnd() * 1.5 * big, end.c[2] + ez * a + end.sd[1] * l,
+        (2 + rnd() * 3) * (0.6 + 1.4 * big), 0.1 + rnd() * 0.14, ex * 0.8 - ez * sp, ez * 0.8 + ex * sp);
     }
+    // лёгкая дымка вдоль всей струи: редкие большие клубы, почти прозрачные
+    for (let i = 4; i < NR - 2; i += 7) {
+      const r = rows[i], hwr = halfAt(r.d), l = (rnd() - 0.5) * 2 * hwr;
+      fog(r.c[0] + r.sd[0] * l + r.nr[0] * 1.2, r.c[1] - 1, r.c[2] + r.sd[1] * l + r.nr[2] * 1.2,
+        3 + rnd() * 3, 0.05 + rnd() * 0.04, r.nr[0] * 0.3, r.nr[2] * 0.3);
+    }
+    // ---- брызги: немного капель у места падения и там, где струя бьёт о камень ----
+    const spl = (x, y, z, n, k) => {
+      for (let i = 0; i < n; i++) { SP.push(x + (rnd() - 0.5) * hw, y + 0.1, z + (rnd() - 0.5) * hw); SS.push(rnd(), rnd() * k, 0.12 + rnd() * 0.16, rnd() * Math.PI * 2); }
+    };
+    spl(end.c[0], Math.max(f.y1, end.c[1]), end.c[2], Math.round(14 + 20 * big), 1);
+    for (const h of rows.hits || []) {
+      spl(h[0], h[1], h[2], Math.round(6 + 10 * h[3]), 0.4 + 0.6 * h[3]);
+      fog(h[0], h[1] + 0.5, h[2], 2.5 + rnd() * 2, 0.08, 0, 0);
+    }
+    // ---- мокрые скалы вокруг струи (карта uWet) и течение под струёй ----
+    for (const r of rows) {
+      wetDisc(r.c[0], r.c[2], halfAt(r.d) + (r.air ? 1.2 : 2.0), r.c[1] - 2.5, r.c[1] + 1.5);
+      FLOW.push({ x: r.c[0], y: r.c[1], z: r.c[2], hw: halfAt(r.d), sd: r.sd, tx: r.tx, ty: r.ty, tz: r.tz, air: r.air });
+    }
+  }
+  // все клубы и все брызги — по одному вызову отрисовки
+  {
     const mg = new THREE.BufferGeometry();
-    mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
-    mg.setAttribute('aS', new THREE.BufferAttribute(aS, 4));
-    mg.setAttribute('aDir', new THREE.BufferAttribute(md, 2));
+    mg.setAttribute('position', new THREE.Float32BufferAttribute(MP, 3));
+    mg.setAttribute('aS', new THREE.Float32BufferAttribute(MS, 4));
+    mg.setAttribute('aDir', new THREE.Float32BufferAttribute(MD, 2));
     const mist = new THREE.Points(mg, mistMat);
     mist.frustumCulled = false;
     mist.renderOrder = 9;
     scene.add(mist);
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(SP, 3));
+    sg.setAttribute('aS', new THREE.Float32BufferAttribute(SS, 4));
+    const spray = new THREE.Points(sg, sprayMat);
+    spray.frustumCulled = false;
+    spray.renderOrder = 8;
+    scene.add(spray);
   }
+  finishWet();
+  buildFlowGrid();
   buildPools(scene);
   return mistMat;
 }
@@ -185,7 +304,7 @@ export function buildWaterfalls(scene, falls) {
 // глубина по дну, пена и круги от места удара струи, тонкая кромка пены у берега.
 function buildPools(scene) {
   const m = mat({
-    transparent: true, depthWrite: false,
+    transparent: true, depthWrite: false, defines: { NO_WET: 1 },
     vertexShader: /* glsl */ `
       attribute vec4 aP;
       varying vec3 vW; varying vec4 vP;
@@ -194,12 +313,18 @@ function buildPools(scene) {
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: /* glsl */ `
-      uniform float uFoamR;
+      uniform vec3 uHits[4]; // места ударов струй: x, z, радиус пены (0 — нет)
       varying vec3 vW; varying vec4 vP;
       void main(){
-        // vP: xy — смещение от места удара струи, z — глубина, w — прозрачность у берега
-        float r = length(vP.xy), depth = vP.z, F = uFoamR;
-        vec2 dirv = vP.xy / max(r, 0.01);
+        // ближайшее место удара струи; vP: z — глубина, w — прозрачность у берега
+        float r = 1e4, F = 0.0; vec2 dv = vec2(1.0, 0.0);
+        for (int i = 0; i < 4; i++) {
+          if (uHits[i].z <= 0.0) continue;
+          vec2 o = vW.xz - uHits[i].xy; float l = length(o);
+          if (l / uHits[i].z < r / max(F, 0.01)) { r = l; F = uHits[i].z; dv = o; }
+        }
+        float depth = vP.z;
+        vec2 dirv = dv / max(r, 0.01);
         float n1 = vnoise(vW.xz * 0.45 + vec2(uTime * 0.13, -uTime * 0.10));
         float n2 = vnoise(vW.xz * 1.5 - vec2(uTime * 0.22, uTime * 0.17) + 7.0);
         float dk = smoothstep(0.1, 1.6, depth);
@@ -214,6 +339,9 @@ function buildPools(scene) {
         float boil = smoothstep(F * 1.25, F * 0.45, r);
         float ring = vnoise(dirv * 3.0 + vec2(r * 0.8 - uTime * 1.5) + n1 * 1.5);
         float rings = smoothstep(0.52, 0.85, ring) * smoothstep(F * 3.2, F * 0.9, r);
+        // круги от удара: расходящиеся кольца, рвутся шумом и тают с расстоянием
+        float circ = sin(r * 1.5 - uTime * 2.4 + n1 * 1.2) * 0.5 + 0.5;
+        rings += smoothstep(0.86, 0.97, circ) * smoothstep(F * 5.5, F * 1.1, r) * smoothstep(0.25, 0.6, n2) * 0.8;
         float shore = smoothstep(0.30, 0.04, depth) * smoothstep(0.35, 0.75, n2);
         float foam = step(0.01, F) * (boil * (0.65 + 0.5 * n2) + rings * 0.6) + shore * 0.55 + smoothstep(0.8, 0.93, n2) * 0.10 * (1.0 - dk * 0.7);
         foam = clamp(foam, 0.0, 1.0);
@@ -243,14 +371,13 @@ function buildPools(scene) {
       const al = -c * t * SRC.POOL / (c > 0 ? 0.55 : 1.3), l = s * t * SRC.POOL;
       return [p.x - p.dx * al - p.dz * l, p.z - p.dz * al + p.dx * l];
     };
-    const hit = p.splash || { x: p.x, z: p.z, rad: 0 };
     const pos = [], aP = [], idx = [];
     for (let i = 0; i <= NRG; i++) {
       const t = (i / NRG) ** 0.8;
       for (let j = 0; j < SEG; j++) {
         const [x, z] = i === 0 ? [pt(0, 0)[0], pt(0, 0)[1]] : pt(t, (j / SEG) * Math.PI * 2);
         pos.push(x, p.level, z);
-        aP.push(x - hit.x, z - hit.z, Math.max(0, p.level - heightAt(x, z)), smoothstep(1.0, 0.8, poolDist(p, x, z)));
+        aP.push(0, 0, Math.max(0, p.level - heightAt(x, z)), smoothstep(1.0, 0.8, poolDist(p, x, z)));
       }
     }
     for (let i = 0; i < NRG; i++)
@@ -264,7 +391,8 @@ function buildPools(scene) {
     g.setIndex(idx);
     const pm = m.clone();
     Object.assign(pm.uniforms, m.uniforms); // общие uTime, свет и туман — те же объекты
-    pm.uniforms.uFoamR = { value: hit.rad };
+    const hs = (p.splashes || []).slice(0, 4);
+    pm.uniforms.uHits = { value: [0, 1, 2, 3].map((i) => hs[i] ? new THREE.Vector3(hs[i].x, hs[i].z, hs[i].rad) : new THREE.Vector3()) };
     pm.side = THREE.DoubleSide;
     const mesh = new THREE.Mesh(g, pm);
     mesh.frustumCulled = false;
@@ -280,7 +408,7 @@ export function flowPath(f, cx, cz, H, VH) {
   const DT = 0.025, WALL = 0.8, LIFT = 0.25;
   let x = cx * f.lipR, z = cz * f.lipR, y = f.y0;
   let hx = -cx, hz = -cz, hs = VH, vy = 0, air = true; // направление и скорость по горизонтали
-  const pts = [[x, y, z]];
+  const pts = [[x, y, z, 1]], hits = [];
   let arc = 0, lastX = x, lastY = y, lastZ = z;
   const sup = (px, pz, py) => groundAt(px, pz, py);
   const toLake = (px, pz) => { const l = Math.hypot(px - LAKE.x, pz - LAKE.z) || 1; return [(LAKE.x - px) / l, (LAKE.z - pz) / l]; };
@@ -295,7 +423,7 @@ export function flowPath(f, cx, cz, H, VH) {
         if (g - ny > WALL) { y = Math.max(y, g); air = false; continue; }
       }
       x = nx; z = nz; y = ny;
-      if (g >= y - 0.05 && !(inLake(x, z) && g < LAKE.level)) { y = g; air = false; vy = 0; hs = Math.max(hs, 1.5); }
+      if (g >= y - 0.05 && !(inLake(x, z) && g < LAKE.level)) { if (vy < -6) hits.push([x, g, z, Math.min(1, -vy / 25)]); y = g; air = false; vy = 0; hs = Math.max(hs, 1.5); }
     } else {
       // по верху: выбираем направление, где ниже и ближе к озеру, без резких поворотов
       const [lx, lz] = toLake(x, z);
@@ -316,10 +444,10 @@ export function flowPath(f, cx, cz, H, VH) {
       else y = g;
     }
     const dd = Math.hypot(x - lastX, y - lastY, z - lastZ);
-    if (dd > 0.9) { arc += dd; pts.push([x, y, z]); lastX = x; lastY = y; lastZ = z; }
+    if (dd > 0.9) { arc += dd; pts.push([x, y, z, air ? 1 : 0]); lastX = x; lastY = y; lastZ = z; }
   }
   if (y > LAKE.level) console.warn('waterfall: путь не дошёл до озера', x, y, z);
-  pts.push([x, Math.min(y, LAKE.level) - 0.4, z]);
+  pts.push([x, Math.min(y, LAKE.level) - 0.4, z, 1]);
   // сгладить ломаную (на воздухе она и так плавная, на камнях — ступеньки сетки)
   for (let pass = 0; pass < 2; pass++)
     for (let i = 1; i < pts.length - 1; i++)
@@ -340,7 +468,8 @@ export function flowPath(f, cx, cz, H, VH) {
     // пусть нормаль смотрит от скалы: вверх, если струя лежит на камне, и к озеру, если падает
     let sgn = ny < -0.01 ? -1 : 1;
     if (Math.abs(ny) < 0.3) { const [lx, lz] = toLake(c[0], c[2]); sgn = nx * lx + nz * lz < 0 ? -1 : 1; }
-    rows.push({ c, sd: [sx, sz], nr: [nx / nl * sgn, ny / nl * sgn, nz / nl * sgn], d: Math.min(1, (f.y0 - c[1]) / H), q: Math.sqrt(len + 0.3), hb: c[1] - LAKE.level });
+    rows.push({ c: [c[0], c[1], c[2]], air: c[3], tx, ty, tz, sd: [sx, sz], nr: [nx / nl * sgn, ny / nl * sgn, nz / nl * sgn], d: Math.min(1, (f.y0 - c[1]) / H), q: Math.sqrt(len + 0.3), hb: c[1] - LAKE.level });
   }
+  rows.hits = hits;
   return rows;
 }

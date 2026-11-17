@@ -94,8 +94,11 @@ export function pathAt(x, z) {
 
 // отдельные вершины хребта: угол, радиус, высота, ширина
 // Перевал через горное кольцо. th — угол, hw — полуширина дна ущелья, м
-export const PASS = { th: 0.08, hw: 16 };
+// Перевал закрыт (open: false): в выживании за горы не выйти, большой мир снаружи виден только издали
+// (и доступен полётом в «Творчестве»). Открыть — open: true.
+export const PASS = { th: 0.08, hw: 16, open: false };
 export function passK(x, z, r = Math.hypot(x, z)) {
+  if (!PASS.open) return 0;
   const d = Math.abs(angDiff(Math.atan2(z, x), PASS.th)) * r, w = PASS.hw + fbm(x * 0.05 + 3, z * 0.05, 2) * 4;
   return smoothstep(w + 26, w, d) * smoothstep(W.MEADOW - 30, W.MEADOW + 5, r);
 }
@@ -928,7 +931,7 @@ const terrainMat = () => mat({
       float rr = length(vW.xz);
       // перевал и большой мир за кольцом: внизу — луг, а не горы
       float passA = abs(mod(atan(vW.z, vW.x) - ${PASS.th.toFixed(3)} + 9.42478, 6.28319) - 3.14159) * rr;
-      float lowK = (1.0 - smoothstep(${PASS.hw + 6}.0, ${PASS.hw + 30}.0, passA)) + smoothstep(${W.OUTER + 30}.0, ${W.OUTER + 120}.0, rr);
+      float lowK = ${PASS.open ? 1 : 0}.0 * (1.0 - smoothstep(${PASS.hw + 6}.0, ${PASS.hw + 30}.0, passA)) + smoothstep(${W.OUTER + 30}.0, ${W.OUTER + 120}.0, rr);
       float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr) * (1.0 - clamp(lowK, 0.0, 1.0) * (1.0 - smoothstep(18.0, 34.0, vW.y)))); // «горность»: форма, трава, снег
       float deepK = smoothstep(8.0, 50.0, -vW.y);
       // рублёные грани: настоящая нормаль треугольника + гладкая
