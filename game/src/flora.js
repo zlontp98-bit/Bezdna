@@ -3,7 +3,7 @@ import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
 import { STACKS, PILLARS } from './stacks.js';
-import { addMeshTop, blockedByStone } from './solids.js';
+import { addMeshTop, blockedByStone, solidAt } from './solids.js';
 import { objId, idRand, RULES } from './world.js';
 
 const TAU = Math.PI * 2;
@@ -286,8 +286,17 @@ export function buildFlora(scene) {
       if (fn(x, y, z, n.y, r)) placed++;
     }
   }
-  const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) =>
+  // В глубине поле глыб и столбы стоят поверх земли: ни гриб, ни кристалл не должен оказаться внутри камня
+  // (проверяем ножку по высоте, а у гигантского гриба — ещё и края шляпки)
+  const inRock = (x, y, z, h, r) => {
+    for (let k = 0.3; k <= h; k += 0.7) if (solidAt(x, y + k, z, 0, true)) return true;
+    if (r > 0) for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU; if (solidAt(x + Math.cos(a) * r, y + h, z + Math.sin(a) * r, 0, true)) return true; }
+    return false;
+  };
+  const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) => {
+    if (y < -9 && inRock(x, y, z, list === lists.shroom ? 3.4 * s : 1.2 * s, list === lists.shroom ? 1.7 * s : 0)) return;
     list.push({ x, y, z, s, color, rot, tilt });
+  };
 
   // ---- камни у водопадов ----
   // Не ряды и не кольцо, а естественные группы: у воды лежит одна крупная глыба, рядом две-три

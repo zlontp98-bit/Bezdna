@@ -177,7 +177,7 @@ vec3 waterTex(vec2 xz, float speed){
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);
-#ifndef NO_WET
+#ifdef WET
   // мокрые скалы рядом с водопадом: темнее и с редкими бликами (карта сверху + полоса высот)
   {
     vec4 wt = texture2D(uWet, w.xz/(2.0*uExt)+0.5);

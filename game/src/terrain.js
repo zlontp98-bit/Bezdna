@@ -912,6 +912,7 @@ function buildChannelStrips(scene, material) {
 }
 
 const terrainMat = () => mat({
+  defines: { WET: 1 }, // мокрые скалы у водопадов — только у земли и камня (трава, вода и прочее их не считают)
   vertexShader: /* glsl */ `
     attribute vec2 aB; varying vec2 vB;
     varying vec3 vW; varying vec3 vN;

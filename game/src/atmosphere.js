@@ -298,7 +298,7 @@ export function buildStreams(scene) {
           for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
           // перед срывом лента тает: дальше ту же воду несёт пелена водопада (она начинается раньше кромки),
           // поэтому у кромки нет «плиты» — одна вода плавно переходит в другую
-          const tail = endsFall ? smoothstep(0, 4.5, (b - k) * 0.5) : 1;
+          const tail = endsFall ? smoothstep(0, 1.6, (b - k) * 0.5) : 1;
           foam.push(foamAt[k], smoothstep(0.8, 1.0, dn) * tail);
         }
         if (prev) len += Math.abs(r - R[k - 1]) + Math.abs(wmid - lvl[k - 1]);
