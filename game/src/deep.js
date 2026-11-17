@@ -428,10 +428,15 @@ export class Deep {
       if (!o) return;
       if (ev.by === world.me) o.reward = ev.reward;
       o.squash = !!ev.squash;
+      if (o.squash) {
+        // лужа — сразу и для всех; а замедление и брызги на экране — только тому, кто наступил
+        this.puddles.add(o.x, o.y, o.z, 1.15 + 0.45 * o.s);
+        if (ev.by === world.me) { this.stuckT = STUCK; splat(); }
+      }
       this.gone(o, ev.at, true);
     });
     this.puddles = new Puddles(scene);
-    this.inGoo = false;
+    this.inGoo = false; this.stuckT = 0;
   }
   gone(o, at, animate) {
     o.at = at; if (o.col3) o.col3.off = true;
@@ -491,7 +496,8 @@ export class Deep {
     const pl = this.player;
     // фиолетовый гриб под ногой давится; в луже жижи ноги вязнут
     if (pl.grounded && !pl.climbing && !pl.swimming) this.stomp();
-    const goo = this.puddles.update(dt, pl);
+    this.stuckT = Math.max(0, this.stuckT - dt);
+    const goo = this.puddles.update(dt, pl) || this.stuckT > 0;
     pl.slow = goo ? 0.4 : 1;
     if (goo && !this.inGoo && !this.gooTold) { this.gooTold = true; this.toast('Фиолетовая жижа — ноги вязнут'); }
     this.inGoo = goo;
@@ -528,7 +534,7 @@ export class Deep {
         // раздавлен: сплющивается, растекается — и на его месте лужа жижи
         const k = Math.min(1, b.t / 0.22);
         this.flat(b, 1 - 0.92 * k, 1 + 0.6 * k);
-        if (k === 1) { b.state = 'gone'; b.stomped = false; b.squash = false; this.place(b, 0); this.puddles.add(b.x, b.y, b.z, 0.75 + 0.35 * b.s); }
+        if (k === 1) { b.state = 'gone'; b.stomped = false; b.squash = false; this.place(b, 0); }
       } else if (b.state === 'break') {
         const k = Math.min(1, b.t / BREAK);
         this.place(b, 1 - k * k);
@@ -574,6 +580,38 @@ export class Deep {
 }
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+
+// ---------- брызги жижи на экране ----------
+// Наступил на фиолетовый гриб — экран забрызган по краям; ровно STUCK секунд ноги вязнут,
+// брызги тают к концу этого времени.
+const STUCK = 3;
+let _splat = null;
+function splat() {
+  if (typeof document === 'undefined') return;
+  if (!_splat) {
+    _splat = document.createElement('div');
+    _splat.style.cssText = 'position:fixed;inset:0;pointer-events:none;opacity:0;';
+    // сразу за картинкой игры: кнопки остаются поверх брызг
+    const cv = document.getElementById('game');
+    if (cv) cv.after(_splat); else document.body.appendChild(_splat);
+  }
+  // кляксы: у краёв крупные, ближе к центру мелкие капли
+  const g = [];
+  for (let i = 0; i < 14; i++) {
+    const side = i % 4, t = Math.random() * 100, d = Math.random() * 18;
+    const [x, y] = side === 0 ? [t, d] : side === 1 ? [100 - d, t] : side === 2 ? [t, 100 - d] : [d, t];
+    const r = 9 + Math.random() * 16;
+    g.push(`radial-gradient(circle at ${x}% ${y}%, rgba(110,25,160,0.8) 0, rgba(140,45,195,0.7) ${r * 0.8}vmin, rgba(140,45,195,0) ${r}vmin)`);
+  }
+  for (let i = 0; i < 10; i++) {
+    const x = 15 + Math.random() * 70, y = 15 + Math.random() * 70, r = 1.2 + Math.random() * 2.5;
+    g.push(`radial-gradient(circle at ${x}% ${y}%, rgba(170,70,220,0.75) 0, rgba(170,70,220,0.65) ${r * 0.8}vmin, rgba(170,70,220,0) ${r}vmin)`);
+  }
+  _splat.style.background = g.join(',');
+  _splat.style.transition = 'none'; _splat.style.opacity = '1';
+  void _splat.offsetWidth;
+  _splat.style.transition = `opacity ${STUCK - 0.6}s ease-in 0.6s`; _splat.style.opacity = '0';
+}
 
 // ---------- лужи фиолетовой жижи ----------
 // Остаются от раздавленных фиолетовых грибов: ~45 с, потом высыхают. Пока в луже — герой идёт медленно.
@@ -649,12 +687,12 @@ class Puddles {
       const p = this.list[i];
       p.t += dt;
       // растекается за полсекунды, в конце высыхает
-      const grow = Math.min(1, p.t / 0.5), fade = Math.min(1, (PUD_LIFE - p.t) / 4);
+      const grow = Math.min(1, p.t / 0.2), fade = Math.min(1, (PUD_LIFE - p.t) / 4);
       if (fade <= 0) { this.drop(p); continue; }
       const k = grow * (2 - grow);
       p.mesh.scale.set(k, 1, k);
       p.mesh.material.uniforms.uA.value = Math.min(grow * 2, 1) * fade;
-      if (pl.grounded && fade > 0.3 && Math.hypot(pl.pos.x - p.x, pl.pos.z - p.z) < p.rad * k * 0.85 && Math.abs(pl.pos.y - p.y) < 0.6) inside = true;
+      if (pl.grounded && fade > 0.3 && Math.hypot(pl.pos.x - p.x, pl.pos.z - p.z) < p.rad * 0.95 && Math.abs(pl.pos.y - p.y) < 0.6) inside = true;
     }
     return inside;
   }
