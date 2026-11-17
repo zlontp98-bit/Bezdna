@@ -4,10 +4,10 @@ setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
 import { buildFlora, buildGrass, updateFloraDist } from './flora.js';
-import { buildSky, buildClouds, buildMist, buildMotes, buildStreams, buildShafts } from './atmosphere.js';
+import { buildSky, buildClouds, buildMist, buildMotes, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks, STACKS } from './stacks.js';
-import { buildWaterfalls } from './waterfall.js';
+import { buildWater, planWater } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { buildHands } from './fphands.js';
 import { Input } from './input.js';
@@ -138,6 +138,8 @@ async function build() {
   // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
   buildDescent(scene);
   initOuter(scene);
+  // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
+  planWater();
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   await loadStep(60, 'Разбиваем лагерь…');
@@ -147,7 +149,7 @@ async function build() {
   await loadStep(84, 'Пускаем воду…');
   buildSky(scene);
   clouds = buildClouds(scene);
-  falls = buildWaterfalls(scene, buildStreams(scene));
+  falls = buildWater(scene);
   buildMist(scene);
   buildShafts(scene);
   await loadStep(92, 'Растим траву…');

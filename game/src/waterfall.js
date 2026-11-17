@@ -1,14 +1,13 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
 import { mat, U } from './shaders.js';
-import { SRC, POOLS, LAKE, poolDist, heightAt } from './terrain.js';
+import { W, SRC, SOURCES, POOLS, LAKE, poolDist, heightAt, waterAt } from './terrain.js';
 // озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
 const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
 import { smoothstep } from './noise.js';
-import { groundAt } from './solids.js';
+import { groundAt, solidAt } from './solids.js';
 
-// Водопады: пелена воды с кромки по параболе, у подножия — брызги и водяная пыль.
-// Список перепадов строит buildStreams; здесь только картинка.
+// Вода ручьёв: гладь, водопады и сток по дну шахты — одна лента на ручей; у подножия — брызги и водяная пыль.
 const G = 9.8;
 
 // ---- мокрые скалы: карта сверху 512×512 на весь мир (как карта теней), r — сила, g/b — полоса высот ----
@@ -74,53 +73,455 @@ export function fallPush(x, y, z, out) {
   return out;
 }
 
-export function buildWaterfalls(scene, falls) {
-  const sheetMat = mat({
+// ================== ручей целиком: одна лента от родника до озера ==================
+// Раньше гладь ручья, каждый водопад и сток по дну были отдельными сетками со своими шейдерами — на стыках
+// были видны «куски». Теперь у каждого ручья одна непрерывная полоса: ряды идут по воде от родника,
+// через кромку, вниз по стене и по дну шахты до озера. Координата q — метры пути воды: рисунок течёт
+// с одной скоростью везде, а вид (гладь или завеса) плавно зависит от крутизны ряда.
+const DROP = 0.6;  // падение воды на 0.5 м пути, с которого начинается перепад
+const FALL = 2.0;  // перепад ниже этого — каскад, вода остаётся гладью
+const COLS = 9;    // точек поперёк ленты
+export const STREAMS = [];
+
+// Путь всех ручьёв считается до расстановки растений: деревья и грибы не ставим туда, где течёт вода.
+export function planWater() {
+  if (STREAMS.length) return STREAMS;
+  for (const s of SOURCES) STREAMS.push(planStream(s.tw));
+  // точки воды (падение и сток по дну) в сетке 4 м — для waterNear
+  for (const st of STREAMS) for (const r of st.rows) {
+    if (r.kind === 'flat') continue;
+    for (let u = -1; u <= 1.001; u += 0.5) {
+      const x = r.c[0] + r.sd[0] * u * r.half, z = r.c[2] + r.sd[1] * u * r.half;
+      const key = Math.floor(x / 4) + ',' + Math.floor(z / 4);
+      (NEAR.get(key) || NEAR.set(key, []).get(key)).push([x, r.c[1], z]);
+    }
+  }
+  return STREAMS;
+}
+const NEAR = new Map();
+// Течёт ли вода рядом с предметом (x, y, z), у которого ширина rad и высота h: кроны над водопадом не нужны.
+export function waterNear(x, y, z, rad, h) {
+  const R = rad + 0.8;
+  for (let gx = Math.floor((x - R) / 4); gx <= Math.floor((x + R) / 4); gx++)
+    for (let gz = Math.floor((z - R) / 4); gz <= Math.floor((z + R) / 4); gz++) {
+      const l = NEAR.get(gx + ',' + gz);
+      if (l) for (const p of l) if (p[1] > y - 1.5 && p[1] < y + h + 1 && Math.hypot(p[0] - x, p[2] - z) < R) return true;
+    }
+  return false;
+}
+
+function planStream(th) {
+  const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
+  const R = [];
+  for (let r = W.SRC_R + SRC.GORGE; r > W.PIT - 6; r -= 0.5) R.push(r);
+  const lvl = R.map((r) => { const w = waterAt(cx * r, cz * r); return w > -1e8 ? w : heightAt(cx * r, cz * r) + 0.2; });
+  // Ширина воды — по самому руслу: в обе стороны от оси ищем берег (дно выше глади). Середину ленты
+  // сдвигаем к середине русла. Сырые замеры скачут от ступенек сетки рельефа — сглаживаем их по пути
+  // и ограничиваем, как быстро вода может сужаться и расширяться (не больше 0.2 м ширины на метр пути).
+  const WL = [], WO = [];
+  for (let k = 0; k < R.length; k++) {
+    const r = R[k], y = lvl[k];
+    const side = (sg) => { let l = 0; while (l < 12 && heightAt(cx * r + px * l * sg, cz * r + pz * l * sg) < y - 0.03) l += 0.25; return l; };
+    const a = side(-1), b = side(1);
+    WL.push(Math.max(1.5, (a + b) / 2)); WO.push(Math.max(-1.5, Math.min(1.5, (b - a) / 2)));
+  }
+  const halfW = new Float32Array(R.length), offW = new Float32Array(R.length);
+  const smoothSeg = (A, a, b, out, lim) => {
+    let v = A.slice(a, b + 1);
+    const n = v.length;
+    // сперва расширяем до самого широкого места рядом (±2 м): лента не открывает мокрое дно у берега
+    // в узком ущелье у истока наоборот: стены там ступенчатые, и лента шире щели резалась бы о них зубцами —
+    // берём самое узкое место рядом, вода идёт внутри стен и кончается мягким краем
+    const gorge = false; // (проверено: в ущелье узкая лента не убирает зубцы — их дают сами стены; а водопад-исток становится уже щели в скале)
+    if (lim) { const t = v.slice(); v = t.map((_, i) => { let m = gorge ? 1e9 : -1e9; for (let d = -4; d <= 4; d++) if (t[i + d] !== undefined) m = gorge ? Math.min(m, t[i + d]) : Math.max(m, t[i + d]); return m; }); }
+    for (let pass = 0; pass < 4; pass++) {
+      const t = v.slice();
+      for (let i = 0; i < n; i++) { let s = 0, w = 0; for (let d = -4; d <= 4; d++) { const j = i + d; if (j < 0 || j >= n) continue; const k = 5 - Math.abs(d); s += t[j] * k; w += k; } v[i] = s / w; }
+    }
+    if (lim && !gorge) { for (let i = 1; i < n; i++) v[i] = Math.max(v[i], v[i - 1] - lim); for (let i = n - 2; i >= 0; i--) v[i] = Math.max(v[i], v[i + 1] - lim); }
+    if (gorge) for (let i = 0; i < n; i++) v[i] -= 0.55; // край ленты — чуть не доходя до стены
+    for (let i = 0; i < n; i++) out[a + i] = v[i];
+  };
+  const halfAt = (k) => halfW[k] + 0.45;
+  // ровные участки и водопады
+  const segs = [], falls = [], foamAt = new Float32Array(R.length);
+  let start = 0, i = 0, open = false;
+  while (i < R.length - 1) {
+    if (lvl[i] - lvl[i + 1] < DROP) { i++; continue; }
+    let j = i + 1;
+    const calm = (k) => Math.abs(lvl[k] - lvl[k + 1]) < 0.15 && Math.abs(lvl[k + 1] - lvl[k + 2]) < 0.15 && Math.abs(lvl[k + 2] - lvl[k + 3]) < 0.15;
+    while (j < R.length - 4 && !calm(j)) j++;
+    open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода падает до самого озера
+    if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: гладь
+    segs.push([start, i]);
+    const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: 0, src: R[i] > W.SRC_R, i, j };
+    falls.push(f);
+    if (open) break;
+    for (let k = j; k < R.length; k++) foamAt[k] = Math.max(foamAt[k], smoothstep(12, 0, R[j] - R[k]) * (f.src ? 1 : 0.75));
+    start = j; i = j;
+  }
+  if (!open) segs.push([start, R.length - 1]);
+  for (const [a, b] of segs) { smoothSeg(WL, a, b, halfW, 0.1); smoothSeg(WO, a, b, offW, 0); }
+  // у кромки русло мелкое и чуть уже — но вода к кромке не сужается: ширину перед кромкой держим
+  // как в 6 м выше по течению, а завеса не уже прорези в стене под водопад
+  for (const f of falls) {
+    const k0 = Math.max(0, f.i - 12), h0 = halfW[k0];
+    for (let k = k0; k <= f.i; k++) halfW[k] = Math.max(halfW[k], h0);
+    f.half = Math.max(halfAt(f.i), f.src ? 5.0 : 3.6); f.off = offW[f.i]; // исток: щель в скале ~10 м
+  }
+  // перед кромкой вода разгоняется и светлеет
+  for (const f of falls) for (let k = 0; k < R.length; k++) {
+    const d = R[k] - f.lipR;
+    if (d >= 0 && d < 3) foamAt[k] = Math.max(foamAt[k], 0.35 * (1 - d / 3));
+  }
+  // ---- ряды: гладь, водопад, гладь, ... ----
+  const rows = [];
+  for (let si = 0; si < segs.length; si++) {
+    const [a, b] = segs[si];
+    // после водопада гладь продолжается ниже места удара (вода не течёт назад к стене)
+    const after = si > 0 ? rows[rows.length - 1] : null;
+    const rStop = after ? Math.hypot(after.c[0], after.c[2]) - 0.6 : 1e9;
+    for (let k = a; k <= b; k++) {
+      if (R[k] > rStop) continue;
+      const slope = Math.abs(lvl[Math.max(a, k - 3)] - lvl[Math.min(b, k + 3)]) / (0.5 * (Math.min(b, k + 3) - Math.max(a, k - 3)) || 1); // по 3 м: ступеньки сетки не мигают
+      // после удара о бережок пенные зубцы не обрываются ровной чертой, а тают дальше по ручью
+      const hb = after?.slide ? 0.6 + 0.9 * (rStop + 0.6 - R[k]) : 99;
+      rows.push({ kind: 'flat', c: [cx * R[k] + px * offW[k], lvl[k], cz * R[k] + pz * offW[k]], sd: [px, pz], half: halfAt(k), steep: 0.6 * smoothstep(0.25, 0.8, slope), foam: foamAt[k], hb: hb > 6 ? 99 : hb });
+    }
+    const f = falls[si];
+    if (!f) continue;
+    f.i0 = rows.length; // первый ряд водопада
+    const fr = f.open ? shaftRows(f, cx, cz, px, pz) : dropRows(f, cx, cz, px, pz);
+    for (const r of fr) rows.push(r);
+    f.i1 = rows.length - 1;
+  }
+  finishRows(rows, cx, cz);
+  return { th, rows, falls };
+}
+
+// Обычный водопад (в чашу или на уступ): парабола с кромки, пелена не уходит в скалу.
+function dropRows(f, cx, cz, px, pz) {
+  const H = f.y0 - f.y1, T = Math.sqrt((2 * H) / G), VH = f.src ? SRC.VH : 1.6;
+  const P = (o, l) => [cx * (f.lipR - o) + px * (l + f.off), cz * (f.lipR - o) + pz * (l + f.off)];
+  const halfAt = (d) => f.half + Math.min(1.0, H * 0.03) * d;
+  const clear = (o, y, hw) => {
+    for (let u = -1; u <= 1.001; u += 0.125) { const [x, z] = P(o, u * hw); if (heightAt(x, z) > y - 0.9) return false; } // гуще и с запасом: острые выступы стены не протыкают завесу
+    return true;
+  };
+  const N = Math.min(56, Math.max(18, Math.round(H * 1.1)));
+  const rows = [];
+  let oPrev = 0;
+  for (let i = 1; i < N; i++) {
+    const tt = (i / (N - 1)) * T, y = f.y0 - 0.5 * G * tt * tt, d = (f.y0 - y) / H;
+    let o = Math.max(VH * tt, oPrev);
+    if (y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
+    oPrev = o;
+    const [x, z] = P(o, 0);
+    rows.push({ kind: 'fall', c: [x, y, z], sd: [px, pz], half: halfAt(d), hb: y - f.y1, drop: f.y0 - y, o });
+  }
+  // у подножия стены бывает бережок выше глади: завеса не уходит в него, а ложится на него
+  // и стекает пенным языком вперёд до самой воды — одна лента, без щели на уступе
+  const bankAt = (o, hw) => { let m = -1e9; for (const u of [-0.4, 0, 0.4]) { const [x, z] = P(o, u * hw); m = Math.max(m, heightAt(x, z)); } return m; };
+  const lb = rows[rows.length - 1].c;
+  const inPool = POOLS.some((p) => poolDist(p, lb[0], lb[2]) < 1); // в чаше вода уходит под гладь, как раньше
+  const hit = inPool ? -1 : rows.findIndex((r) => { const bk = bankAt(r.o, r.half); return bk > f.y1 + 0.3 && r.c[1] < bk + 0.15; });
+  if (hit >= 0) {
+    rows.length = hit + 1;
+    const e = rows[hit], yL = bankAt(e.o, e.half) + 0.15;
+    e.c[1] = yL;
+    for (const r of rows) r.hb = r.c[1] - yL;
+    let o = e.o;
+    for (let k = 0; k < 16; k++) {
+      o += 0.5;
+      const bk = bankAt(o, e.half), [x, z] = P(o, 0);
+      const y = Math.max(f.y1, bk + 0.1);
+      rows.push({ kind: 'fall', slide: 1, c: [x, y, z], sd: [px, pz], half: e.half, hb: 0.1 + 0.45 * k, drop: 0 }); // пена у удара и тает вперёд
+      if (heightAt(x, z) < f.y1 - 0.05) break; // под серединой уже вода
+    }
+    f.land = [e.c[0], yL, e.c[2]]; // брызги и туман — там, где вода бьёт о бережок
+    return rows;
+  }
+  // последний ряд уходит под гладь: линия входа в воду ровная, без щели
+  const b = rows[rows.length - 1];
+  rows.push({ ...b, c: [b.c[0], f.y1 - 0.4, b.c[2]], hb: -0.4 });
+  f.land = [b.c[0], f.y1, b.c[2]];
+  return rows;
+}
+
+// Водопад в шахту. Вода переливается через кромку и одной ровной завесой стекает вдоль отвесной стены
+// до самого дна — без изгибов. Глыбы игрока у стены стоят перед водой: где завеса уходит за камень, она мягко
+// тает, а на верху камня — пена и брызги (см. buildWater). На дне вода ручейком бежит к озеру, огибая камни.
+function shaftRows(f, cx, cz, px, pz) {
+  const H = f.y0 - LAKE.level, VH = 1.6, GAP = 0.7;
+  const halfAt = (d) => f.half + Math.min(1.2, H * 0.02) * d;
+  const at = (r, l) => [cx * r + px * (l + f.off), cz * r + pz * (l + f.off)];
+  // радиус стены на высоте y (ближайший к центру по всей ширине завесы)
+  const wallR = (y, hw) => {
+    let rw = 1e9;
+    for (let u = -1; u <= 1.001; u += 0.5) {
+      let r = Math.max(LAKE.r, f.lipR - 30);
+      while (r < f.lipR + 2) { const [x, z] = at(r, u * hw); if (heightAt(x, z) > y) break; r += 0.25; }
+      rw = Math.min(rw, r);
+    }
+    return rw;
+  };
+  const DY = 0.5, Y = [], RR = [], HW = [];
+  let land = null;
+  for (let y = f.y0 - DY; y > LAKE.level - 0.3; y -= DY) {
+    const d = (f.y0 - y) / H, hw = halfAt(d);
+    const tt = Math.sqrt((2 * (f.y0 - y)) / G);
+    let r = Math.min(f.lipR - VH * tt, wallR(y, hw) - GAP);
+    // у дна «стеной» становится сам пол: не даём завесе прыгать к центру
+    if (RR.length && f.y0 - y > 4) r = Math.max(r, RR[RR.length - 1] - 0.4);
+    const [gx, gz] = at(r, 0);
+    if (heightAt(gx, gz) > y - 0.15 || Math.hypot(gx, gz) < LAKE.r - 1) { land = y; break; }
+    Y.push(y); RR.push(r); HW.push(hw);
+  }
+  // стена неровная: сглаживаем, чтобы завеса шла ровно
+  for (let pass = 0; pass < 4; pass++) {
+    const t = RR.slice();
+    for (let i = 1; i < RR.length - 1; i++) RR[i] = Math.min(t[i], (t[i - 1] + 2 * t[i] + t[i + 1]) / 4);
+  }
+  // Глыбу у стены (до 10 м от неё) вода обтекает спереди: завеса перекатывается через верх камня,
+  // идёт перед ним и ниже плавно прижимается к стене — так её видно. Глыба побольше стоит перед водой.
+  const MAXP = 10, free = (r, y, hw) => {
+    for (let u = -1; u <= 1.001; u += 0.25) { const [x, z] = at(r, u * hw); if (solidAt(x, y, z, 0.35) || solidAt(x, y - 0.5, z, 0.35)) return false; }
+    return true;
+  };
+  const OQ = RR.map((r, i) => {
+    if (free(r, Y[i], HW[i])) return 0;
+    for (let o = 0.4; o <= MAXP; o += 0.4) if (free(r - o, Y[i], HW[i])) return o;
+    return 0;
+  });
+  const OS = new Float32Array(RR.length);
+  for (let j = 0; j < OQ.length; j++) {
+    if (!OQ[j]) continue;
+    // над глыбой вода выгибается быстро (перекатывается через верх), под ней — долго и плавно прижимается обратно
+    const Ru = 2 + OQ[j] * 0.9, Rd = 5 + OQ[j] * 2.6; // пологие перегибы: без резкой складки на завесе
+    for (let i = Math.max(0, j - 80); i < Math.min(OQ.length, j + 80); i++) {
+      const dy = Y[i] - Y[j], x = dy > 0 ? dy / Ru : -dy / Rd;
+      if (x < 1) OS[i] = Math.max(OS[i], OQ[j] * (1 - x * x) * (1 - x * x));
+    }
+  }
+  for (let i = 0; i < RR.length; i++) RR[i] -= Math.max(OS[i], OQ[i]);
+  // после выгиба завеса могла уйти в пол раньше — обрываем её на полу
+  let n = Y.length;
+  for (let i = 1; i < n; i++) { const [x, z] = at(RR[i], 0); if (heightAt(x, z) > Y[i] - 0.1) { n = i + 1; break; } }
+  const rows = [];
+  for (let i = 1; i < n; i++) {
+    if (i % 2 && i !== n - 1) continue; // ряд через метр
+    const [x, z] = at(RR[i], 0);
+    rows.push({ kind: 'fall', c: [x, Y[i], z], sd: [px, pz], half: HW[i], hb: 99, shaft: 1, drop: f.y0 - Y[i] });
+  }
+  if (!rows.length) return rows;
+  // ---- по дну: вода растекается и бежит к озеру, огибая камни ----
+  const last = rows[rows.length - 1];
+  const x0 = last.c[0], z0 = last.c[2], y0 = heightAt(x0, z0);
+  for (const r of rows) r.hb = r.c[1] - y0;
+  f.land = [x0, y0, z0];
+  const hw0 = last.half;
+  const pts = floorPath(x0, z0);
+  for (const p of pts) {
+    const k = smoothstep(0, 4, p[3]);
+    rows.push({ kind: 'run', c: [p[0], p[1] + 0.1, p[2]], half: hw0 * (1 - 0.3 * k), hb: 99, foam: 0.9 * smoothstep(16, 2, p[3]) });
+  }
+  // в озеро: последний ряд под гладью
+  const e = rows[rows.length - 1];
+  rows.push({ ...e, kind: 'run', c: [e.c[0], LAKE.level - 0.3, e.c[2]], foam: e.foam });
+  f.lake = [e.c[0], e.c[2], e.half];
+  return rows;
+}
+
+// Путь по дну шахты от места удара до озера: кратчайший обход камней по сетке 0.5 м (Дейкстра).
+// Подъём дорого стоит — вода выбирает низины. Возвращает точки [x, y, z, метры пути].
+function floorPath(x0, z0) {
+  const C = 0.5, ext = Math.hypot(x0 - LAKE.x, z0 - LAKE.z) + 6;
+  const minX = Math.min(x0, LAKE.x) - ext * 0.5, minZ = Math.min(z0, LAKE.z) - ext * 0.5;
+  const NX = Math.ceil((Math.max(x0, LAKE.x) + ext * 0.5 - minX) / C), NZ = Math.ceil((Math.max(z0, LAKE.z) + ext * 0.5 - minZ) / C);
+  const N = NX * NZ, hh = new Float32Array(N), ok = new Uint8Array(N), dist = new Float32Array(N).fill(1e9), from = new Int32Array(N).fill(-1);
+  for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
+    const x = minX + (i + 0.5) * C, z = minZ + (j + 0.5) * C, h = heightAt(x, z), k = j * NX + i;
+    hh[k] = h;
+    ok[k] = h < -160 && !solidAt(x, h + 0.6, z, 0.5) ? 1 : 0;
+  }
+  const idx = (x, z) => Math.max(0, Math.min(NZ - 1, Math.floor((z - minZ) / C))) * NX + Math.max(0, Math.min(NX - 1, Math.floor((x - minX) / C)));
+  const s0 = idx(x0, z0);
+  const heap = [[0, s0]];
+  dist[s0] = 0; ok[s0] = 1;
+  const push = (e) => { heap.push(e); let i = heap.length - 1; while (i) { const p = (i - 1) >> 1; if (heap[p][0] <= heap[i][0]) break; [heap[p], heap[i]] = [heap[i], heap[p]]; i = p; } };
+  const pop = () => { const top = heap[0], e = heap.pop(); if (heap.length) { heap[0] = e; let i = 0; for (;;) { const l = 2 * i + 1, r = l + 1; let m = i; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === i) break; [heap[m], heap[i]] = [heap[i], heap[m]]; i = m; } } return top; };
+  let goal = -1;
+  while (heap.length) {
+    const [d, k] = pop();
+    if (d > dist[k]) continue;
+    const i = k % NX, j = (k / NX) | 0, x = minX + (i + 0.5) * C, z = minZ + (j + 0.5) * C;
+    if (Math.hypot(x - LAKE.x, z - LAKE.z) < LAKE.r - 1.5) { goal = k; break; }
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue;
+      const ii = i + di, jj = j + dj;
+      if (ii < 0 || jj < 0 || ii >= NX || jj >= NZ) continue;
+      const kk = jj * NX + ii;
+      // сквозь камень — только если иначе никак (место удара может быть за глыбой у стены)
+      const nd = d + C * Math.hypot(di, dj) * (ok[kk] ? 1 : 12) + 4 * Math.max(0, hh[kk] - hh[k]);
+      if (nd < dist[kk]) { dist[kk] = nd; from[kk] = k; push([nd, kk]); }
+    }
+  }
+  const cells = [];
+  if (goal < 0) { console.warn('waterfall: по дну не дойти до озера'); goal = idx(LAKE.x + (x0 - LAKE.x) * 0.5, LAKE.z + (z0 - LAKE.z) * 0.5); cells.push(goal); }
+  else for (let k = goal; k >= 0; k = from[k]) cells.push(k);
+  cells.reverse();
+  // сгладить и разложить через ~1 м
+  let P = cells.map((k) => [minX + ((k % NX) + 0.5) * C, minZ + (((k / NX) | 0) + 0.5) * C]);
+  P.unshift([x0, z0]);
+  for (let pass = 0; pass < 6; pass++) P = P.map((p, i) => (i === 0 || i === P.length - 1 ? p : [(P[i - 1][0] + 2 * p[0] + P[i + 1][0]) / 4, (P[i - 1][1] + 2 * p[1] + P[i + 1][1]) / 4]));
+  const out = [];
+  let run = 0, lx = x0, lz = z0;
+  for (const [x, z] of P) {
+    const d = Math.hypot(x - lx, z - lz);
+    if (d < 0.9 && out.length) continue;
+    run += d; lx = x; lz = z;
+    // низкие плоские камни на дне вода переливает поверху (высокие она обходит — см. ok)
+    const h = heightAt(x, z), g = groundAt(x, z, h + 0.7);
+    out.push([x, Math.max(g - h < 0.7 ? g : h, LAKE.level), z, run]);
+  }
+  for (let pass = 0; pass < 2; pass++) for (let i = 1; i < out.length - 1; i++) out[i][1] = (out[i - 1][1] + 2 * out[i][1] + out[i + 1][1]) / 4;
+  return out;
+}
+
+// Касательные, поперечные векторы, нормали, метры пути, крутизна и кромки — одинаково для всех рядов
+function finishRows(rows, cx, cz) {
+  let q = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], a = rows[Math.max(0, i - 1)].c, b = rows[Math.min(rows.length - 1, i + 1)].c;
+    if (i) q += Math.hypot(r.c[0] - rows[i - 1].c[0], r.c[1] - rows[i - 1].c[1], r.c[2] - rows[i - 1].c[2]);
+    r.q = q;
+    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
+    const tl = Math.hypot(tx, ty, tz) || 1, th = Math.hypot(tx, tz);
+    tx /= tl; ty /= tl; tz /= tl;
+    r.t = [tx, ty, tz];
+    // по дну поперёк — по горизонтали к ходу воды; у ручья и завесы — поперёк ручья
+    if (r.kind === 'run') {
+      let sd = th > 1e-3 ? [-(b[2] - a[2]) / th, (b[0] - a[0]) / th] : rows[i - 1].sd;
+      const ps = rows[i - 1].sd;
+      if (sd[0] * ps[0] + sd[1] * ps[1] < 0) sd = [-sd[0], -sd[1]]; // без перекрута ленты
+      // у подножия поперечник поворачивается плавно: от завесы к ручейку
+      let k = 0; while (k < 6 && rows[i - 1 - k]?.kind === 'run') k++;
+      if (k < 6) { const t = (k + 1) / 7; sd = [ps[0] * (1 - t) + sd[0] * t, ps[1] * (1 - t) + sd[1] * t]; const l = Math.hypot(sd[0], sd[1]) || 1; sd = [sd[0] / l, sd[1] / l]; }
+      r.sd = sd;
+    }
+    // нормаль: sd × t, смотрит вверх и от стены (к центру шахты)
+    const sx = r.sd[0], sz = r.sd[1];
+    let nx = -sz * ty, ny = sz * tx - sx * tz, nz = sx * ty;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    // сторона нормали — как у соседнего ряда (на нависающей завесе прежняя проверка «вверх или от стены»
+    // переворачивала её на паре рядов: там завеса темнела синей полосой)
+    const pn = i ? rows[i - 1].n : null;
+    if (pn ? nx * pn[0] + ny * pn[1] + nz * pn[2] < 0 : ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    r.n = [nx, ny, nz];
+    r.fall = Math.max(r.steep || 0, smoothstep(0.35, 0.8, -ty), smoothstep(1.0, 3.0, r.drop || 0));
+    if (r.kind === 'run') r.fall = Math.min(r.fall, 0.25);
+  }
+  // ширину тоже: на стыке водопада и глади нет ступеньки
+  for (let pass = 0; pass < 6; pass++) {
+    const h = rows.map((r) => r.half);
+    for (let i = 1; i < rows.length - 1; i++) rows[i].half = (h[i - 1] + 2 * h[i] + h[i + 1]) / 4;
+  }
+  // крутизну сглаживаем по пути: вид воды меняется плавно, а не рывком на одном ряду
+  for (let pass = 0; pass < 2; pass++) {
+    const f = rows.map((r) => r.fall);
+    for (let i = 1; i < rows.length - 1; i++) rows[i].fall = (f[i - 1] + 2 * f[i] + f[i + 1]) / 4;
+  }
+}
+
+export function buildWater(scene) {
+  planWater();
+  const waterMat = mat({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    uniforms: { uLip: { value: 2.0 } }, // q (метры пути) на кромке: подход по глади — 2 м
     vertexShader: /* glsl */ `
-      attribute vec4 aUv; attribute vec3 aOut; attribute vec2 aEx;
-      varying vec3 vW; varying vec4 vUv; varying vec3 vN; varying float vHb; varying vec2 vEx;
+      attribute vec4 aUv; attribute vec4 aEx; attribute vec3 aN; attribute vec3 aX;
+      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN; varying vec3 vX;
       void main(){
-        vW = position; vUv = aUv; vHb = aOut.z; vEx = aEx;
-        vN = normalize(vec3(aOut.x, 0.35, aOut.y));
+        vW = position; vUv = aUv; vEx = aEx; vN = aN; vX = aX;
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
-    // Завеса как в стилизованных играх: одна полоса с координатой вдоль пути воды (q — метры пути), шумы бегут вниз
-    // с одной скоростью. У кромки — цвет ручья и ровный край во всю его ширину, ниже — мягкие бело-голубые струи,
-    // у воды — белые зубцы пены.
+    // Одна вода: u — поперёк (-1..1), q — метры пути от родника, fall — крутизна (0 гладь, 1 завеса),
+    // vX: полуширина ленты в метрах и «воздух в воде» (0 — гладкий язык у кромки, 1 — белая вспененная завеса).
+    // Рисунок — шум, вытянутый вдоль течения; каждый слой сдвигается со своей постоянной скоростью
+    // (скорость не зависит от места — иначе рисунок со временем размазывается).
+    // Завеса — как у настоящего водопада: у кромки гладкий тёмный стеклянный язык, ниже вода набирает
+    // воздух и белеет; в толще — медленный задний слой струй (объём), спереди — быстрые светлые струи;
+    // к краям вода тоньше: светлее, прозрачнее и рвётся на отдельные струи.
     fragmentShader: /* glsl */ `
-      uniform float uLip;
-      varying vec3 vW; varying vec4 vUv; varying vec3 vN; varying float vHb; varying vec2 vEx;
+      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN; varying vec3 vX;
       void main(){
-        float u = vUv.x, q = vUv.y, L = vUv.z, d = vUv.w, flt = vEx.y;
-        float t = uTime * 1.6;                                   // м/с вдоль пути, одинаково везде
-        // мягкие вертикальные струи: шум сильно растянут вдоль пути воды, три масштаба
-        float s1 = vnoise(vec2(u * 5.0 + L * 9.0, q * 0.06 - t * 0.06));
-        float s2 = vnoise(vec2(u * 13.0 + 5.0, q * 0.16 - t * 0.16));
-        float s3 = vnoise(vec2(u * 31.0 + 2.0, q * 0.45 - t * 0.45));
+        float u = vUv.x, q = vUv.y, fall = vUv.z, depth = vUv.w;
+        float fade = vEx.x, foamA = vEx.y, hb = vEx.z, lip = vEx.w;
+        float hw = max(vX.x, 0.5), aer = vX.y;
+        float um = u * hw;                                // метры поперёк: рисунок не тянется на широкой воде
+        float qt = q - uTime * 2.4;                      // передний слой: м/с вдоль пути — одинаково везде
+        float qb = q - uTime * 1.55;                     // задний слой: медленнее, даёт глубину
+        float s1 = vnoise(vec2(um * 1.0 + 1.7, qt * 0.07));
+        float s2 = vnoise(vec2(um * 2.5 + 5.0, qt * 0.19));
+        float s3 = vnoise(vec2(um * 6.0 + 2.0, qt * 0.5));
         float streak = s1 * 0.5 + s2 * 0.33 + s3 * 0.17;
-        // на глади вода как в ручье; через пару метров падения — светлая бело-голубая завеса
-        float fall = smoothstep(uLip, uLip + 3.5, q) * (1.0 - flt);
-        vec3 river = vec3(0.30, 0.62, 0.66), blue = vec3(0.58, 0.82, 0.90), white = vec3(0.93, 0.97, 1.0);
-        vec3 c = mix(river, blue, fall);
-        c = mix(c, white, smoothstep(0.42, 0.78, streak) * mix(0.35, 0.85, fall));
-        // гладкий светлый перегиб через край — прямая чистая кромка
-        float lip = smoothstep(1.0, 0.0, abs(q - uLip - 0.35)) * (1.0 - flt);
-        c = mix(c, white, lip * 0.45);
-        // внизу — белые «зубцы» пены, где завеса врезается в воду
-        float teeth = 0.6 + 2.2 * vnoise(vec2(u * 8.0 + L * 3.0, t * 0.35));
-        float foamB = smoothstep(teeth + 1.2, teeth, vHb);
-        c = mix(c, white, foamB * 0.92);
-        c = shade(c, vN, 0.88 + 0.12 * shadowAt(vW.xz));
-        // края: у кромки ровные, ниже чуть рваные
-        float rag = vnoise(vec2(q * 0.5 - t * 0.5, u < 0.0 ? 3.0 : 11.0));
-        float edge = abs(u) + (rag - 0.5) * 0.28 * fall;
-        float a = smoothstep(1.0, 0.9, edge);
-        a *= L < 0.25 ? 0.3 : mix(0.88, mix(0.72, 0.95, smoothstep(0.3, 0.7, streak)), fall);
-        a = max(a, foamB * smoothstep(1.0, 0.9, edge) * 0.95);
-        a *= smoothstep(-0.35, 0.1, vHb) * vEx.x;
-        gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 0.95));
+        float back = vnoise(vec2(um * 2.2 + 9.3, qb * 0.16));   // один шум на задний слой — телефону дёшево
+        float dk = smoothstep(0.1, 1.4, depth) * (1.0 - fall);
+        vec3 shallow = vec3(0.28, 0.59, 0.62), deepC = vec3(0.05, 0.20, 0.25);
+        vec3 white = vec3(0.93, 0.97, 1.0);
+        vec3 c = mix(shallow, deepC, dk);
+        // на глади — та же нарисованная вода, что в чашах и озере (течёт к центру со скоростью ленты)
+        if (fall < 0.98) {
+          vec3 wt = waterTex(vW.xz, 0.18);
+          float wl = dot(wt, vec3(0.30, 0.59, 0.11));
+          c = mix(c, c * (0.6 + 1.15 * wl) + (wt - c) * 0.2, 0.85 * (1.0 - fall));
+        }
+        // ---- завеса ----
+        float thick = sqrt(max(0.0, 1.0 - u * u));      // толща воды поперёк: в середине толще
+        vec3 glass = mix(vec3(0.22, 0.50, 0.57), vec3(0.36, 0.65, 0.71), back);   // гладкий язык
+        vec3 body = mix(vec3(0.38, 0.63, 0.73), vec3(0.56, 0.79, 0.87), back);    // вспененная толща
+        vec3 sheetC = mix(glass, body, aer);
+        sheetC *= mix(1.0, 0.86, smoothstep(0.55, 0.2, back) * thick);            // тёмные просветы в толще
+        // светлые струи: на языке редкие и узкие, ниже — широкие белые
+        float st = mix(smoothstep(0.58, 0.85, streak) * 0.55, smoothstep(0.42, 0.78, streak) * 0.8, aer);
+        sheetC = mix(sheetC, white, st);
+        c = mix(c, sheetC, fall);
+        // на глади — редкие тонкие пенные струйки
+        c = mix(c, white, smoothstep(0.6, 0.82, streak) * 0.3 * (1.0 - fall));
+        // пена: на каскадах и ниже водопадов (бежит вместе с водой), светлая кромка, зубцы у подножия
+        float fo = foamA * smoothstep(0.25 + 0.5 * (1.0 - foamA), 0.9, s2 * 0.6 + s3 * 0.5);
+        fo = max(fo, smoothstep(0.7, 1.0, foamA) * (0.45 + 0.3 * s3)); // вода бьёт о камень
+        fo = max(fo, lip * (0.4 + 0.25 * s3));
+        // у подножия — пенная шапка: граница мягкая, клубится и бежит вместе с водой, без острых зубьев
+        float teeth = 0.5 + 1.6 * vnoise(vec2(um * 0.9 + 3.0, uTime * 0.35)) + 0.9 * vnoise(vec2(um * 2.3 + 7.0, qt * 0.22));
+        float foamB = smoothstep(teeth + 1.6, teeth - 0.3, hb);
+        fo = clamp(max(fo, foamB * (0.8 + 0.2 * s3)), 0.0, 1.0);
+        c = mix(c, white, fo);
+        float sh = shadowAt(vW.xz);
+        c = shade(c, normalize(vN + vec3(0.0, 0.35 * fall, 0.0)), mix(0.6 + 0.4 * sh, 0.88 + 0.12 * sh, fall));
+        // на глади — отражение неба и солнечные блики
+        vec3 vd = normalize(cameraPosition - vW);
+        float calm = (1.0 - fall) * (1.0 - fo);
+        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, pow(1.0 - max(vd.y, 0.0), 3.0) * calm * 0.4);
+        vec3 nw = normalize(vec3((s2 - 0.5) * 0.35, 1.0, (s3 - 0.5) * 0.35));
+        c += uSunCol * pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh * 1.4;
+        // на языке завесы — узкий блик неба: вода гладкая и блестит
+        c += vec3(0.10, 0.13, 0.14) * fall * (1.0 - aer) * smoothstep(0.55, 0.9, s1) * thick;
+        // ---- края: не ровный срез, а рваные струи; ширина края в метрах ----
+        float sideK = u < 0.0 ? 3.0 : 11.0;
+        float rag = (vnoise(vec2(qt * 0.3, sideK)) - 0.5) + (s3 - 0.5) * 0.45;
+        float hang = vX.z * (1.0 - fall);                // край глади без берега под ним
+        float ew = max(mix(0.45, 1.3, fall), 1.4 * hang) / hw;   // мягкий край: ~0.5 м на глади, ~1.3 м у завесы
+        float edge = abs(u) + rag * max(mix(0.25, 0.9, fall), 0.8 * hang) / hw;
+        float a = smoothstep(1.0, 1.0 - ew, edge);
+        float rim = smoothstep(1.0 - ew - 1.2 / hw, 1.0, abs(u)) * fall;   // тонкая вода у края
+        a *= mix(1.0, smoothstep(0.32, 0.7, s2 * 0.5 + s3 * 0.6), rim);
+        c = mix(c, white, rim * 0.3 * aer);
+        // плотность: гладь чуть просвечивает, завеса плотная (язык прозрачнее вспененной воды)
+        a *= mix(mix(0.9, 1.0, max(dk, fo)), mix(0.86, 0.97, max(aer, st)), fall);
+        a = max(a, foamB * smoothstep(1.0, 1.0 - ew, edge) * 0.95);
+        a *= smoothstep(-0.35, 0.1, hb) * fade * smoothstep(0.0, 1.2, q);
+        gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 0.97));
       }`,
   });
 
@@ -153,9 +554,6 @@ export function buildWaterfalls(scene, falls) {
         gl_FragColor = vec4(grade(mix(uFogCol, vec3(0.96, 0.98, 1.0), 0.65)), a);
       }`,
   });
-
-  const rnd = mulberry32(SEED + 131);
-  const MP = [], MS = [], MD = [], SP = [], SS = [];
   // капли: каждая летит по своей дуге от места удара и пропадает, потом всё сначала
   const sprayMat = mat({
     transparent: true, depthWrite: false, defines: { NO_WET: 1 },
@@ -181,136 +579,101 @@ export function buildWaterfalls(scene, falls) {
         gl_FragColor = vec4(grade(vec3(0.92, 0.97, 1.0)), vA * smoothstep(0.5, 0.2, r));
       }`,
   });
-  for (const f of falls) {
-    const cx = Math.cos(f.th), cz = Math.sin(f.th), px = -cz, pz = cx;
-    const outX = -cx, outZ = -cz; // от стены к центру провала
-    const H = f.y0 - f.y1, T = Math.sqrt((2 * H) / G), VH = f.open ? 4.2 : f.src ? SRC.VH : 1.6;
-    // точка на пелене: o — насколько вода отошла от кромки к центру, l — поперёк
-    const P = (o, l) => [cx * (f.lipR - o) + px * l, cz * (f.lipR - o) + pz * l];
-    const halfAt = (d) => f.half + Math.min(2.5, H * 0.06) * d;
-    // пелена не должна уходить в скалу: если стена выпирает, отодвигаем её ряд вперёд
-    const clear = (o, y, hw) => {
-      for (let u = -1; u <= 1.001; u += 0.25) {
-        const [x, z] = P(o, u * hw);
-        if (heightAt(x, z) > y - 0.4) return false;
-      }
-      return true;
-    };
-    const COLSN = 11;
-    // ряд пелены: центр c, вектор поперёк струи sd (по горизонтали), нормаль nr, доля пути d, высота над гладью hb
-    let rows;
-    if (f.open) rows = flowPath(f, cx, cz, H, VH);
-    else {
-      const ROWS = Math.min(56, Math.max(18, Math.round(H * 1.1)));
-      rows = [];
-      let oPrev = 0;
-      for (let i = 0; i < ROWS; i++) {
-        const tt = (i / (ROWS - 1)) * T, y = f.y0 - 0.5 * G * tt * tt, d = (f.y0 - y) / H;
-        let o = Math.max(VH * tt, oPrev);
-        // у самой воды берега не в счёт: струя падает в чашу, а не обходит её края
-        if (i > 0 && y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
-        oPrev = o;
-        const [x, z] = P(o, 0);
-        rows.push({ c: [x, y, z], air: 1, tx: 0, ty: -1, tz: 0, sd: [px, pz], nr: [outX, 0, outZ], d, q: Math.sqrt(f.y0 - y + 0.3), hb: y - f.y1 });
-      }
-      // последний ряд уходит под гладь чаши: линия входа в воду ровная, без щели
-      const b = rows[rows.length - 1];
-      rows.push({ ...b, c: [b.c[0], f.y1 - 0.4, b.c[2]], d: 1, q: Math.sqrt(f.y0 - f.y1 + 0.7), hb: -0.4 });
-    }
-    // Подход: пелена начинается на глади ручья за метр до кромки и проявляется, а лента ручья там же тает.
-    // q — метры пути от начала подхода: одна и та же скорость течения на глади, на перегибе и в падении.
-    {
-      const pre = [];
-      for (let r = 0.9; r > 0.05; r -= 0.3) {
-        pre.push({ c: [cx * (f.lipR + r), f.y0 + 0.03, cz * (f.lipR + r)], air: 0, flat: 1, fade: smoothstep(0.9, 0.2, r), wk: 1, pre: 1,
-          tx: outX, ty: 0, tz: outZ, sd: [px, pz], nr: [0, 1, 0], d: 0, q: 2 - r, hb: f.y0 - f.y1 });
-      }
-      let len = 2;
-      for (let i = 0; i < rows.length; i++) {
-        if (i) len += Math.hypot(rows[i].c[0] - rows[i - 1].c[0], rows[i].c[1] - rows[i - 1].c[1], rows[i].c[2] - rows[i - 1].c[2]);
-        rows[i].q = len;
-      }
-      rows = pre.concat(rows);
-    }
-    const NR = rows.length, end = rows[NR - 1];
-    const pos = [], uv = [], dir = [], idx = [], exA = [];
-    // три слоя: задний (шире, ближе к скале), средний, передний (уже, выгнут вперёд)
-    // Слои: 0 — поперечная пелена (вдоль нормали: сбоку струя не превращается в «линию»), 0.5 — тело, 1 — пена спереди.
-    // По камню струя растекается шире.
-    for (const [L, wAdd, off, bulge] of [[0, 0, 0, 0], [0.5, 0.15, 0, 0.45]]) { // два слоя: меньше перерисовки на телефоне
-      const base = pos.length / 3;
-      for (const { c, sd, nr, d, q, hb, air, flat = air === 0 ? 1 : 0, fade = 1, wk } of rows) {
-        // у кромки пелена ровно той же ширины, что и ручей; по камню ниже струя растекается шире
-        const half = (halfAt(d) + (wk ? 0 : wAdd)) * (wk ?? (air === 0 ? 1.35 : 1));
-        const nl = Math.hypot(nr[0], nr[2]) || 1;
-        for (let j = 0; j < COLSN; j++) {
-          const u = -1 + (2 * j) / (COLSN - 1);
-          if (L === 0) { // поперёк: ширина вдоль нормали, треть ширины струи
-            const w = half * 0.35 * u;
-            pos.push(c[0] + nr[0] * w, c[1] + nr[1] * w, c[2] + nr[2] * w);
-            uv.push(u, q, L, d); dir.push(sd[0], sd[1], hb); exA.push(fade * (1 - flat), flat);
-            continue;
-          }
-          // на глади и на камне слои лежат вплотную (иначе передний слой висит над водой «плитой»)
-          const oo = ((1 - u * u) * bulge * (0.6 + 0.6 * d) + off) * (1 - flat);
-          pos.push(c[0] + sd[0] * u * half + nr[0] * oo, c[1] + nr[1] * oo, c[2] + sd[1] * u * half + nr[2] * oo);
-          uv.push(u, q, L, d);
-          dir.push(nr[0] / nl, nr[2] / nl, hb);
-          exA.push(fade, flat);
+
+  const rnd = mulberry32(SEED + 131);
+  const MP = [], MS = [], MD = [], SP = [], SS = [];
+  const fog = (x, y, z, size, alpha, dx, dz) => { MP.push(x, y, z); MS.push(size, alpha, rnd(), rnd()); MD.push(dx, dz); };
+  const spl = (x, y, z, hw, n, k) => {
+    for (let i = 0; i < n; i++) { SP.push(x + (rnd() - 0.5) * hw, y + 0.1, z + (rnd() - 0.5) * hw); SS.push(rnd(), rnd() * k, 0.12 + rnd() * 0.16, rnd() * Math.PI * 2); }
+  };
+  for (const st of STREAMS) {
+    const rows = st.rows;
+    // светлая кромка: ±1.5 м пути вокруг каждой кромки
+    const lipQ = st.falls.map((f) => rows[f.i0 - 1]?.q ?? rows[f.i0].q);
+    const pos = [], uv = [], ex = [], nn = [], xx = [], idx = [], hitsAt = [];
+    for (const r of rows) {
+      const { c, sd, n, half, fall, q } = r;
+      let lip = 0;
+      for (const lq of lipQ) lip = Math.max(lip, Math.exp(-(((q - lq - 0.6) / 1.3) ** 2)));
+      const bul = r.kind === 'flat' || r.kind === 'run' || r.slide ? 0 : (r.shaft ? 0.5 : Math.min(0.5, half * 0.12)) * fall;
+      for (let j = 0; j < COLS; j++) {
+        const u = -1 + (2 * j) / (COLS - 1), oo = (1 - u * u) * bul;
+        const x = c[0] + sd[0] * u * half + n[0] * oo, z = c[2] + sd[1] * u * half + n[2] * oo;
+        let y = c[1] + n[1] * oo;
+        // ручеёк по дну: бугорки и плоские камни под краями ленты вода покрывает, а не обтекает дырой
+        if (r.kind === 'run' || r.slide) { const h = heightAt(x, z), g = groundAt(x, z, h + 0.7); const top = g - h < 0.7 ? g : h; if (top + 0.06 > y && top < y + 0.8) y = top + 0.06; }
+        pos.push(x, y, z);
+        // глубина (цвет глади) и пруды: в чаше ленты нет, там своя гладь — плавная смена у берега
+        let depth = 1, fade = 1;
+        if (r.kind === 'flat') {
+          depth = Math.max(0, y - heightAt(x, z));
+          let dn = 9;
+          for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
+          fade = smoothstep(0.8, 1.0, dn);
+        } else if (r.kind === 'run') depth = 0.7;
+        // завеса за глыбой игрока: внутри камня тает, на верху камня — пена (вода бьёт о камень), под ним — светлее
+        let fv = r.foam || 0;
+        if (r.shaft) {
+          if (solidAt(x, y, z, 0.15)) fv = 1; // внутри камня завесу и так не видно, а у его верха — пена
+          else if (solidAt(x, y - 1.1, z, 0.1)) { fv = 1; if (j % 3 === 1 && rnd() < 0.5) hitsAt.push([x, y - 0.6, z]); }
+          else if (solidAt(x, y + 1.1, z, 0.1)) fv = Math.max(fv, 0.5);
         }
+        uv.push(u, q, fall, depth);
+        ex.push(fade, fv, r.hb, lip);
+        // край глади, под которым нет берега (висит над обрывом или низким дном): там край мягче и шире
+        let ex2 = 0;
+        if ((r.kind === 'flat' || r.kind === 'run') && Math.abs(u) > 0.7) ex2 = smoothstep(0.05, 0.6, y - heightAt(x, z));
+        xx.push(half, r.slide ? 1 : r.kind === 'fall' ? smoothstep(0.3, 6, r.drop || 0) : 0, ex2);
+        // свет на завесе — по горизонтали от стены: где завеса выгибается, она не темнеет и не светлеет полосой
+        if (fall > 0.5) { const hl = Math.hypot(n[0], n[2]) || 1; nn.push(n[0] / hl, 0, n[2] / hl); } else nn.push(n[0], n[1], n[2]);
       }
-      for (let i = 0; i < NR - 1; i++)
-        for (let j = 0; j < COLSN - 1; j++) {
-          const v = base + i * COLSN + j;
-          idx.push(v, v + COLSN, v + 1, v + 1, v + COLSN, v + COLSN + 1);
-        }
     }
+    for (let i = 0; i < rows.length - 1; i++)
+      for (let j = 0; j < COLS - 1; j++) {
+        const v = i * COLS + j;
+        idx.push(v, v + COLS, v + 1, v + 1, v + COLS, v + COLS + 1);
+      }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('aUv', new THREE.Float32BufferAttribute(uv, 4));
-    g.setAttribute('aOut', new THREE.Float32BufferAttribute(dir, 3));
-    g.setAttribute('aEx', new THREE.Float32BufferAttribute(exA, 2));
+    g.setAttribute('aEx', new THREE.Float32BufferAttribute(ex, 4));
+    g.setAttribute('aN', new THREE.Float32BufferAttribute(nn, 3));
+    g.setAttribute('aX', new THREE.Float32BufferAttribute(xx, 3));
     g.setIndex(idx);
-    const sheet = new THREE.Mesh(g, sheetMat);
-    sheet.frustumCulled = false;
-    sheet.renderOrder = 4;
-    scene.add(sheet);
-    // куда бьёт струя: чаша под ней рисует здесь кипящую пену и расходящиеся круги
-    {
-      const hx = end.c[0], hz = end.c[2];
-      for (const p of [...POOLS, lakePool]) if (poolDist(p, hx, hz) < 1) (p.splashes ||= []).push({ x: hx, z: hz, rad: halfAt(1) * 0.6 + Math.min(1.5, H * 0.025) });
-    }
+    const mesh = new THREE.Mesh(g, waterMat);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 4;
+    mesh.userData.water = st;
+    scene.add(mesh);
 
-    // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
-    const big = Math.min(1, H / 45), N = Math.round(10 + 22 * big), hw = halfAt(1);
-    const eo = Math.hypot(end.nr[0], end.nr[2]) || 1, ex = end.nr[0] / eo, ez = end.nr[2] / eo;
-    const fog = (x, y, z, size, alpha, dx, dz) => { MP.push(x, y, z); MS.push(size, alpha, rnd(), rnd()); MD.push(dx, dz); };
-    for (let i = 0; i < N; i++) {
-      const a = (rnd() - 0.5) * 2.5, l = (rnd() - 0.5) * 2 * hw, sp = (rnd() - 0.5) * 1.6;
-      fog(end.c[0] + ex * a + end.sd[0] * l, f.y1 + 0.3 + rnd() * 1.5 * big, end.c[2] + ez * a + end.sd[1] * l,
-        (2 + rnd() * 3) * (0.6 + 1.4 * big), 0.1 + rnd() * 0.14, ex * 0.8 - ez * sp, ez * 0.8 + ex * sp);
+    // брызги там, где завеса бьёт о верх камня
+    for (const h of hitsAt) { spl(h[0], h[1], h[2], 1.5, 4, 0.5); if (rnd() < 0.3) fog(h[0], h[1] + 0.5, h[2], 2 + rnd() * 2, 0.06, 0, 0); }
+    for (const f of st.falls) {
+      const fr = rows.slice(f.i0, f.i1 + 1).filter((r) => r.kind === 'fall');
+      if (!fr.length || !f.land) continue;
+      const H = f.y0 - f.land[1], end = fr[fr.length - 1], hw = end.half;
+      // куда бьёт струя: чаша под ней рисует кипящую пену и расходящиеся круги
+      for (const p of [...POOLS, lakePool]) if (poolDist(p, f.land[0], f.land[2]) < 1) (p.splashes ||= []).push({ x: f.land[0], z: f.land[2], rad: hw * 0.6 + Math.min(1.5, H * 0.025) });
+      if (f.lake) (lakePool.splashes ||= []).push({ x: f.lake[0], z: f.lake[1], rad: f.lake[2] * 0.7 });
+      // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
+      const big = Math.min(1, H / 45), N = Math.round(10 + 22 * big);
+      const eo = Math.hypot(end.n[0], end.n[2]) || 1, ex2 = end.n[0] / eo, ez2 = end.n[2] / eo;
+      for (let i = 0; i < N; i++) {
+        const a = (rnd() - 0.5) * 2.5, l = (rnd() - 0.5) * 2 * hw, sp = (rnd() - 0.5) * 1.6;
+        fog(f.land[0] + ex2 * a + end.sd[0] * l, f.land[1] + 0.3 + rnd() * 1.5 * big, f.land[2] + ez2 * a + end.sd[1] * l,
+          (2 + rnd() * 3) * (0.6 + 1.4 * big), 0.1 + rnd() * 0.14, ex2 * 0.8 - ez2 * sp, ez2 * 0.8 + ex2 * sp);
+      }
+      // лёгкая дымка вдоль струи: редкие большие клубы, почти прозрачные
+      for (let i = 4; i < fr.length - 2; i += 7) {
+        const r = fr[i], l = (rnd() - 0.5) * 2 * r.half;
+        fog(r.c[0] + r.sd[0] * l + r.n[0] * 1.2, r.c[1] - 1, r.c[2] + r.sd[1] * l + r.n[2] * 1.2, 3 + rnd() * 3, 0.05 + rnd() * 0.04, r.n[0] * 0.3, r.n[2] * 0.3);
+      }
+      spl(f.land[0], f.land[1], f.land[2], hw, Math.round(14 + 20 * big), 1);
+      // мокрые скалы вокруг струи; у кромки камень не темним
+      for (const r of fr) if (r.c[1] < f.y0 - 2) wetDisc(r.c[0], r.c[2], r.half + 1.0, r.c[1] - 2.5, Math.min(r.c[1] + 1.5, f.y0 - 1.5));
     }
-    // лёгкая дымка вдоль всей струи: редкие большие клубы, почти прозрачные
-    for (let i = 4; i < NR - 2; i += 7) {
-      const r = rows[i], hwr = halfAt(r.d), l = (rnd() - 0.5) * 2 * hwr;
-      fog(r.c[0] + r.sd[0] * l + r.nr[0] * 1.2, r.c[1] - 1, r.c[2] + r.sd[1] * l + r.nr[2] * 1.2,
-        3 + rnd() * 3, 0.05 + rnd() * 0.04, r.nr[0] * 0.3, r.nr[2] * 0.3);
-    }
-    // ---- брызги: немного капель у места падения и там, где струя бьёт о камень ----
-    const spl = (x, y, z, n, k) => {
-      for (let i = 0; i < n; i++) { SP.push(x + (rnd() - 0.5) * hw, y + 0.1, z + (rnd() - 0.5) * hw); SS.push(rnd(), rnd() * k, 0.12 + rnd() * 0.16, rnd() * Math.PI * 2); }
-    };
-    spl(end.c[0], Math.max(f.y1, end.c[1]), end.c[2], Math.round(14 + 20 * big), 1);
-    for (const h of rows.hits || []) {
-      spl(h[0], h[1], h[2], Math.round(6 + 10 * h[3]), 0.4 + 0.6 * h[3]);
-      fog(h[0], h[1] + 0.5, h[2], 2.5 + rnd() * 2, 0.08, 0, 0);
-    }
-    // ---- мокрые скалы вокруг струи (карта uWet) и течение под струёй ----
-    // у кромки камень не темним: иначе вокруг истока грязное пятно; мокро только ниже, где летят брызги
-    for (const r of rows) {
-      if (!r.pre && r.c[1] < f.y0 - 2) wetDisc(r.c[0], r.c[2], halfAt(r.d) + (r.air ? 1.0 : 1.2), r.c[1] - 2.5, Math.min(r.c[1] + 1.5, f.y0 - 1.5));
-      FLOW.push({ x: r.c[0], y: r.c[1], z: r.c[2], hw: halfAt(r.d), sd: r.sd, tx: r.tx, ty: r.ty, tz: r.tz, air: r.air });
-    }
+    // течение под водой (fallPush): в падении и по дну шахты
+    for (const r of rows) if (r.kind !== 'flat') FLOW.push({ x: r.c[0], y: r.c[1], z: r.c[2], hw: r.half, sd: r.sd, tx: r.t[0], ty: r.t[1], tz: r.t[2], air: r.fall > 0.5 ? 1 : 0 });
   }
   // все клубы и все брызги — по одному вызову отрисовки
   {
@@ -436,102 +799,4 @@ function buildPools(scene) {
     mesh.renderOrder = 2;
     scene.add(mesh);
   }
-}
-
-// ---- водопад в шахту: путь воды с кромки до озера ----
-// Вода падает по параболе; встретив глыбу или уступ, растекается по её верху, стекает вниз по склону
-// (к озеру), срывается с края и падает дальше — так до самой глади. Упёрлась в стену — скользит по ней вниз.
-export function flowPath(f, cx, cz, H, VH) {
-  const DT = 0.025, WALL = 0.8, LIFT = 0.25;
-  // начинаем на кромке, на уровне воды ручья (подход по глади строится отдельно, см. buildWaterfalls)
-  let x = cx * f.lipR, z = cz * f.lipR, y = f.y0;
-  let hx = -cx, hz = -cz, hs = 1.6, vy = 0, air = true; // направление и скорость по горизонтали
-  const pts = [[x, y, z, 1]], hits = [];
-  let arc = 0, lastX = x, lastY = y, lastZ = z;
-  const sup = (px, pz, py) => groundAt(px, pz, py);
-  const toLake = (px, pz) => { const l = Math.hypot(px - LAKE.x, pz - LAKE.z) || 1; return [(LAKE.x - px) / l, (LAKE.z - pz) / l]; };
-  const inLake = (px, pz) => Math.hypot(px - LAKE.x, pz - LAKE.z) < LAKE.r - 1;
-  let noHug = 0, lowY = y, stuck = 0;
-  for (let it = 0; it < 40000 && y > LAKE.level; it++) {
-    // застряли (долго не опускаемся): на время отключаем прилипание к стене
-    if (y < lowY - 0.5) { lowY = y; stuck = 0; } else if (++stuck > 300) { noHug = 200; stuck = 0; }
-    noHug--;
-    if (air) {
-      vy -= G * DT;
-      let nx = x + hx * hs * DT, nz = z + hz * hs * DT, ny = y + vy * DT;
-      let g = sup(nx, nz, ny);
-      if (g - ny > WALL) { // стена или бок глыбы: горизонтальная скорость гаснет, вода скользит вниз
-        hs *= 0.3; nx = x; nz = z; g = sup(nx, nz, ny);
-        if (g - ny > WALL) { // и на месте внутри камня (под нависающей глыбой): отходим к озеру, вверх не прыгаем
-          const [lx, lz] = toLake(x, z);
-          x += lx * 0.3; z += lz * 0.3; hx = lx; hz = lz; hs = 1; noHug = 120;
-          continue;
-        }
-      }
-      x = nx; z = nz; y = ny;
-      // вода липнет к стене: если позади (откуда летит) скала ближе 3 м — прижимаемся к ней и стекаем по ней
-      for (let dd = 0.3; dd < 3; dd += 0.3) {
-        if (sup(x - hx * dd, z - hz * dd, y) - y > WALL) {
-          if (dd > 1.0 && noHug <= 0) {
-            // прижимаемся, только если там ещё воздух: иначе вода «возвращалась» на уступ, с которого сорвалась
-            const k = (dd - 1.0) * Math.min(1, DT * 3), qx = x - hx * k, qz = z - hz * k;
-            if (sup(qx, qz, y) < y - 0.4) { x = qx; z = qz; }
-          }
-          hs = Math.min(hs, 1.2);
-          break;
-        }
-      }
-      g = sup(x, z, y);
-      if (g - y > WALL) { const [lx, lz] = toLake(x, z); x += lx * 0.3; z += lz * 0.3; noHug = 120; }
-      else if (g >= y - 0.05 && !(inLake(x, z) && g < LAKE.level)) { if (vy < -6) hits.push([x, g, z, Math.min(1, -vy / 25)]); y = g; air = false; vy = 0; hs = Math.max(hs, 1.5); }
-    } else {
-      // по верху: выбираем направление, где ниже и ближе к озеру, без резких поворотов
-      const [lx, lz] = toLake(x, z);
-      let best = null;
-      for (let k = 0; k < 24; k++) {
-        const a = (k / 24) * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a), st = 0.45;
-        const g = sup(x + dx * st, z + dz * st, y + 0.3);
-        if (g > y + 0.3) continue; // в гору или в стену
-        const sc = (y - g) * 1.2 + 0.35 * (dx * lx + dz * lz) + 0.5 * (dx * hx + dz * hz);
-        if (!best || sc > best.sc) best = { sc, dx, dz, g };
-      }
-      if (!best) { hx = lx; hz = lz; hs = 1.5; air = true; y += 0.3; continue; } // в ямке: перелить через край
-      hx = best.dx; hz = best.dz;
-      // шаг — ровно на проверенное расстояние: дальше мог оказаться бок соседней глыбы (раньше вода «взлетала» на её верх)
-      const step = 0.45;
-      const nx = x + hx * step, nz = z + hz * step, g = sup(nx, nz, y + 0.3);
-      if (g > y + 0.3) { hx = -hx; hz = -hz; continue; }
-      x = nx; z = nz;
-      if (g < y - 0.6 || (inLake(x, z) && g < LAKE.level)) { air = true; vy = 0; hs = 1.4; } // край: срывается вниз
-      else y = g;
-    }
-    const dd = Math.hypot(x - lastX, y - lastY, z - lastZ);
-    if (dd > 0.9) { arc += dd; pts.push([x, y, z, air ? 1 : 0]); lastX = x; lastY = y; lastZ = z; }
-  }
-  if (y > LAKE.level) console.warn('waterfall: путь не дошёл до озера', x, y, z);
-  pts.push([x, Math.min(y, LAKE.level) - 0.4, z, 1]);
-  // сгладить ломаную (на воздухе она и так плавная, на камнях — ступеньки сетки)
-  for (let pass = 0; pass < 2; pass++)
-    for (let i = 1; i < pts.length - 1; i++)
-      for (let c = 0; c < 3; c++) pts[i][c] = pts[i][c] * 0.5 + (pts[i - 1][c] + pts[i + 1][c]) * 0.25;
-  // ряды пелены
-  const rows = [];
-  let sx = -cz, sz = cx, len = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)], c = pts[i];
-    if (i) len += Math.hypot(c[0] - pts[i - 1][0], c[1] - pts[i - 1][1], c[2] - pts[i - 1][2]);
-    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
-    const th = Math.hypot(tx, tz), tl = Math.hypot(tx, ty, tz) || 1;
-    if (th > 0.15 * tl) { sx = -tz / th; sz = tx / th; } // поперёк — по горизонтали к ходу струи
-    tx /= tl; ty /= tl; tz /= tl;
-    // нормаль пелены: sd × t, где sd = (sx, 0, sz)
-    const nx = -sz * ty, ny = sz * tx - sx * tz, nz = sx * ty;
-    const nl = Math.hypot(nx, ny, nz) || 1;
-    // пусть нормаль смотрит от скалы: вверх, если струя лежит на камне, и к озеру, если падает
-    let sgn = ny < -0.01 ? -1 : 1;
-    if (Math.abs(ny) < 0.3) { const [lx, lz] = toLake(c[0], c[2]); sgn = nx * lx + nz * lz < 0 ? -1 : 1; }
-    rows.push({ c: [c[0], c[1], c[2]], air: c[3], tx, ty, tz, sd: [sx, sz], nr: [nx / nl * sgn, ny / nl * sgn, nz / nl * sgn], d: Math.min(1, (f.y0 - c[1]) / H), q: Math.sqrt(len + 0.3), hb: c[1] - LAKE.level });
-  }
-  rows.hits = hits;
-  return rows;
 }
