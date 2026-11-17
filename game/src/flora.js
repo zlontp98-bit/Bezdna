@@ -580,8 +580,11 @@ const GRASS_VS = /* glsl */ `
   varying vec3 vW; varying vec3 vC; varying float vSh;
   void main(){
     vec2 base = aOff.xy + uS * floor((uCenter.xz - aOff.xy)/uS + 0.5);
-    vec2 hm = texture2D(uHmap, base/(2.0*uExt)+0.5).rg;
     float dist = distance(base, uCenter.xz);
+    // за краем ковра (почти четверть травинок) — сразу выходим, без выборок из текстур:
+    // на телефонах выборка текстуры в вершинном шейдере дорогая
+    if (dist > uS*0.5) { gl_Position = vec4(0.0, 0.0, -2.0, 1.0); vW = vec3(0.0); vC = vec3(0.0); vSh = 0.0; return; }
+    vec2 hm = texture2D(uHmap, base/(2.0*uExt)+0.5).rg;
     float fade = smoothstep(uS*0.5, uS*0.30, dist);
     float e = max(abs(base.x), abs(base.y));
     float k = hm.g * fade * step(e, uExt-1.0);
@@ -632,24 +635,43 @@ const GRASS_FS = /* glsl */ `
     gl_FragColor = vec4(applyFog(c, vW), 1.0);
   }`;
 
-export function buildGrass(scene, count) {
+// Травинки — не «экземпляры» одной модели, а один сплошной меш: у копии из 3–5 вершин видеокарта телефона
+// загружает работой лишь малую часть своих потоков (каждая копия идёт отдельной пачкой), и трава была
+// самой дорогой частью кадра. Здесь вершины всех травинок лежат подряд, данные травинки (aOff и цвет)
+// повторены в каждой её вершине. Густота — сколько травинок рисуем (drawRange).
+function bake(shape, index, n, per) {
+  const V = shape.length / 3, pos = new Float32Array(n * V * 3), idx = new Uint32Array(n * index.length);
+  for (let i = 0; i < n; i++) {
+    pos.set(shape, i * V * 3);
+    for (let k = 0; k < index.length; k++) idx[i * index.length + k] = i * V + index[k];
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  for (const [name, src, sz] of per) {
+    const a = new Float32Array(n * V * sz);
+    for (let i = 0; i < n; i++) for (let v = 0; v < V; v++) for (let c = 0; c < sz; c++) a[(i * V + v) * sz + c] = src[i * sz + c];
+    g.setAttribute(name, new THREE.BufferAttribute(a, sz));
+  }
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.userData.per = index.length;
+  return g;
+}
+
+export function buildGrass(scene, count, lite = false) {
   const S = 64;
   const rnd = mulberry32(SEED + 99);
   const out = {};
 
-  // травинка: 5 вершин, 3 треугольника
+  // травинка: 5 вершин, 3 треугольника; на телефоне — один треугольник (3 вершины)
   {
     const w = 0.075;
-    const g = new THREE.InstancedBufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      -w, 0, 0, w, 0, 0, -w * 0.62, 0.5, 0, w * 0.62, 0.5, 0, 0, 1, 0]), 3));
-    g.setIndex([0, 1, 2, 1, 3, 2, 2, 3, 4]);
+    const shape = lite ? [-w * 1.1, 0, 0, w * 1.1, 0, 0, 0, 1, 0] : [-w, 0, 0, w, 0, 0, -w * 0.62, 0.5, 0, w * 0.62, 0.5, 0, 0, 1, 0];
+    const index = lite ? [0, 1, 2] : [0, 1, 2, 1, 3, 2, 2, 3, 4];
     const off = new Float32Array(count * 4);
     for (let i = 0; i < count; i++) {
       off[i * 4] = rnd() * S; off[i * 4 + 1] = rnd() * S; off[i * 4 + 2] = rnd(); off[i * 4 + 3] = rnd();
     }
-    g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
-    g.instanceCount = count;
+    const g = bake(shape, index, count, [['aOff', off, 4]]);
     const m = new THREE.Mesh(g, mat({ uniforms: { uS: { value: S } }, vertexShader: GRASS_VS, fragmentShader: GRASS_FS, side: THREE.DoubleSide }));
     m.frustumCulled = false;
     scene.add(m);
@@ -658,14 +680,13 @@ export function buildGrass(scene, count) {
   // цветы: стебель + головка-ромбик
   {
     const fc = Math.floor(count / 15);
-    const g = new THREE.InstancedBufferGeometry();
     const s = 0.012, r = 0.085;
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    const shape = [
       -s, 0, 0, s, 0, 0, 0, 0.8, 0,
       -r, 0.86, 0, r, 0.86, 0, 0, 1.0, 0, 0, 0.72, 0,
       0, 0.86, -r, 0, 0.86, r,
-    ]), 3));
-    g.setIndex([0, 1, 2, 3, 4, 5, 3, 6, 4, 7, 8, 5, 7, 6, 8]);
+    ];
+    const index = [0, 1, 2, 3, 4, 5, 3, 6, 4, 7, 8, 5, 7, 6, 8];
     const off = new Float32Array(fc * 4), colr = new Float32Array(fc * 3);
     const pal = [0xff5a4d, 0xffd84a, 0xffffff, 0xff8fc0, 0x8fb4ff, 0xff7a2e];
     const c = new THREE.Color();
@@ -676,9 +697,7 @@ export function buildGrass(scene, count) {
       c.setHex(pal[(fbm(cx * 0.09, cy * 0.09, 1) * 3 + 3 + rnd() * 1.2) % pal.length | 0]);
       colr[i * 3] = c.r; colr[i * 3 + 1] = c.g; colr[i * 3 + 2] = c.b;
     }
-    g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 4));
-    g.setAttribute('color', new THREE.InstancedBufferAttribute(colr, 3));
-    g.instanceCount = fc;
+    const g = bake(shape, index, fc, [['aOff', off, 4], ['color', colr, 3]]);
     const m = new THREE.Mesh(g, mat({
       uniforms: { uS: { value: S } }, defines: { FLOWER: 1 }, vertexColors: true,
       vertexShader: GRASS_VS, fragmentShader: GRASS_FS, side: THREE.DoubleSide,
@@ -688,7 +707,7 @@ export function buildGrass(scene, count) {
     out.flowers = g;
   }
   out.setDensity = (k) => {
-    out.grass.instanceCount = Math.floor(count * k);
+    out.grass.setDrawRange(0, Math.floor(count * k) * out.grass.userData.per);
   };
   return out;
 }

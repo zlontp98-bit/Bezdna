@@ -86,33 +86,39 @@ export function buildWaterfalls(scene, falls) {
         vN = normalize(vec3(aOut.x, 0.35, aOut.y));
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
-    // Поток в стиле мобильных стилизованных водопадов (RiME, «Stylized Waterfall» 80.lv): одна полоса с координатой
-    // вдоль пути воды (q — метры пути), два шума бегут вниз с ОДНОЙ скоростью по всей длине — течение везде одинаковое,
-    // струи — ступенчатые полосы (не размытая каша), пена у кромки и у удара, рваные края.
+    // Завеса как в стилизованных играх: одна полоса с координатой вдоль пути воды (q — метры пути), шумы бегут вниз
+    // с одной скоростью. У кромки — цвет ручья и ровный край во всю его ширину, ниже — мягкие бело-голубые струи,
+    // у воды — белые зубцы пены.
     fragmentShader: /* glsl */ `
       uniform float uLip;
       varying vec3 vW; varying vec4 vUv; varying vec3 vN; varying float vHb; varying vec2 vEx;
       void main(){
         float u = vUv.x, q = vUv.y, L = vUv.z, d = vUv.w, flt = vEx.y;
         float t = uTime * 1.6;                                   // м/с вдоль пути, одинаково везде
-        float s1 = vnoise(vec2(u * 7.0 + L * 9.0, q * 0.12 - t * 0.12));
-        float s2 = vnoise(vec2(u * 14.0 + 5.0, q * 0.3 - t * 0.3));
-        float streak = s1 * 0.6 + s2 * 0.4;
-        // три тона: тёмная вода, светлая вода, белые струи (ступенями — как в мультяшных играх)
-        vec3 dark = vec3(0.16, 0.46, 0.52), light = vec3(0.42, 0.74, 0.78), white = vec3(0.90, 0.96, 0.98);
-        float wk = mix(0.62, 0.48, smoothstep(0.0, 0.3, d)) + 0.12 * flt; // ниже по падению — больше белого
-        vec3 c = mix(dark, light, smoothstep(0.38, 0.44, streak));
-        c = mix(c, white, smoothstep(wk, wk + 0.04, streak));
-        // пена: на перегибе у кромки и там, где струя бьёт в воду
-        float lip = smoothstep(1.5, 0.0, abs(q - uLip)) * step(0.5, 1.0 - flt);
-        float splash = smoothstep(3.5, 0.0, vHb);
-        c = mix(c, white, clamp(max(lip * 0.7, splash * 0.8) * smoothstep(0.3, 0.6, s2 + 0.2), 0.0, 1.0));
-        c = shade(c, vN, 0.85 + 0.15 * shadowAt(vW.xz));
-        // рваные края, бегут вниз с той же скоростью
-        float rag = vnoise(vec2(q * 0.6 - t * 0.6, u < 0.0 ? 3.0 : 11.0));
-        float edge = abs(u) + (rag - 0.5) * 0.35;
-        float a = smoothstep(1.0, 0.86, edge);
-        a *= L < 0.25 ? 0.35 : mix(0.82, 0.95, smoothstep(0.4, 0.7, streak));
+        // мягкие вертикальные струи: шум сильно растянут вдоль пути воды, три масштаба
+        float s1 = vnoise(vec2(u * 5.0 + L * 9.0, q * 0.06 - t * 0.06));
+        float s2 = vnoise(vec2(u * 13.0 + 5.0, q * 0.16 - t * 0.16));
+        float s3 = vnoise(vec2(u * 31.0 + 2.0, q * 0.45 - t * 0.45));
+        float streak = s1 * 0.5 + s2 * 0.33 + s3 * 0.17;
+        // на глади вода как в ручье; через пару метров падения — светлая бело-голубая завеса
+        float fall = smoothstep(uLip, uLip + 3.5, q) * (1.0 - flt);
+        vec3 river = vec3(0.30, 0.62, 0.66), blue = vec3(0.58, 0.82, 0.90), white = vec3(0.93, 0.97, 1.0);
+        vec3 c = mix(river, blue, fall);
+        c = mix(c, white, smoothstep(0.42, 0.78, streak) * mix(0.35, 0.85, fall));
+        // гладкий светлый перегиб через край — прямая чистая кромка
+        float lip = smoothstep(1.0, 0.0, abs(q - uLip - 0.35)) * (1.0 - flt);
+        c = mix(c, white, lip * 0.45);
+        // внизу — белые «зубцы» пены, где завеса врезается в воду
+        float teeth = 0.6 + 2.2 * vnoise(vec2(u * 8.0 + L * 3.0, t * 0.35));
+        float foamB = smoothstep(teeth + 1.2, teeth, vHb);
+        c = mix(c, white, foamB * 0.92);
+        c = shade(c, vN, 0.88 + 0.12 * shadowAt(vW.xz));
+        // края: у кромки ровные, ниже чуть рваные
+        float rag = vnoise(vec2(q * 0.5 - t * 0.5, u < 0.0 ? 3.0 : 11.0));
+        float edge = abs(u) + (rag - 0.5) * 0.28 * fall;
+        float a = smoothstep(1.0, 0.9, edge);
+        a *= L < 0.25 ? 0.3 : mix(0.88, mix(0.72, 0.95, smoothstep(0.3, 0.7, streak)), fall);
+        a = max(a, foamB * smoothstep(1.0, 0.9, edge) * 0.95);
         a *= smoothstep(-0.35, 0.1, vHb) * vEx.x;
         gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 0.95));
       }`,
@@ -211,12 +217,12 @@ export function buildWaterfalls(scene, falls) {
       const b = rows[rows.length - 1];
       rows.push({ ...b, c: [b.c[0], f.y1 - 0.4, b.c[2]], d: 1, q: Math.sqrt(f.y0 - f.y1 + 0.7), hb: -0.4 });
     }
-    // Подход: пелена начинается на глади ручья за 2 м до кромки и проявляется, а лента ручья там же тает.
+    // Подход: пелена начинается на глади ручья за метр до кромки и проявляется, а лента ручья там же тает.
     // q — метры пути от начала подхода: одна и та же скорость течения на глади, на перегибе и в падении.
     {
       const pre = [];
-      for (let r = 2; r > 0.1; r -= 0.4) {
-        pre.push({ c: [cx * (f.lipR + r), f.y0 + 0.03, cz * (f.lipR + r)], air: 0, flat: 1, fade: smoothstep(2, 0.8, r), wk: 1,
+      for (let r = 0.9; r > 0.05; r -= 0.3) {
+        pre.push({ c: [cx * (f.lipR + r), f.y0 + 0.03, cz * (f.lipR + r)], air: 0, flat: 1, fade: smoothstep(0.9, 0.2, r), wk: 1, pre: 1,
           tx: outX, ty: 0, tz: outZ, sd: [px, pz], nr: [0, 1, 0], d: 0, q: 2 - r, hb: f.y0 - f.y1 });
       }
       let len = 2;
@@ -233,8 +239,9 @@ export function buildWaterfalls(scene, falls) {
     // По камню струя растекается шире.
     for (const [L, wAdd, off, bulge] of [[0, 0, 0, 0], [0.5, 0.15, 0, 0.45]]) { // два слоя: меньше перерисовки на телефоне
       const base = pos.length / 3;
-      for (const { c, sd, nr, d, q, hb, air, flat = air === 0 ? 1 : 0, fade = 1, wk = 1 } of rows) {
-        const half = (halfAt(d) + wAdd) * (wk !== 1 ? wk : air === 0 ? 1.35 : 1);
+      for (const { c, sd, nr, d, q, hb, air, flat = air === 0 ? 1 : 0, fade = 1, wk } of rows) {
+        // у кромки пелена ровно той же ширины, что и ручей; по камню ниже струя растекается шире
+        const half = (halfAt(d) + (wk ? 0 : wAdd)) * (wk ?? (air === 0 ? 1.35 : 1));
         const nl = Math.hypot(nr[0], nr[2]) || 1;
         for (let j = 0; j < COLSN; j++) {
           const u = -1 + (2 * j) / (COLSN - 1);
@@ -299,8 +306,9 @@ export function buildWaterfalls(scene, falls) {
       fog(h[0], h[1] + 0.5, h[2], 2.5 + rnd() * 2, 0.08, 0, 0);
     }
     // ---- мокрые скалы вокруг струи (карта uWet) и течение под струёй ----
+    // у кромки камень не темним: иначе вокруг истока грязное пятно; мокро только ниже, где летят брызги
     for (const r of rows) {
-      wetDisc(r.c[0], r.c[2], halfAt(r.d) + (r.air ? 1.2 : 2.0), r.c[1] - 2.5, r.c[1] + 1.5);
+      if (!r.pre && r.c[1] < f.y0 - 2) wetDisc(r.c[0], r.c[2], halfAt(r.d) + (r.air ? 1.0 : 1.2), r.c[1] - 2.5, Math.min(r.c[1] + 1.5, f.y0 - 1.5));
       FLOW.push({ x: r.c[0], y: r.c[1], z: r.c[2], hw: halfAt(r.d), sd: r.sd, tx: r.tx, ty: r.ty, tz: r.tz, air: r.air });
     }
   }

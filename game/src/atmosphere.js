@@ -254,7 +254,7 @@ export function buildStreams(scene) {
       open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода уходит в туман
       if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: лента
       segs.push([start, i]);
-      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: halfAt(i) * 0.74 - 0.2, src: R[i] > W.SRC_R };
+      const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: halfAt(i), src: R[i] > W.SRC_R };
       falls.push(f);
       if (open) break;
       // пена ниже места удара струи
@@ -278,10 +278,8 @@ export function buildStreams(scene) {
       const endsFall = si < segs.length - 1 || open;
       let prev = null;
       for (let k = a; k <= b; k++) {
-        // перед срывом русло сужается воронкой: вода собирается в струю, а не обрывается
-        // ровным прямоугольным краем во всю ширину ручья
-        const funnel = endsFall ? 1 - 0.26 * smoothstep(7, 0, (b - k) * 0.5) : 1;
-        const r = R[k], wmid = lvl[k], half = halfAt(k) * funnel;
+        // ручей доходит до кромки во всю ширину: дальше та же вода переливается через край пеленой той же ширины
+        const r = R[k], wmid = lvl[k], half = halfAt(k);
         normalAt(cx * r, cz * r, n, 0.5);
         const wslope = k + 1 < R.length ? Math.abs(lvl[k] - lvl[k + 1]) / 0.5 : 0;
         const steep = smoothstep(0.2, 0.7, wslope);
@@ -298,7 +296,7 @@ export function buildStreams(scene) {
           for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
           // перед срывом лента тает: дальше ту же воду несёт пелена водопада (она начинается раньше кромки),
           // поэтому у кромки нет «плиты» — одна вода плавно переходит в другую
-          const tail = endsFall ? smoothstep(0, 1.6, (b - k) * 0.5) : 1;
+          const tail = endsFall ? smoothstep(0, 0.7, (b - k) * 0.5) : 1;
           foam.push(foamAt[k], smoothstep(0.8, 1.0, dn) * tail);
         }
         if (prev) len += Math.abs(r - R[k - 1]) + Math.abs(wmid - lvl[k - 1]);

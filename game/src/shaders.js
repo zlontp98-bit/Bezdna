@@ -5,6 +5,8 @@ THREE.ColorManagement.enabled = false;
 
 // Общие для всех материалов значения: свет, туман, время.
 // Один объект на всё — меняем в одном месте, обновляется везде.
+// телефон (или #lite в адресе для проверки): упрощённые шейдеры земли и травы
+export const LITE = matchMedia('(pointer: coarse)').matches || location.search.includes('lite');
 export const U = {
   uSun: { value: new THREE.Vector3(0.62, 0.40, 0.42).normalize() },
   uSunCol: { value: new THREE.Color(0.64, 0.55, 0.40) },
