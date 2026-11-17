@@ -535,7 +535,7 @@ export class Player {
     this.climbLean = 0.12;
     const amt = Math.min(1, Math.hypot(inp.mx, inp.my));
     this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
-    this.climbAmt = amt;
+    this.climbAmt = amt; this.climbMx = inp.mx; this.climbMy = inp.my; // куда лезем — для рук от первого лица
     v.set(0, 0, 0);
     if (inp.jump) {            // оттолкнуться от грани: прыжок вверх-назад
       this.face = null; this.climbing = false; this.climbCd = 0.35; this.airT = 1;
@@ -589,7 +589,7 @@ export class Player {
     { let d = Math.atan2(ux, uz) - this.facing; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; this.facing += d * Math.min(1, dt * 8); }
     this.climbLean = Math.asin(Math.min(1, n.y));
     this.climbPhase += dt * amt * 7.5 * (inp.my < -0.3 ? -1 : 1);
-    this.climbAmt = amt;
+    this.climbAmt = amt; this.climbMx = inp.mx; this.climbMy = inp.my; // куда лезем — для рук от первого лица
     v.set(0, 0, 0);
     if (inp.jump) { // оттолкнуться от стены
       this.climbing = false; this.climbCd = 0.35; this.airT = 1;

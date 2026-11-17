@@ -149,7 +149,7 @@ async function build() {
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
   player = new Player(scene, flora.spawn, flora.colliders.concat(camp.colliders));
-  hands = buildHands(scene); // руки от первого лица
+  hands = buildHands(); // руки от первого лица — своя сцена, рисуется поверх кадра
   creative = initCreative({ scene, camera, player, input, hud: $('hud') });
   inv = new Inventory(store);
   bindInventoryUI(inv, { hotEl: $('hot'), bagEl: $('bagCells'), bagBtn: $('bagBtn'), bagPanel: $('bag'), nameEl: $('held') });
@@ -522,6 +522,7 @@ function frame(now) {
   clouds.rotation.y += dt * 0.003;
 
   renderer.render(scene, camera);
+  hands.render(renderer, camera); // руки от первого лица — поверх всего
   updateHud(dt);
 
   frames++; fpsT += dtMs;
