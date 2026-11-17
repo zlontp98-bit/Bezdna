@@ -296,7 +296,10 @@ export function buildStreams(scene) {
           // две плоскости воды нигде не лежат одна на другой
           let dn = 9;
           for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
-          foam.push(foamAt[k], smoothstep(0.8, 1.0, dn));
+          // перед срывом лента тает: дальше ту же воду несёт пелена водопада (она начинается раньше кромки),
+          // поэтому у кромки нет «плиты» — одна вода плавно переходит в другую
+          const tail = endsFall ? smoothstep(0, 4.5, (b - k) * 0.5) : 1;
+          foam.push(foamAt[k], smoothstep(0.8, 1.0, dn) * tail);
         }
         if (prev) len += Math.abs(r - R[k - 1]) + Math.abs(wmid - lvl[k - 1]);
         if (prev) for (let q = 0; q < K - 1; q++) idx.push(vi - K + q, vi + q, vi - K + q + 1, vi - K + q + 1, vi + q, vi + q + 1);
