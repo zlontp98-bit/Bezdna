@@ -775,7 +775,7 @@ export class Player {
     else if (inp.grab && this.grounded && this.climbCd <= 0 && this.grabEdge(Math.sin(this.facing), Math.cos(this.facing))) { /* повисли на кромке */ }
     else if ((inp.grab || this.autoGrab(ml, dt)) && this.climbCd <= 0 && this.grab()) { /* схватились */ }
     else if (!this.grounded && !this.sliding && this.climbCd <= 0 && this.airGrab(inp, mx, mz, ml)) { /* схватились в прыжке */ } else {
-    const top = inp.sprint ? RUN : WALK;
+    const top = (inp.sprint ? RUN : WALK) * (this.slow || 1);   // slow < 1 — вязнем в жиже (deep.js)
     // на крутом склоне стоять нельзя: герой съезжает вниз, пока не схватится
     if (this.grounded) {
       const fs = this.footSlope();
@@ -803,7 +803,7 @@ export class Player {
     // со склона нельзя прыгнуть, чтобы не забираться по стене прыжками; с жёлоба-плиты — можно (длинный прыжок)
     if (this.grounded) this.walkable = !this.sliding || this.onSlab;
     if (inp.jump && this.walkable && (this.grounded || this.airT < 0.12) && v.y <= 0.01) {
-      v.y = JUMP; this.grounded = false; this.airT = 1;
+      v.y = JUMP * (this.slow < 1 ? 0.75 : 1); this.grounded = false; this.airT = 1;
     }
 
     const dist = Math.hypot(v.x, v.z) * dt, n = Math.max(1, Math.ceil(dist / 0.2));
