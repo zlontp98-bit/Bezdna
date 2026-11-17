@@ -737,6 +737,8 @@ export class Player {
       const list = this.cells.get((cx + a) + ',' + (cz + b));
       if (!list) continue;
       for (const c of list) {
+        // у части препятствий есть высота (гриб, рудный камень в глубине) и они могут исчезать (добыты)
+        if (c.off || (c.y0 !== undefined && (p.y > c.y1 || p.y + 1.6 < c.y0))) continue;
         const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), R = c.r + 0.3;
         if (d < R && d > 1e-4) { p.x += (dx / d) * (R - d); p.z += (dz / d) * (R - d); }
       }

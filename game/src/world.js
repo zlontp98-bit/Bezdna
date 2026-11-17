@@ -58,6 +58,13 @@ export const RULES = {
   chest: { loot: { gear: 1, pickaxe: 1 }, islands: 7, respawnMs: () => 180000 + Math.random() * 120000 },
   // ягодные кусты: собрал — через 2.5–4 минуты ягоды снова висят; ягоды не на каждом кусте
   bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
+  // глубина (deep.js): кристаллы и руда — киркой, большие грибы — топором, маленькие — рукой
+  deep: {
+    crystal: { tool: 'pickaxe', hits: 3, reward: (id) => ({ crystal: 1 + (idRand(id) < 0.35 ? 1 : 0) }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
+    ore:     { tool: 'pickaxe', hits: 4, reward: () => ({ stone: 3 }), respawnMs: (id) => 200000 + idRand(id) * 60000 },
+    shroom:  { tool: null,      hits: 1, reward: (id) => ({ shroom: 1 + (idRand(id) < 0.3 ? 1 : 0) }), respawnMs: (id) => 150000 + idRand(id) * 90000 },
+    big:     { tool: 'axe',     hits: 4, reward: () => ({ shroom: 5 }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
+  },
   treasury: { goal: 100, perLog: 2, bonus: 25, next: 'Кузница' },
 };
 
@@ -71,6 +78,7 @@ class LocalAuthority {
     this.known = {}; // игрок → изученные рецепты
     this.picked = {}; // камушек → когда подобран
     this.mined = {}; // валун → когда разбит
+    this.dug = {}; // кристалл, гриб, руда в глубине → когда добыт
     this.chest = null; // { id, island, seed, opened, respawn } — где сейчас старый ящик
     this.treasury = { logs: 0 }; // (устарело) казна лагеря
     this.project = {}; // задание на доске: сколько чего внесено в улучшение дома
@@ -82,20 +90,22 @@ class LocalAuthority {
       if (d && d.known) this.known = d.known;
       if (d && d.picked) this.picked = d.picked;
       if (d && d.mined) this.mined = d.mined;
+      if (d && d.dug) this.dug = d.dug;
       if (d && d.chest) this.chest = d.chest;
       if (d && d.treasury) this.treasury = d.treasury;
       if (d && d.project) this.project = d.project;
     } catch (_) { /* пустой мир */ }
   }
-  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, project: this.project, known: this.known, picked: this.picked, mined: this.mined, chest: this.chest })); }
+  save() { this.store.set('bezdna.world', JSON.stringify({ v: WORLD_VERSION, cut: this.cut, built: this.built, wallets: this.wallets, treasury: this.treasury, project: this.project, known: this.known, picked: this.picked, mined: this.mined, dug: this.dug, chest: this.chest })); }
   snapshot(now) {
     // выросшие деревья из списка убираем — список не растёт бесконечно
     for (const id in this.cut) if (now - this.cut[id] > RULES.tree.regrowMs(id) + 60000) delete this.cut[id];
     for (const id in this.mined) if (now - this.mined[id] > RULES.boulder.respawnMs(id) + 60000) delete this.mined[id];
     for (const id in this.picked) if (now - this.picked[id] > (id.startsWith('bush:') ? RULES.bush : RULES.pebble).respawnMs(id) + 60000) delete this.picked[id];
+    for (const id in this.dug) { const r = RULES.deep[id.split(':')[0] === 'bigshroom' ? 'big' : id.split(':')[0]]; if (!r || now - this.dug[id] > r.respawnMs(id) + 60000) delete this.dug[id]; }
     this.ensureChest(now);
     this.save();
-    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, project: { ...this.project }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined }, chest: { ...this.chest } };
+    return { cut: { ...this.cut }, built: { ...this.built }, wallet: this.wallets[this.me] || 0, treasury: { ...this.treasury }, project: { ...this.project }, known: (this.known[this.me] || []).slice(), picked: { ...this.picked }, mined: { ...this.mined }, dug: { ...this.dug }, chest: { ...this.chest } };
   }
   // Ящика нет или открытый простоял своё — ставим новый на другой остров.
   // Мир выбирает только остров и «зерно»; точное место на острове игра выводит из них сама,
@@ -137,6 +147,13 @@ class LocalAuthority {
       this.mined[ev.id] = now;
       this.save();
       emit({ type: 'mined', id: ev.id, at: now, by: this.me, reward: { stone: RULES.boulder.stones(ev.s) } }); // размер сервер возьмёт из своей копии мира
+    }
+    if (ev.type === 'harvest' && RULES.deep[ev.kind]) {
+      const rule = RULES.deep[ev.kind], at = this.dug[ev.id];
+      if (at !== undefined && now - at < rule.respawnMs(ev.id)) return; // уже добыто
+      this.dug[ev.id] = now;
+      this.save();
+      emit({ type: 'harvested', id: ev.id, kind: ev.kind, at: now, by: this.me, reward: rule.reward(ev.id) });
     }
     // подобрать с земли или с куста: камушек — камень, ягодный куст — ягоды
     if (ev.type === 'pick') {
