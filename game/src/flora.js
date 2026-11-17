@@ -300,6 +300,9 @@ export function buildFlora(scene) {
     const key = Object.keys(lists).find((k) => lists[k] === list), bk = BULK[key];
     if (bk && waterNear(x, y, z, bk[0] * s, bk[1] * s)) return;
     if (y < -9 && inRock(x, y, z, list === lists.shroom ? 3.4 * s : 1.2 * s, list === lists.shroom ? 1.7 * s : 0)) return;
+    // кристаллы и грибы теперь живут в глубине и добываются (deep.js); вызовы оставлены,
+    // чтобы случайная расстановка остального мира (деревья, камни) не сдвинулась
+    if (list === lists.crystal || list === lists.small || list === lists.shroom) return;
     list.push({ x, y, z, s, color, rot, tilt });
   };
 
@@ -403,8 +406,6 @@ export function buildFlora(scene) {
     col.setHSL(y < -66 ? 0.74 + rnd() * 0.08 : 0.47 + rnd() * 0.07, 0.6, 0.55);
     add(lists.shroom, x, y - 0.1, z, s, col.getHex());
     taken.push({ x, z, r: 2.4 });
-    colliders.push({ x, z, r: 0.45 * s });
-    blobs.push({ x, z, r: 2.6 * s, h: 2.4 * s });
     return true;
   });
   // камушки, которые можно подобрать: на лугу и у края, по одному-два на полянку
@@ -506,7 +507,7 @@ export function buildFlora(scene) {
     if (!floorOk(y, ny) || !free(x, z, 2.8)) return false;
     const s = 0.8 + rnd() * 0.9;
     add(lists.shroom, x, y - 0.1, z, s, col.setHSL(0.47 + rnd() * 0.1, 0.6, 0.55).getHex());
-    taken.push({ x, z, r: 2.4 }); colliders.push({ x, z, r: 0.45 * s });
+    taken.push({ x, z, r: 2.4 });
     return true;
   });
 
