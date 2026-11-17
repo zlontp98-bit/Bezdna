@@ -536,11 +536,40 @@ function frame(now) {
 
 // ---- интерфейс ----
 
-function start() {
+// Вход в игру — тоже за экраном загрузки: сначала собираем шейдеры и прогоняем кадр во все стороны
+// (геометрия и текстуры уходят в видеокарту), и только потом показываем мир — без лагов первых секунд
+let starting = false;
+async function start() {
+  if (starting || running) return;
+  starting = true;
+  const L = $('loading');
+  loadStep(10, 'Входим в мир…');
+  L.classList.remove('hide');
   $('menu').classList.add('hide');
+  yaw = player.facing + Math.PI; // камера встаёт за спину героя
+  try {
+    updateCamera(1 / 60, { lookX: 0, lookY: 0 });
+    hands.hide();
+    if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
+    else renderer.compile(scene, camera);
+    await loadStep(55, 'Входим в мир…');
+    // кадр в 6 сторон с широким углом: всё вокруг героя один раз отрисовано
+    const fov = camera.fov, q = camera.quaternion.clone(), pos = camera.position.clone();
+    camera.fov = 100; camera.updateProjectionMatrix();
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      if (i < 4) camera.lookAt(pos.x + Math.sin(a), pos.y, pos.z + Math.cos(a));
+      else camera.lookAt(pos.x + 0.01, pos.y + (i === 4 ? -1 : 1), pos.z);
+      renderer.render(scene, camera);
+      await loadStep(60 + i * 6, 'Входим в мир…');
+    }
+    camera.fov = fov; camera.updateProjectionMatrix(); camera.quaternion.copy(q);
+  } catch (e) { console.warn(e); }
+  await loadStep(100, 'Готово!');
   $('hud').classList.add('show');
   running = true;
-  yaw = player.facing + Math.PI; // камера встаёт за спину героя
+  starting = false;
+  L.classList.add('hide');
 }
 $('play').addEventListener('click', start);
 // есть ли что терять: сводка прогресса на главном экране
