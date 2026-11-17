@@ -4,6 +4,7 @@ import { U, mat } from './shaders.js';
 import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
 import { STACKS, PILLARS } from './stacks.js';
 import { addMeshTop, blockedByStone, solidAt } from './solids.js';
+import { waterNear } from './waterfall.js';
 import { objId, idRand, RULES } from './world.js';
 
 const TAU = Math.PI * 2;
@@ -293,7 +294,11 @@ export function buildFlora(scene) {
     if (r > 0) for (let i = 0; i < 8; i++) { const a = (i / 8) * TAU; if (solidAt(x + Math.cos(a) * r, y + h, z + Math.sin(a) * r, 0, true)) return true; }
     return false;
   };
+  // высота и ширина кроны/шляпки по виду: рядом с водопадом и стоком по дну их не ставим
+  const BULK = { leaf: [3.2, 7], pine: [2.4, 8], shroom: [2.2, 4], rock: [1.2, 1.5], crystal: [1.0, 2.2], small: [0.6, 0.8], bush: [1.4, 1.6] };
   const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) => {
+    const key = Object.keys(lists).find((k) => lists[k] === list), bk = BULK[key];
+    if (bk && waterNear(x, y, z, bk[0] * s, bk[1] * s)) return;
     if (y < -9 && inRock(x, y, z, list === lists.shroom ? 3.4 * s : 1.2 * s, list === lists.shroom ? 1.7 * s : 0)) return;
     list.push({ x, y, z, s, color, rot, tilt });
   };
@@ -303,7 +308,9 @@ export function buildFlora(scene) {
   // поменьше (полузарытые, под разными углами), группы стоят на разном удалении от воды.
   const grey = (g, warm = 1) => col.setRGB(g * (1 + 0.06 * warm), g * 1.01, g * (1 - 0.04 * warm)).getHex();
   const stone = (x, z, o) => {
+    const n0 = lists.rock.length;
     add(lists.rock, x, heightAt(x, z) - (o.sink ?? 0.15), z, o.s, grey(o.g ?? 0.54, o.warm ?? 0), o.rot ?? 0, o.tilt ?? 0);
+    if (lists.rock.length === n0) return;
     Object.assign(lists.rock[lists.rock.length - 1], { sy: o.sy ?? 0.8, sz: o.sz ?? 1 });
     taken.push({ x, z, r: o.s });
     if (o.s > 0.8) blobs.push({ x, z, r: o.s * 1.5, h: o.s * 0.5 });
