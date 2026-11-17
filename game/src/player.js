@@ -3,6 +3,7 @@ import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
 import { groundAt, hitSolid, ceiling, solidNormal, solidSloped, lastSolid, rockAt, rockFace, rockNormal, fieldTop } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
+import { fallPush } from './waterfall.js';
 const _lp = new THREE.Vector3();
 
 // ---------- герой: «глубинник» ----------
@@ -214,6 +215,8 @@ const SWIM_R = 0.4; // радиус тела в воде
 const BODY = 0.3, WALL_H = 0.66, FEEL = [[1, 0], [0.64, 0.77], [0.64, -0.77]];
 const TURN = [0.5, -0.5, 1.0, -1.0].map((a) => [Math.cos(a), Math.sin(a)]);
 
+// В выживании за горное кольцо не выйти: дальше этого радиуса шаг не засчитывается
+const RING_LIM = 285;
 export class Player {
   constructor(scene, spawn, colliders) {
     this.pos = new THREE.Vector3(spawn.x, heightAt(spawn.x, spawn.z), spawn.z);
@@ -247,7 +250,7 @@ export class Player {
     this.haloPts.renderOrder = 10;
     scene.add(this.haloPts);
     this.lureGlow = 0;
-    this.n = new THREE.Vector3(); this._n2 = new THREE.Vector3();
+    this.n = new THREE.Vector3(); this._n2 = new THREE.Vector3(); this.fallP = { x: 0, z: 0, down: 0 };
     // сетка для быстрых столкновений со стволами и валунами
     this.cells = new Map();
     for (const c of colliders) {
@@ -605,8 +608,9 @@ export class Player {
     const p = this.pos, v = this.vel;
     this.swimT += dt;
     const top = inp.sprint ? SWIM_FAST : SWIM;
-    const k = Math.min(1, dt * 4);
-    v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
+    const k = Math.min(1, dt * 4), fp = this.fallP;
+    v.x += (mx * top + fp.x - v.x) * k; v.z += (mz * top + fp.z - v.z) * k;
+    v.y -= fp.down * 6 * dt; // струя притапливает
     // всплываем к уровню «голова над водой»
     const want = wl - 1.0;
     v.y += ((want - p.y) * 14 - v.y * 5) * dt;
@@ -750,6 +754,9 @@ export class Player {
     this.slideGrace = Math.max(0, this.slideGrace - dt);
     this.mantleCd = Math.max(0, this.mantleCd - dt);
     // вода: если под ногами глубже роста по грудь — плывём
+    // под струёй водопада: вода сносит по течению и давит вниз (на стене — тянет вниз, вверх лезть тяжело)
+    const fp = fallPush(p.x, p.y + 0.9, p.z, this.fallP);
+    if (this.climbing && fp.down + Math.abs(fp.x) + Math.abs(fp.z) > 0.05) inp = { ...inp, my: inp.my - 0.75 * Math.max(fp.down, 0.4) };
     const wl = waterAt(p.x, p.z);
     if (!this.climbing && wl > -1e8 && p.y < wl - 0.85 && wl - this.G(p.x, p.z) > 1.0) {
       if (!this.swimming) { this.swimming = true; this.grounded = false; this.swimT = 0; v.y = Math.max(v.y, -1.5); }
@@ -787,8 +794,9 @@ export class Player {
     } else {
       // после скольжения полёт долгий (launchT): сопротивление воздуха мало, можно «долететь» до уступа
       const k = Math.min(1, dt * (this.grounded ? 11 : this.launchT > 0 ? 0.45 : 2.5));
-      v.x += (mx * top - v.x) * k; v.z += (mz * top - v.z) * k;
+      v.x += (mx * top + fp.x - v.x) * k; v.z += (mz * top + fp.z - v.z) * k;
     }
+    if (!this.grounded) v.y -= fp.down * 9 * dt; // струя прижимает вниз
     // прыгать можно только с ровного: по крутой стене прыжками не забраться
     // со склона нельзя прыгнуть, чтобы не забираться по стене прыжками; с жёлоба-плиты — можно (длинный прыжок)
     if (this.grounded) this.walkable = !this.sliding || this.onSlab;
@@ -857,6 +865,12 @@ export class Player {
     if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && waterAt(p.x, p.z) < p.y) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
+    }
+
+    // граница горного кольца: изнутри наружу не пускаем (если попали наружу полётом — не мешаем вернуться)
+    if (Math.hypot(p.x, p.z) > RING_LIM && Math.hypot(px0, pz0) <= RING_LIM) {
+      p.x = px0; p.z = pz0; v.x = 0; v.z = 0;
+      if (this.climbing) { this.climbing = false; this.face = null; this.climbCd = 0.4; this.airT = 1; }
     }
 
     // ---- анимация: вразвалку, с болтающимися руками, глазами и фонариком ----
