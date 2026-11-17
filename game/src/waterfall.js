@@ -129,9 +129,9 @@ export function buildWaterfalls(scene, falls) {
         vec4 mv = viewMatrix * vec4(p, 1.0);
         float dist = max(-mv.z, 0.5);
         float size = aS.x * (0.55 + t * 0.9);
-        vA = sin(t * 3.1416) * aS.y * smoothstep(1.5, 7.0, dist);
+        vA = sin(t * 3.1416) * aS.y * smoothstep(3.0, 12.0, dist); // вплотную клубы не рисуем: на телефоне это дорого
         vSeed = aS.z * 17.0;
-        gl_PointSize = min(uPx * 583.0 * size / dist, 900.0);
+        gl_PointSize = min(uPx * 583.0 * size / dist, 260.0);
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
@@ -211,13 +211,21 @@ export function buildWaterfalls(scene, falls) {
     const NR = rows.length, end = rows[NR - 1];
     const pos = [], uv = [], dir = [], idx = [];
     // три слоя: задний (шире, ближе к скале), средний, передний (уже, выгнут вперёд)
-    for (const [L, wAdd, off, bulge] of [[0, 0.7, -0.3, 0.2], [0.5, 0.15, 0, 0.45], [1, -0.2, 0.22, 0.6]]) {
+    // Слои: 0 — поперечная пелена (вдоль нормали: сбоку струя не превращается в «линию»), 0.5 — тело, 1 — пена спереди.
+    // По камню струя растекается шире.
+    for (const [L, wAdd, off, bulge] of [[0, 0, 0, 0], [0.5, 0.15, 0, 0.45], [1, -0.2, 0.22, 0.6]]) {
       const base = pos.length / 3;
-      for (const { c, sd, nr, d, q, hb } of rows) {
-        const half = halfAt(d) + wAdd;
+      for (const { c, sd, nr, d, q, hb, air } of rows) {
+        const half = (halfAt(d) + wAdd) * (air === 0 ? 1.35 : 1);
         const nl = Math.hypot(nr[0], nr[2]) || 1;
         for (let j = 0; j < COLSN; j++) {
           const u = -1 + (2 * j) / (COLSN - 1);
+          if (L === 0) { // поперёк: ширина вдоль нормали, треть ширины струи
+            const w = half * 0.35 * u;
+            pos.push(c[0] + nr[0] * w, c[1] + nr[1] * w, c[2] + nr[2] * w);
+            uv.push(u, q, L, d); dir.push(sd[0], sd[1], hb);
+            continue;
+          }
           const oo = (1 - u * u) * bulge * (0.6 + 0.6 * d) + off;
           pos.push(c[0] + sd[0] * u * half + nr[0] * oo, c[1] + nr[1] * oo, c[2] + sd[1] * u * half + nr[2] * oo);
           uv.push(u, q, L, d);
@@ -406,9 +414,10 @@ function buildPools(scene) {
 // (к озеру), срывается с края и падает дальше — так до самой глади. Упёрлась в стену — скользит по ней вниз.
 export function flowPath(f, cx, cz, H, VH) {
   const DT = 0.025, WALL = 0.8, LIFT = 0.25;
-  let x = cx * f.lipR, z = cz * f.lipR, y = f.y0;
-  let hx = -cx, hz = -cz, hs = VH, vy = 0, air = true; // направление и скорость по горизонтали
-  const pts = [[x, y, z, 1]], hits = [];
+  // начинаем на дне русла за кромкой: вода сама переливается через край, без «ступеньки»
+  let x = cx * (f.lipR + 2.5), z = cz * (f.lipR + 2.5), y = groundAt(x, z, f.y0 + 1);
+  let hx = -cx, hz = -cz, hs = VH, vy = 0, air = false; // направление и скорость по горизонтали
+  const pts = [[x, y, z, 0]], hits = [];
   let arc = 0, lastX = x, lastY = y, lastZ = z;
   const sup = (px, pz, py) => groundAt(px, pz, py);
   const toLake = (px, pz) => { const l = Math.hypot(px - LAKE.x, pz - LAKE.z) || 1; return [(LAKE.x - px) / l, (LAKE.z - pz) / l]; };
@@ -423,6 +432,15 @@ export function flowPath(f, cx, cz, H, VH) {
         if (g - ny > WALL) { y = Math.max(y, g); air = false; continue; }
       }
       x = nx; z = nz; y = ny;
+      // вода липнет к стене: если позади (откуда летит) скала ближе 3 м — прижимаемся к ней и стекаем по ней
+      for (let dd = 0.3; dd < 3; dd += 0.3) {
+        if (sup(x - hx * dd, z - hz * dd, y) - y > WALL) {
+          if (dd > 0.7) { const k = (dd - 0.7) * Math.min(1, DT * 3); x -= hx * k; z -= hz * k; }
+          hs = Math.min(hs, 1.2);
+          break;
+        }
+      }
+      g = sup(x, z, y);
       if (g >= y - 0.05 && !(inLake(x, z) && g < LAKE.level)) { if (vy < -6) hits.push([x, g, z, Math.min(1, -vy / 25)]); y = g; air = false; vy = 0; hs = Math.max(hs, 1.5); }
     } else {
       // по верху: выбираем направление, где ниже и ближе к озеру, без резких поворотов
@@ -440,7 +458,7 @@ export function flowPath(f, cx, cz, H, VH) {
       const step = 3.2 * DT * 4;
       const nx = x + hx * step, nz = z + hz * step, g = sup(nx, nz, y + 0.3);
       x = nx; z = nz;
-      if (g < y - 0.6 || (inLake(x, z) && g < LAKE.level)) { air = true; vy = 0; hs = 2.6; } // край: срывается вниз
+      if (g < y - 0.6 || (inLake(x, z) && g < LAKE.level)) { air = true; vy = 0; hs = 1.4; } // край: срывается вниз
       else y = g;
     }
     const dd = Math.hypot(x - lastX, y - lastY, z - lastZ);
