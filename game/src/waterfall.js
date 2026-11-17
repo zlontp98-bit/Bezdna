@@ -115,17 +115,34 @@ function planStream(th) {
   const R = [];
   for (let r = W.SRC_R + SRC.GORGE; r > W.PIT - 6; r -= 0.5) R.push(r);
   const lvl = R.map((r) => { const w = waterAt(cx * r, cz * r); return w > -1e8 ? w : heightAt(cx * r, cz * r) + 0.2; });
-  // ширина воды на ряду: насколько далеко в стороны от оси есть вода
-  const halfAt = (k) => {
-    const r = R[k];
-    let hw = 0;
-    for (const sg of [-1, 1]) {
-      let l = 0.5;
-      while (l < 12 && waterAt(cx * r + px * l * sg, cz * r + pz * l * sg) > -1e8) l += 0.5;
-      hw = Math.max(hw, l);
+  // Ширина воды — по самому руслу: в обе стороны от оси ищем берег (дно выше глади). Середину ленты
+  // сдвигаем к середине русла. Сырые замеры скачут от ступенек сетки рельефа — сглаживаем их по пути
+  // и ограничиваем, как быстро вода может сужаться и расширяться (не больше 0.2 м ширины на метр пути).
+  const WL = [], WO = [];
+  for (let k = 0; k < R.length; k++) {
+    const r = R[k], y = lvl[k];
+    const side = (sg) => { let l = 0; while (l < 12 && heightAt(cx * r + px * l * sg, cz * r + pz * l * sg) < y - 0.03) l += 0.25; return l; };
+    const a = side(-1), b = side(1);
+    WL.push(Math.max(1.5, (a + b) / 2)); WO.push(Math.max(-1.5, Math.min(1.5, (b - a) / 2)));
+  }
+  const halfW = new Float32Array(R.length), offW = new Float32Array(R.length);
+  const smoothSeg = (A, a, b, out, lim) => {
+    let v = A.slice(a, b + 1);
+    const n = v.length;
+    // сперва расширяем до самого широкого места рядом (±2 м): лента не открывает мокрое дно у берега
+    // в узком ущелье у истока наоборот: стены там ступенчатые, и лента шире щели резалась бы о них зубцами —
+    // берём самое узкое место рядом, вода идёт внутри стен и кончается мягким краем
+    const gorge = false; // (проверено: в ущелье узкая лента не убирает зубцы — их дают сами стены; а водопад-исток становится уже щели в скале)
+    if (lim) { const t = v.slice(); v = t.map((_, i) => { let m = gorge ? 1e9 : -1e9; for (let d = -4; d <= 4; d++) if (t[i + d] !== undefined) m = gorge ? Math.min(m, t[i + d]) : Math.max(m, t[i + d]); return m; }); }
+    for (let pass = 0; pass < 4; pass++) {
+      const t = v.slice();
+      for (let i = 0; i < n; i++) { let s = 0, w = 0; for (let d = -4; d <= 4; d++) { const j = i + d; if (j < 0 || j >= n) continue; const k = 5 - Math.abs(d); s += t[j] * k; w += k; } v[i] = s / w; }
     }
-    return Math.max(2.5, hw + 0.4);
+    if (lim && !gorge) { for (let i = 1; i < n; i++) v[i] = Math.max(v[i], v[i - 1] - lim); for (let i = n - 2; i >= 0; i--) v[i] = Math.max(v[i], v[i + 1] - lim); }
+    if (gorge) for (let i = 0; i < n; i++) v[i] -= 0.55; // край ленты — чуть не доходя до стены
+    for (let i = 0; i < n; i++) out[a + i] = v[i];
   };
+  const halfAt = (k) => halfW[k] + 0.45;
   // ровные участки и водопады
   const segs = [], falls = [], foamAt = new Float32Array(R.length);
   let start = 0, i = 0, open = false;
@@ -137,13 +154,21 @@ function planStream(th) {
     open = j >= R.length - 4 || lvl[j] < -90; // в шахту: вода падает до самого озера
     if (!open && lvl[i] - lvl[j] < FALL) { i++; continue; } // каскад: гладь
     segs.push([start, i]);
-    const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: halfAt(i), src: R[i] > W.SRC_R, j };
+    const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: 0, src: R[i] > W.SRC_R, i, j };
     falls.push(f);
     if (open) break;
     for (let k = j; k < R.length; k++) foamAt[k] = Math.max(foamAt[k], smoothstep(12, 0, R[j] - R[k]) * (f.src ? 1 : 0.75));
     start = j; i = j;
   }
   if (!open) segs.push([start, R.length - 1]);
+  for (const [a, b] of segs) { smoothSeg(WL, a, b, halfW, 0.1); smoothSeg(WO, a, b, offW, 0); }
+  // у кромки русло мелкое и чуть уже — но вода к кромке не сужается: ширину перед кромкой держим
+  // как в 6 м выше по течению, а завеса не уже прорези в стене под водопад
+  for (const f of falls) {
+    const k0 = Math.max(0, f.i - 12), h0 = halfW[k0];
+    for (let k = k0; k <= f.i; k++) halfW[k] = Math.max(halfW[k], h0);
+    f.half = Math.max(halfAt(f.i), f.src ? 5.0 : 3.6); f.off = offW[f.i]; // исток: щель в скале ~10 м
+  }
   // перед кромкой вода разгоняется и светлеет
   for (const f of falls) for (let k = 0; k < R.length; k++) {
     const d = R[k] - f.lipR;
@@ -159,7 +184,9 @@ function planStream(th) {
     for (let k = a; k <= b; k++) {
       if (R[k] > rStop) continue;
       const slope = Math.abs(lvl[Math.max(a, k - 3)] - lvl[Math.min(b, k + 3)]) / (0.5 * (Math.min(b, k + 3) - Math.max(a, k - 3)) || 1); // по 3 м: ступеньки сетки не мигают
-      rows.push({ kind: 'flat', c: [cx * R[k], lvl[k], cz * R[k]], sd: [px, pz], half: halfAt(k), steep: 0.6 * smoothstep(0.25, 0.8, slope), foam: foamAt[k], hb: 99 });
+      // после удара о бережок пенные зубцы не обрываются ровной чертой, а тают дальше по ручью
+      const hb = after?.slide ? 0.6 + 0.9 * (rStop + 0.6 - R[k]) : 99;
+      rows.push({ kind: 'flat', c: [cx * R[k] + px * offW[k], lvl[k], cz * R[k] + pz * offW[k]], sd: [px, pz], half: halfAt(k), steep: 0.6 * smoothstep(0.25, 0.8, slope), foam: foamAt[k], hb: hb > 6 ? 99 : hb });
     }
     const f = falls[si];
     if (!f) continue;
@@ -175,10 +202,10 @@ function planStream(th) {
 // Обычный водопад (в чашу или на уступ): парабола с кромки, пелена не уходит в скалу.
 function dropRows(f, cx, cz, px, pz) {
   const H = f.y0 - f.y1, T = Math.sqrt((2 * H) / G), VH = f.src ? SRC.VH : 1.6;
-  const P = (o, l) => [cx * (f.lipR - o) + px * l, cz * (f.lipR - o) + pz * l];
+  const P = (o, l) => [cx * (f.lipR - o) + px * (l + f.off), cz * (f.lipR - o) + pz * (l + f.off)];
   const halfAt = (d) => f.half + Math.min(1.0, H * 0.03) * d;
   const clear = (o, y, hw) => {
-    for (let u = -1; u <= 1.001; u += 0.25) { const [x, z] = P(o, u * hw); if (heightAt(x, z) > y - 0.4) return false; }
+    for (let u = -1; u <= 1.001; u += 0.125) { const [x, z] = P(o, u * hw); if (heightAt(x, z) > y - 0.9) return false; } // гуще и с запасом: острые выступы стены не протыкают завесу
     return true;
   };
   const N = Math.min(56, Math.max(18, Math.round(H * 1.1)));
@@ -227,7 +254,7 @@ function dropRows(f, cx, cz, px, pz) {
 function shaftRows(f, cx, cz, px, pz) {
   const H = f.y0 - LAKE.level, VH = 1.6, GAP = 0.7;
   const halfAt = (d) => f.half + Math.min(1.2, H * 0.02) * d;
-  const at = (r, l) => [cx * r + px * l, cz * r + pz * l];
+  const at = (r, l) => [cx * r + px * (l + f.off), cz * r + pz * (l + f.off)];
   // радиус стены на высоте y (ближайший к центру по всей ширине завесы)
   const wallR = (y, hw) => {
     let rw = 1e9;
@@ -270,7 +297,7 @@ function shaftRows(f, cx, cz, px, pz) {
   for (let j = 0; j < OQ.length; j++) {
     if (!OQ[j]) continue;
     // над глыбой вода выгибается быстро (перекатывается через верх), под ней — долго и плавно прижимается обратно
-    const Ru = 1.5 + OQ[j] * 0.5, Rd = 4 + OQ[j] * 2.2;
+    const Ru = 2 + OQ[j] * 0.9, Rd = 5 + OQ[j] * 2.6; // пологие перегибы: без резкой складки на завесе
     for (let i = Math.max(0, j - 80); i < Math.min(OQ.length, j + 80); i++) {
       const dy = Y[i] - Y[j], x = dy > 0 ? dy / Ru : -dy / Rd;
       if (x < 1) OS[i] = Math.max(OS[i], OQ[j] * (1 - x * x) * (1 - x * x));
@@ -387,7 +414,10 @@ function finishRows(rows, cx, cz) {
     let nx = -sz * ty, ny = sz * tx - sx * tz, nz = sx * ty;
     const nl = Math.hypot(nx, ny, nz) || 1;
     nx /= nl; ny /= nl; nz /= nl;
-    if (ny + 0.5 * (nx * -cx + nz * -cz) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    // сторона нормали — как у соседнего ряда (на нависающей завесе прежняя проверка «вверх или от стены»
+    // переворачивала её на паре рядов: там завеса темнела синей полосой)
+    const pn = i ? rows[i - 1].n : null;
+    if (pn ? nx * pn[0] + ny * pn[1] + nz * pn[2] < 0 : ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
     r.n = [nx, ny, nz];
     r.fall = Math.max(r.steep || 0, smoothstep(0.35, 0.8, -ty), smoothstep(1.0, 3.0, r.drop || 0));
     if (r.kind === 'run') r.fall = Math.min(r.fall, 0.25);
@@ -409,28 +439,35 @@ export function buildWater(scene) {
   const waterMat = mat({
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
     vertexShader: /* glsl */ `
-      attribute vec4 aUv; attribute vec4 aEx; attribute vec3 aN;
-      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN;
+      attribute vec4 aUv; attribute vec4 aEx; attribute vec3 aN; attribute vec3 aX;
+      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN; varying vec3 vX;
       void main(){
-        vW = position; vUv = aUv; vEx = aEx; vN = aN;
+        vW = position; vUv = aUv; vEx = aEx; vN = aN; vX = aX;
         gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
       }`,
-    // Одна вода: u — поперёк (-1..1), q — метры пути от родника, fall — крутизна (0 гладь, 1 завеса).
-    // Рисунок — шум, сильно вытянутый вдоль течения, и сдвигается он с одной скоростью по всему пути:
-    // на глади — редкие пенные струйки и блики неба, на перегибе — светлая кромка, в падении — бело-голубые
-    // струи, у подножия — белые зубцы пены.
+    // Одна вода: u — поперёк (-1..1), q — метры пути от родника, fall — крутизна (0 гладь, 1 завеса),
+    // vX: полуширина ленты в метрах и «воздух в воде» (0 — гладкий язык у кромки, 1 — белая вспененная завеса).
+    // Рисунок — шум, вытянутый вдоль течения; каждый слой сдвигается со своей постоянной скоростью
+    // (скорость не зависит от места — иначе рисунок со временем размазывается).
+    // Завеса — как у настоящего водопада: у кромки гладкий тёмный стеклянный язык, ниже вода набирает
+    // воздух и белеет; в толще — медленный задний слой струй (объём), спереди — быстрые светлые струи;
+    // к краям вода тоньше: светлее, прозрачнее и рвётся на отдельные струи.
     fragmentShader: /* glsl */ `
-      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN;
+      varying vec3 vW; varying vec4 vUv; varying vec4 vEx; varying vec3 vN; varying vec3 vX;
       void main(){
         float u = vUv.x, q = vUv.y, fall = vUv.z, depth = vUv.w;
         float fade = vEx.x, foamA = vEx.y, hb = vEx.z, lip = vEx.w;
-        float qt = q - uTime * 2.4;                      // м/с вдоль пути — одинаково везде
-        float s1 = vnoise(vec2(u * 4.0 + 1.7, qt * 0.07));
-        float s2 = vnoise(vec2(u * 10.0 + 5.0, qt * 0.19));
-        float s3 = vnoise(vec2(u * 24.0 + 2.0, qt * 0.5));
+        float hw = max(vX.x, 0.5), aer = vX.y;
+        float um = u * hw;                                // метры поперёк: рисунок не тянется на широкой воде
+        float qt = q - uTime * 2.4;                      // передний слой: м/с вдоль пути — одинаково везде
+        float qb = q - uTime * 1.55;                     // задний слой: медленнее, даёт глубину
+        float s1 = vnoise(vec2(um * 1.0 + 1.7, qt * 0.07));
+        float s2 = vnoise(vec2(um * 2.5 + 5.0, qt * 0.19));
+        float s3 = vnoise(vec2(um * 6.0 + 2.0, qt * 0.5));
         float streak = s1 * 0.5 + s2 * 0.33 + s3 * 0.17;
+        float back = vnoise(vec2(um * 2.2 + 9.3, qb * 0.16));   // один шум на задний слой — телефону дёшево
         float dk = smoothstep(0.1, 1.4, depth) * (1.0 - fall);
-        vec3 shallow = vec3(0.28, 0.59, 0.62), deepC = vec3(0.05, 0.20, 0.25), sheet = vec3(0.55, 0.80, 0.88);
+        vec3 shallow = vec3(0.28, 0.59, 0.62), deepC = vec3(0.05, 0.20, 0.25);
         vec3 white = vec3(0.93, 0.97, 1.0);
         vec3 c = mix(shallow, deepC, dk);
         // на глади — та же нарисованная вода, что в чашах и озере (течёт к центру со скоростью ленты)
@@ -439,16 +476,26 @@ export function buildWater(scene) {
           float wl = dot(wt, vec3(0.30, 0.59, 0.11));
           c = mix(c, c * (0.6 + 1.15 * wl) + (wt - c) * 0.2, 0.85 * (1.0 - fall));
         }
-        c = mix(c, sheet, fall);
-        // струи: на глади редкие и тонкие, в падении — мягкие широкие
-        c = mix(c, white, mix(smoothstep(0.6, 0.82, streak) * 0.3, smoothstep(0.42, 0.78, streak) * 0.82, fall));
+        // ---- завеса ----
+        float thick = sqrt(max(0.0, 1.0 - u * u));      // толща воды поперёк: в середине толще
+        vec3 glass = mix(vec3(0.22, 0.50, 0.57), vec3(0.36, 0.65, 0.71), back);   // гладкий язык
+        vec3 body = mix(vec3(0.38, 0.63, 0.73), vec3(0.56, 0.79, 0.87), back);    // вспененная толща
+        vec3 sheetC = mix(glass, body, aer);
+        sheetC *= mix(1.0, 0.86, smoothstep(0.55, 0.2, back) * thick);            // тёмные просветы в толще
+        // светлые струи: на языке редкие и узкие, ниже — широкие белые
+        float st = mix(smoothstep(0.58, 0.85, streak) * 0.55, smoothstep(0.42, 0.78, streak) * 0.8, aer);
+        sheetC = mix(sheetC, white, st);
+        c = mix(c, sheetC, fall);
+        // на глади — редкие тонкие пенные струйки
+        c = mix(c, white, smoothstep(0.6, 0.82, streak) * 0.3 * (1.0 - fall));
         // пена: на каскадах и ниже водопадов (бежит вместе с водой), светлая кромка, зубцы у подножия
         float fo = foamA * smoothstep(0.25 + 0.5 * (1.0 - foamA), 0.9, s2 * 0.6 + s3 * 0.5);
         fo = max(fo, smoothstep(0.7, 1.0, foamA) * (0.45 + 0.3 * s3)); // вода бьёт о камень
         fo = max(fo, lip * (0.4 + 0.25 * s3));
-        float teeth = 0.6 + 2.2 * vnoise(vec2(u * 8.0 + 3.0, uTime * 0.35));
-        float foamB = smoothstep(teeth + 1.2, teeth, hb);
-        fo = clamp(max(fo, foamB * 0.92), 0.0, 1.0);
+        // у подножия — пенная шапка: граница мягкая, клубится и бежит вместе с водой, без острых зубьев
+        float teeth = 0.5 + 1.6 * vnoise(vec2(um * 0.9 + 3.0, uTime * 0.35)) + 0.9 * vnoise(vec2(um * 2.3 + 7.0, qt * 0.22));
+        float foamB = smoothstep(teeth + 1.6, teeth - 0.3, hb);
+        fo = clamp(max(fo, foamB * (0.8 + 0.2 * s3)), 0.0, 1.0);
         c = mix(c, white, fo);
         float sh = shadowAt(vW.xz);
         c = shade(c, normalize(vN + vec3(0.0, 0.35 * fall, 0.0)), mix(0.6 + 0.4 * sh, 0.88 + 0.12 * sh, fall));
@@ -458,12 +505,21 @@ export function buildWater(scene) {
         c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, pow(1.0 - max(vd.y, 0.0), 3.0) * calm * 0.4);
         vec3 nw = normalize(vec3((s2 - 0.5) * 0.35, 1.0, (s3 - 0.5) * 0.35));
         c += uSunCol * pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh * 1.4;
-        // края: на глади их прячет берег, у завесы — мягкие и чуть рваные
-        float rag = vnoise(vec2(qt * 0.5, u < 0.0 ? 3.0 : 11.0));
-        float edge = abs(u) + (rag - 0.5) * 0.22 * fall;
-        float a = smoothstep(1.0, 0.86, edge);
-        a *= mix(mix(0.9, 1.0, max(dk, fo)), mix(0.78, 0.95, smoothstep(0.3, 0.7, streak)), fall);
-        a = max(a, foamB * smoothstep(1.0, 0.9, edge) * 0.95);
+        // на языке завесы — узкий блик неба: вода гладкая и блестит
+        c += vec3(0.10, 0.13, 0.14) * fall * (1.0 - aer) * smoothstep(0.55, 0.9, s1) * thick;
+        // ---- края: не ровный срез, а рваные струи; ширина края в метрах ----
+        float sideK = u < 0.0 ? 3.0 : 11.0;
+        float rag = (vnoise(vec2(qt * 0.3, sideK)) - 0.5) + (s3 - 0.5) * 0.45;
+        float hang = vX.z * (1.0 - fall);                // край глади без берега под ним
+        float ew = max(mix(0.45, 1.3, fall), 1.4 * hang) / hw;   // мягкий край: ~0.5 м на глади, ~1.3 м у завесы
+        float edge = abs(u) + rag * max(mix(0.25, 0.9, fall), 0.8 * hang) / hw;
+        float a = smoothstep(1.0, 1.0 - ew, edge);
+        float rim = smoothstep(1.0 - ew - 1.2 / hw, 1.0, abs(u)) * fall;   // тонкая вода у края
+        a *= mix(1.0, smoothstep(0.32, 0.7, s2 * 0.5 + s3 * 0.6), rim);
+        c = mix(c, white, rim * 0.3 * aer);
+        // плотность: гладь чуть просвечивает, завеса плотная (язык прозрачнее вспененной воды)
+        a *= mix(mix(0.9, 1.0, max(dk, fo)), mix(0.86, 0.97, max(aer, st)), fall);
+        a = max(a, foamB * smoothstep(1.0, 1.0 - ew, edge) * 0.95);
         a *= smoothstep(-0.35, 0.1, hb) * fade * smoothstep(0.0, 1.2, q);
         gl_FragColor = vec4(applyFog(c, vW), clamp(a, 0.0, 0.97));
       }`,
@@ -534,7 +590,7 @@ export function buildWater(scene) {
     const rows = st.rows;
     // светлая кромка: ±1.5 м пути вокруг каждой кромки
     const lipQ = st.falls.map((f) => rows[f.i0 - 1]?.q ?? rows[f.i0].q);
-    const pos = [], uv = [], ex = [], nn = [], idx = [], hitsAt = [];
+    const pos = [], uv = [], ex = [], nn = [], xx = [], idx = [], hitsAt = [];
     for (const r of rows) {
       const { c, sd, n, half, fall, q } = r;
       let lip = 0;
@@ -564,6 +620,10 @@ export function buildWater(scene) {
         }
         uv.push(u, q, fall, depth);
         ex.push(fade, fv, r.hb, lip);
+        // край глади, под которым нет берега (висит над обрывом или низким дном): там край мягче и шире
+        let ex2 = 0;
+        if ((r.kind === 'flat' || r.kind === 'run') && Math.abs(u) > 0.7) ex2 = smoothstep(0.05, 0.6, y - heightAt(x, z));
+        xx.push(half, r.slide ? 1 : r.kind === 'fall' ? smoothstep(0.3, 6, r.drop || 0) : 0, ex2);
         // свет на завесе — по горизонтали от стены: где завеса выгибается, она не темнеет и не светлеет полосой
         if (fall > 0.5) { const hl = Math.hypot(n[0], n[2]) || 1; nn.push(n[0] / hl, 0, n[2] / hl); } else nn.push(n[0], n[1], n[2]);
       }
@@ -578,6 +638,7 @@ export function buildWater(scene) {
     g.setAttribute('aUv', new THREE.Float32BufferAttribute(uv, 4));
     g.setAttribute('aEx', new THREE.Float32BufferAttribute(ex, 4));
     g.setAttribute('aN', new THREE.Float32BufferAttribute(nn, 3));
+    g.setAttribute('aX', new THREE.Float32BufferAttribute(xx, 3));
     g.setIndex(idx);
     const mesh = new THREE.Mesh(g, waterMat);
     mesh.frustumCulled = false;
