@@ -305,7 +305,10 @@ export function planDeep() {
         const y = spotOn(solid, x, z, K.reach * s, K.h * s);
         if (y === null) continue;
         take(x, z, K.reach * s + 0.3);
-        (kind === 'rock' ? rocks : out[kind]).push({ x, y, z, s, rot: rnd() * TAU, tilt: (rnd() - 0.5) * 0.25, hue: rnd(), kk: depthK(y) });
+        const o = { x, y, z, s, rot: rnd() * TAU, tilt: (rnd() - 0.5) * 0.25, hue: rnd(), kk: depthK(y) };
+        // фиолетовых грибов меньше, чем синих: около четверти (у озера чуть больше)
+        if (kind === 'shroom') o.purple = o.hue < 0.2 + o.kk * 0.12;
+        (kind === 'rock' ? rocks : out[kind]).push(o);
         n--;
       }
     }
@@ -331,14 +334,14 @@ export function planDeep() {
 }
 
 // ---------- цвета ----------
-// Кристаллы: на −75 бирюзовые, глубже — сине-фиолетовые и малиновые. Грибы: бирюза и голубой,
-// у озера — сиреневые. Руда: тёплые янтарные искры среди холодного камня.
+// Кристаллы синие. Грибы: в основном бирюзово-синие, около четверти маленьких — фиолетовые
+// (на них можно наступить: давятся в лужу жижи). Большие грибы только синие. Руда: тёплые янтарные искры среди холодного камня.
 const _c = new THREE.Color();
 function tint(kind, o) {
   const k = o.kk, j = o.hue;
   if (kind === 'crystal' || kind === 'bigcrystal') return _c.setHSL(0.57 + j * 0.07, 0.9, 0.5 + k * 0.03);   // синий кристалл
-  if (kind === 'shroom') return _c.setHSL(j < 0.25 + k * 0.4 ? 0.76 + j * 0.06 : 0.47 + j * 0.06, 0.8, 0.5);
-  if (kind === 'big') return _c.setHSL(j < 0.6 ? 0.72 + j * 0.08 : 0.5 + j * 0.05, 0.75, 0.48);
+  if (kind === 'shroom') return o.purple ? _c.setHSL(0.76 + j * 0.25, 0.8, 0.5) : _c.setHSL(0.47 + j * 0.08, 0.8, 0.5);
+  if (kind === 'big') return _c.setHSL(0.5 + j * 0.07, 0.75, 0.48);   // большие — только синие
   return _c.setHSL(j < 0.6 ? 0.09 + j * 0.03 : 0.5, 0.9, 0.52);
 }
 
@@ -424,8 +427,11 @@ export class Deep {
       const o = this.byId.get(ev.id);
       if (!o) return;
       if (ev.by === world.me) o.reward = ev.reward;
+      o.squash = !!ev.squash;
       this.gone(o, ev.at, true);
     });
+    this.puddles = new Puddles(scene);
+    this.inGoo = false;
   }
   gone(o, at, animate) {
     o.at = at; if (o.col3) o.col3.off = true;
@@ -443,6 +449,14 @@ export class Deep {
       this.halo.setMatrixAt(o.hi, _m); this.halo.instanceMatrix.needsUpdate = true;
     }
   }
+  // сплющить: высота sy, ширина sxz (от полного размера)
+  flat(o, sy, sxz) {
+    o.m.decompose(_p, _q, _s);
+    _s.x *= sxz; _s.z *= sxz; _s.y *= sy;
+    _m.compose(_p, _q, _s);
+    o.mesh.setMatrixAt(o.i, _m); o.mesh.instanceMatrix.needsUpdate = true;
+    if (o.hi !== undefined) { this.halo.setMatrixAt(o.hi, ZERO); this.halo.instanceMatrix.needsUpdate = true; }
+  }
   need(o) { return RULES.deep[o.kind].tool; }
   find() {
     const p = this.player.pos, cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
@@ -457,11 +471,30 @@ export class Deep {
     }
     return best;
   }
+  stomp() {
+    const p = this.player.pos, cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
+    for (let a = -1; a <= 1; a++) for (let c = -1; c <= 1; c++) {
+      const l = this.cells.get((cx + a) + ',' + (cz + c));
+      if (l) for (const o of l) {
+        if (!o.purple || o.stomped || (o.state !== 'idle' && o.state !== 'shake')) continue;
+        if (Math.hypot(o.x - p.x, o.z - p.z) < 0.3 * o.s + 0.3 && p.y - o.y > -0.3 && p.y - o.y < 0.7) {
+          o.stomped = true;
+          this.world.send({ type: 'harvest', id: o.id, kind: o.kind, squash: true });
+        }
+      }
+    }
+  }
   // значок кнопки действия: чем это добывается
   get icon() { const t = this.target && this.need(this.target); return t === 'pickaxe' ? '⛏️' : t === 'axe' ? '🪓' : '✋'; }
   // want — кнопка зажата, press — только что нажата
   update(dt, want, press) {
     const pl = this.player;
+    // фиолетовый гриб под ногой давится; в луже жижи ноги вязнут
+    if (pl.grounded && !pl.climbing && !pl.swimming) this.stomp();
+    const goo = this.puddles.update(dt, pl);
+    pl.slow = goo ? 0.4 : 1;
+    if (goo && !this.inGoo && !this.gooTold) { this.gooTold = true; this.toast('Фиолетовая жижа — ноги вязнут'); }
+    this.inGoo = goo;
     this.target = pl.grounded && !pl.climbing && !pl.swimming ? this.find() : null;
     this.cd -= dt;
     if (this.pending && (this.pending.at -= dt) <= 0) {
@@ -491,6 +524,11 @@ export class Deep {
         const k = Math.max(0, 1 - b.t / 0.25);
         this.place(b, 1 - 0.05 * k, Math.sin(b.t * 70) * 0.05 * k, Math.cos(b.t * 55) * 0.04 * k);
         if (k === 0) { b.state = 'idle'; this.place(b, 1); this.busy.splice(n, 1); }
+      } else if (b.state === 'break' && b.squash) {
+        // раздавлен: сплющивается, растекается — и на его месте лужа жижи
+        const k = Math.min(1, b.t / 0.22);
+        this.flat(b, 1 - 0.92 * k, 1 + 0.6 * k);
+        if (k === 1) { b.state = 'gone'; b.stomped = false; b.squash = false; this.place(b, 0); this.puddles.add(b.x, b.y, b.z, 0.75 + 0.35 * b.s); }
       } else if (b.state === 'break') {
         const k = Math.min(1, b.t / BREAK);
         this.place(b, 1 - k * k);
@@ -536,3 +574,88 @@ export class Deep {
 }
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler();
+
+// ---------- лужи фиолетовой жижи ----------
+// Остаются от раздавленных фиолетовых грибов: ~45 с, потом высыхают. Пока в луже — герой идёт медленно.
+// Лужа ложится по камню (вершины опущены на поверхность), за краем глыбы — прозрачна.
+// Луж немного и они маленькие: отдельная сетка на лужу, ~50 вершин.
+const PUD_LIFE = 45, PUD_MAX = 8, PUD_RINGS = 3, PUD_SEG = 16;
+let _pudMat = null;
+function puddleMaterial() {
+  if (_pudMat) return _pudMat;
+  _pudMat = mat({
+    uniforms: { uA: { value: 1 } },
+    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    vertexShader: /* glsl */ `
+      attribute vec3 aQ;   // x — доля радиуса, y — угол, z — 0, если тут нет камня
+      varying vec3 vW; varying vec3 vQ;
+      void main(){ vQ = aQ; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+    fragmentShader: /* glsl */ `
+      uniform float uA;
+      varying vec3 vW; varying vec3 vQ;
+      void main(){
+        // рваный край: радиус лужи колеблется по углу
+        float edge = 0.84 + 0.08 * sin(vQ.y * 3.0 + 1.3) + 0.06 * sin(vQ.y * 5.0 + 4.1) + 0.03 * sin(vQ.y * 11.0);
+        float r = vQ.x / edge;
+        if (r > 1.0 || vQ.z < 0.5) discard;
+        float n = vnoise(vW.xz * 3.0 + vec2(uTime * 0.15, -uTime * 0.11));
+        vec3 c = mix(vec3(0.16, 0.03, 0.24), vec3(0.38, 0.1, 0.52), n);
+        // пузырьки и светящийся ободок
+        float b = vnoise(vW.xz * 9.0 + vec2(0.0, uTime * 0.4));
+        c += vec3(0.6, 0.35, 0.85) * smoothstep(0.84, 0.92, b) * 0.4;
+        c += vec3(0.7, 0.3, 1.0) * smoothstep(0.7, 1.0, r) * 0.35;
+        vec3 v = normalize(cameraPosition - vW);
+        c += vec3(0.9, 0.8, 1.0) * pow(1.0 - max(v.y, 0.0), 4.0) * 0.25;   // мокрый блеск
+        c = applyFog(c * 0.9, vW) + vec3(0.2, 0.04, 0.32) * 0.2;
+        gl_FragColor = vec4(c, uA * 0.88 * smoothstep(1.0, 0.85, r));
+      }`,
+  });
+  return _pudMat;
+}
+class Puddles {
+  constructor(scene) { this.scene = scene; this.list = []; }
+  add(x, y, z, rad) {
+    if (this.list.length >= PUD_MAX) this.drop(this.list[0]);
+    const P = [], Q = [], I = [];
+    const vert = (t, a) => {
+      const px = x + Math.cos(a) * t * rad, pz = z + Math.sin(a) * t * rad;
+      const g = groundAt(px, pz, y + 0.6);
+      const ok = Math.abs(g - y) < 0.45;
+      P.push(px - x, (ok ? g : y) - y + 0.03, pz - z); Q.push(t, a, ok ? 1 : 0);
+    };
+    vert(0, 0);
+    for (let i = 1; i <= PUD_RINGS; i++) for (let j = 0; j < PUD_SEG; j++) vert(i / PUD_RINGS, (j / PUD_SEG) * Math.PI * 2);
+    for (let j = 0; j < PUD_SEG; j++) I.push(0, 1 + (j + 1) % PUD_SEG, 1 + j);
+    for (let i = 1; i < PUD_RINGS; i++) for (let j = 0; j < PUD_SEG; j++) {
+      const a = 1 + (i - 1) * PUD_SEG + j, b = 1 + (i - 1) * PUD_SEG + (j + 1) % PUD_SEG;
+      I.push(a, b, a + PUD_SEG, b, b + PUD_SEG, a + PUD_SEG);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    g.setAttribute('aQ', new THREE.Float32BufferAttribute(Q, 3));
+    g.setIndex(I);
+    const m = puddleMaterial().clone();
+    Object.assign(m.uniforms, puddleMaterial().uniforms, { uA: { value: 0 } });
+    const mesh = new THREE.Mesh(g, m);
+    mesh.position.set(x, y, z); mesh.renderOrder = 1;
+    this.scene.add(mesh);
+    this.list.push({ x, y, z, rad, t: 0, mesh });
+  }
+  drop(p) { this.scene.remove(p.mesh); p.mesh.geometry.dispose(); p.mesh.material.dispose(); this.list.splice(this.list.indexOf(p), 1); }
+  // возвращает true, если герой стоит в луже
+  update(dt, pl) {
+    let inside = false;
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const p = this.list[i];
+      p.t += dt;
+      // растекается за полсекунды, в конце высыхает
+      const grow = Math.min(1, p.t / 0.5), fade = Math.min(1, (PUD_LIFE - p.t) / 4);
+      if (fade <= 0) { this.drop(p); continue; }
+      const k = grow * (2 - grow);
+      p.mesh.scale.set(k, 1, k);
+      p.mesh.material.uniforms.uA.value = Math.min(grow * 2, 1) * fade;
+      if (pl.grounded && fade > 0.3 && Math.hypot(pl.pos.x - p.x, pl.pos.z - p.z) < p.rad * k * 0.85 && Math.abs(pl.pos.y - p.y) < 0.6) inside = true;
+    }
+    return inside;
+  }
+}

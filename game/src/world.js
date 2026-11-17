@@ -160,7 +160,7 @@ class LocalAuthority {
       if (at !== undefined && now - at < rule.respawnMs(ev.id)) return; // уже добыто
       this.dug[ev.id] = now;
       this.save();
-      emit({ type: 'harvested', id: ev.id, kind: ev.kind, at: now, by: this.me, reward: rule.reward(ev.id) });
+      emit({ type: 'harvested', id: ev.id, kind: ev.kind, at: now, by: this.me, reward: ev.squash ? null : rule.reward(ev.id), squash: !!ev.squash }); // раздавленный гриб — без добычи
     }
     if (ev.type === 'hunt' && RULES.mob[ev.kind]) {
       const rule = RULES.mob[ev.kind], at = this.killed[ev.id];
