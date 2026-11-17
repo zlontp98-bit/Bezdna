@@ -60,8 +60,8 @@ export const RULES = {
   bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
   // глубина (deep.js): синие кристаллы (маленькие и большие) — киркой, большие грибы — топором, маленькие — рукой
   deep: {
-    crystal: { tool: 'pickaxe', hits: 3, reward: (id) => ({ crystal: 1 + (idRand(id) < 0.35 ? 1 : 0) }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
-    bigcrystal: { tool: 'pickaxe', hits: 5, reward: (id) => ({ crystal: 3 + (idRand(id) < 0.4 ? 1 : 0) }), respawnMs: (id) => 420000 + idRand(id) * 180000 },
+    crystal: { tool: 'pickaxe', hits: 3, reward: (id) => ({ dust: 2 + (idRand(id) < 0.4 ? 1 : 0) }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
+    bigcrystal: { tool: 'pickaxe', hits: 5, reward: (id) => ({ dust: 6 + Math.floor(idRand(id) * 3) }), respawnMs: (id) => 420000 + idRand(id) * 180000 },
     shroom:  { tool: null,      hits: 1, reward: (id) => ({ shroom: 1 + (idRand(id) < 0.3 ? 1 : 0) }), respawnMs: (id) => 150000 + idRand(id) * 90000 },
     big:     { tool: 'axe',     hits: 4, reward: () => ({ shroom: 5 }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
   },
