@@ -12,6 +12,7 @@ export const ITEMS = {
   shroom: { name: 'Гриб',    icon: '🍄', max: 20, tip: 'Светится в темноте. Растёт на глыбах глубже −75 м, большие — у озера' },
   crystal:{ name: 'Синий кристалл', icon: '💎', max: 20, tip: 'Светится в темноте' },
   dust:   { name: 'Кристальная пыль', icon: '💠', max: 40, svg: `<svg viewBox="0 0 48 48"><path d="M6 40 Q24 22 42 40 Z" fill="#2f6fd6" stroke="#173c80" stroke-width="2" stroke-linejoin="round"/><path d="M12 38 Q24 27 36 38" fill="#5fa8ff"/><path d="M18 35 Q24 30 30 35" fill="#bfe3ff"/><path d="M24 6 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2z" fill="#9fd4ff"/><path d="M37 13 l1.3 3.7 3.7 1.3 -3.7 1.3 -1.3 3.7 -1.3 -3.7 -3.7 -1.3 3.7 -1.3z" fill="#cfeaff"/><path d="M11 17 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1z" fill="#7fc0ff"/></svg>`, tip: 'Выпадает из синих кристаллов, когда разбиваешь их киркой. Большой кристалл даёт больше пыли' },
+  jelly:  { name: 'Желе медузы', icon: '🪼', max: 20, svg: `<svg viewBox="0 0 48 48"><path d="M7 34 Q6 16 24 14 Q42 16 41 34 Q41 41 24 41 Q7 41 7 34 Z" fill="#ff7f9a" fill-opacity="0.75" stroke="#c2405f" stroke-width="2"/><path d="M12 31 Q12 20 24 19 Q35 20 36 31" fill="#ffb38a" fill-opacity="0.7"/><ellipse cx="17" cy="24" rx="4" ry="2.6" fill="#fff" fill-opacity="0.7" transform="rotate(-25 17 24)"/><circle cx="31" cy="33" r="2" fill="#fff" fill-opacity="0.45"/><circle cx="20" cy="35" r="1.3" fill="#fff" fill-opacity="0.45"/></svg>`, tip: 'Светящееся желе. Выпадает из медуз в озере на дне бездны' },
 };
 export const HOT = 3, BAG = 12;
 // значок предмета: нарисованный (svg), если есть, иначе эмодзи
