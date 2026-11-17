@@ -190,7 +190,29 @@ function dropRows(f, cx, cz, px, pz) {
     if (y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
     oPrev = o;
     const [x, z] = P(o, 0);
-    rows.push({ kind: 'fall', c: [x, y, z], sd: [px, pz], half: halfAt(d), hb: y - f.y1, drop: f.y0 - y });
+    rows.push({ kind: 'fall', c: [x, y, z], sd: [px, pz], half: halfAt(d), hb: y - f.y1, drop: f.y0 - y, o });
+  }
+  // у подножия стены бывает бережок выше глади: завеса не уходит в него, а ложится на него
+  // и стекает пенным языком вперёд до самой воды — одна лента, без щели на уступе
+  const bankAt = (o, hw) => { let m = -1e9; for (const u of [-0.4, 0, 0.4]) { const [x, z] = P(o, u * hw); m = Math.max(m, heightAt(x, z)); } return m; };
+  const lb = rows[rows.length - 1].c;
+  const inPool = POOLS.some((p) => poolDist(p, lb[0], lb[2]) < 1); // в чаше вода уходит под гладь, как раньше
+  const hit = inPool ? -1 : rows.findIndex((r) => { const bk = bankAt(r.o, r.half); return bk > f.y1 + 0.3 && r.c[1] < bk + 0.15; });
+  if (hit >= 0) {
+    rows.length = hit + 1;
+    const e = rows[hit], yL = bankAt(e.o, e.half) + 0.15;
+    e.c[1] = yL;
+    for (const r of rows) r.hb = r.c[1] - yL;
+    let o = e.o;
+    for (let k = 0; k < 16; k++) {
+      o += 0.5;
+      const bk = bankAt(o, e.half), [x, z] = P(o, 0);
+      const y = Math.max(f.y1, bk + 0.1);
+      rows.push({ kind: 'fall', slide: 1, c: [x, y, z], sd: [px, pz], half: e.half, hb: 0.1 + 0.45 * k, drop: 0 }); // пена у удара и тает вперёд
+      if (heightAt(x, z) < f.y1 - 0.05) break; // под серединой уже вода
+    }
+    f.land = [e.c[0], yL, e.c[2]]; // брызги и туман — там, где вода бьёт о бережок
+    return rows;
   }
   // последний ряд уходит под гладь: линия входа в воду ровная, без щели
   const b = rows[rows.length - 1];
@@ -517,13 +539,13 @@ export function buildWater(scene) {
       const { c, sd, n, half, fall, q } = r;
       let lip = 0;
       for (const lq of lipQ) lip = Math.max(lip, Math.exp(-(((q - lq - 0.6) / 1.3) ** 2)));
-      const bul = r.kind === 'flat' || r.kind === 'run' ? 0 : (r.shaft ? 0.5 : Math.min(0.5, half * 0.12)) * fall;
+      const bul = r.kind === 'flat' || r.kind === 'run' || r.slide ? 0 : (r.shaft ? 0.5 : Math.min(0.5, half * 0.12)) * fall;
       for (let j = 0; j < COLS; j++) {
         const u = -1 + (2 * j) / (COLS - 1), oo = (1 - u * u) * bul;
         const x = c[0] + sd[0] * u * half + n[0] * oo, z = c[2] + sd[1] * u * half + n[2] * oo;
         let y = c[1] + n[1] * oo;
         // ручеёк по дну: бугорки и плоские камни под краями ленты вода покрывает, а не обтекает дырой
-        if (r.kind === 'run') { const h = heightAt(x, z), g = groundAt(x, z, h + 0.7); const top = g - h < 0.7 ? g : h; if (top + 0.06 > y && top < y + 0.8) y = top + 0.06; }
+        if (r.kind === 'run' || r.slide) { const h = heightAt(x, z), g = groundAt(x, z, h + 0.7); const top = g - h < 0.7 ? g : h; if (top + 0.06 > y && top < y + 0.8) y = top + 0.06; }
         pos.push(x, y, z);
         // глубина (цвет глади) и пруды: в чаше ленты нет, там своя гладь — плавная смена у берега
         let depth = 1, fade = 1;
