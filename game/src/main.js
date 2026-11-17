@@ -3,7 +3,7 @@ import { U, setStyle, loadTerrainTextures, LITE } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
-import { buildFlora, buildGrass, updateFloraDist } from './flora.js';
+import { buildFlora, buildGrass, updateFloraDist, propMaterial } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks, STACKS } from './stacks.js';
@@ -20,7 +20,7 @@ import { Pickups } from './pickups.js';
 import { Crafting } from './craft.js';
 import { Miner } from './mine.js';
 import { Chests } from './chest.js';
-import { planDeep, Deep } from './deep.js';
+import { planDeep, Deep, deepRocks } from './deep.js';
 import { buildDescent } from './descent.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
@@ -145,6 +145,7 @@ async function build() {
   const flora = buildFlora(scene);
   // глубина: кристаллы, грибы и руда на глыбах ниже −75 м (по глыбам загруженной карты)
   deepPlan = planDeep();
+  flora.boulders.push(...deepRocks(scene, deepPlan, flora.rockGeo, propMaterial()));   // серые камни глубины — обычные валуны под кирку
   await loadStep(60, 'Разбиваем лагерь…');
   const camp = buildCamp(scene, flora.spawn);
   await loadStep(66, 'Раскладываем тени…');
