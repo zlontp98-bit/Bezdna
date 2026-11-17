@@ -58,10 +58,10 @@ export const RULES = {
   chest: { loot: { gear: 1, pickaxe: 1 }, islands: 7, respawnMs: () => 180000 + Math.random() * 120000 },
   // ягодные кусты: собрал — через 2.5–4 минуты ягоды снова висят; ягоды не на каждом кусте
   bush: { berries: 3, share: 0.4, respawnMs: (id) => 150000 + idRand(id) * 90000 },
-  // глубина (deep.js): кристаллы и руда — киркой, большие грибы — топором, маленькие — рукой
+  // глубина (deep.js): синие кристаллы (маленькие и большие) — киркой, большие грибы — топором, маленькие — рукой
   deep: {
     crystal: { tool: 'pickaxe', hits: 3, reward: (id) => ({ crystal: 1 + (idRand(id) < 0.35 ? 1 : 0) }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
-    ore:     { tool: 'pickaxe', hits: 4, reward: () => ({ stone: 3 }), respawnMs: (id) => 200000 + idRand(id) * 60000 },
+    bigcrystal: { tool: 'pickaxe', hits: 5, reward: (id) => ({ crystal: 3 + (idRand(id) < 0.4 ? 1 : 0) }), respawnMs: (id) => 420000 + idRand(id) * 180000 },
     shroom:  { tool: null,      hits: 1, reward: (id) => ({ shroom: 1 + (idRand(id) < 0.3 ? 1 : 0) }), respawnMs: (id) => 150000 + idRand(id) * 90000 },
     big:     { tool: 'axe',     hits: 4, reward: () => ({ shroom: 5 }), respawnMs: (id) => 300000 + idRand(id) * 120000 },
   },

@@ -3,7 +3,7 @@ import { mulberry32, SEED } from './noise.js';
 import { mat } from './shaders.js';
 import { LAKE, heightAt, waterAt } from './terrain.js';
 import { STONEAPI } from './descent.js';
-import { fieldTop as solidTop, groundAt, ceiling } from './solids.js';
+import { fieldTop as solidTop, groundAt, ceiling, addMeshTop } from './solids.js';
 import { STREAMS } from './waterfall.js';
 import { SWING } from './player.js';
 import { objId, RULES } from './world.js';
@@ -11,7 +11,7 @@ import { objId, RULES } from './world.js';
 // Глубина: светящиеся кристаллы, грибы и рудные камни на глыбах поля.
 // Начинаются с −75 м и чем глубже, тем их больше; у озера растут большие грибы.
 // Всё добывается, как дерево и камень: кирка — кристаллы и руда, топор — большие грибы,
-// маленькие грибы собираются рукой. Последний удар — просьба к миру ('harvest'), ответ — 'harvested'.
+// маленькие грибы собираются рукой. Серые камни — обычные валуны (mine.js). Последний удар — просьба к миру ('harvest'), ответ — 'harvested'.
 //
 // Для телефона: каждый вид — один InstancedMesh (один вызов отрисовки), дальше 55 м от камеры
 // экземпляры сворачиваются в вершинном шейдере. Свечение добавляется ПОСЛЕ тумана и света фонарика
@@ -92,21 +92,6 @@ function bigShroomGeo() {
   for (let i = 0; i < 9; i++) {
     const a = i * 2.4 + 0.3, rr = i < 3 ? 0.45 + i * 0.12 : 0.85 + (i % 3) * 0.3, cy = 1.15 * (1 - (rr / R) ** 2 * 0.72);
     parts.push(piece(new THREE.SphereGeometry(0.2 + (i % 3) * 0.06, 5, 3), 0xffffff, 6, 1, M(0.15 + Math.cos(a) * rr, H - 0.02 + cy, Math.sin(a) * rr, 0, 0, 0, 1, 0.5)));
-  }
-  return join(parts);
-}
-function oreGeo() {
-  const g = new THREE.IcosahedronGeometry(0.62, 1); // 80 граней
-  const P = g.attributes.position;
-  for (let i = 0; i < P.count; i++) {
-    const x = P.getX(i), y = P.getY(i), z = P.getZ(i), k = 1 + Math.sin(x * 4.1 + z * 2.3) * 0.12 + Math.cos(y * 3.7 - x * 1.9) * 0.1;
-    P.setXYZ(i, x * k * 1.1, Math.max(-0.12, y * k * 0.78), z * k * 0.95);
-  }
-  const parts = [piece(g, 0x5d6170, 0, 0, M(0, 0.08, 0))];
-  for (let i = 0; i < 5; i++) {
-    const a = i * 2.5 + 0.4, e = 0.25 + (i % 3) * 0.17;
-    const x = Math.cos(a) * 0.6 * Math.cos(e), y = 0.08 + Math.sin(e) * 0.5, z = Math.sin(a) * 0.55 * Math.cos(e);
-    parts.push(piece(new THREE.OctahedronGeometry(0.1 + (i % 2) * 0.05, 0), 0xffffff, 1, 1, M(x, y, z, a, a * 0.7, 0.3, 1, 1.6)));
   }
   return join(parts);
 }
@@ -238,9 +223,10 @@ function haloMaterial() {
 // ---------- расстановка ----------
 // Виды: что даёт, чем добывать, размер для поиска цели.
 export const DEEP_KINDS = {
-  crystal: { item: 'crystal', icon: '💎', name: 'Кристалл', reach: 0.55, h: 1.2 },
+  crystal: { item: 'crystal', icon: '💎', name: 'Синий кристалл', reach: 0.55, h: 1.2 },
+  bigcrystal: { item: 'crystal', icon: '💎', name: 'Синий кристалл', reach: 0.5, h: 1.2 },
   shroom: { item: 'shroom', icon: '🍄', name: 'Гриб', reach: 0.4, h: 0.45 },
-  ore: { item: 'stone', icon: '🪨', name: 'Камень', reach: 0.75, h: 0.7 },
+  rock: { reach: 0.8, h: 1.0 },   // обычные серые камни (их добывает mine.js, как на дне шахты)
   big: { item: 'shroom', icon: '🍄', name: 'Гриб', reach: 0.6, h: 4.2 },
 };
 
@@ -272,7 +258,7 @@ function wet(x, y, z, rad) {
 // Где что стоит. Делается один раз при загрузке, по глыбам текущей карты (своей или встроенной).
 export function planDeep() {
   const rnd = mulberry32(SEED + 75);
-  const out = { crystal: [], shroom: [], ore: [], big: [] }, colliders = [];
+  const out = { crystal: [], bigcrystal: [], shroom: [], big: [] }, rocks = [], colliders = [];
   const used = new Map();
   const freeAt = (x, z, r) => {
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
@@ -304,19 +290,21 @@ export function planDeep() {
     const want = {
       crystal: area * (0.003 + 0.012 * kk),
       shroom: area * (0.004 + 0.015 * kk),
-      ore: area * (0.0025 + 0.005 * kk),
+      bigcrystal: area * (0.0008 + 0.004 * kk),
+      rock: area * (0.003 + 0.006 * kk),
     };
-    for (const kind of ['ore', 'crystal', 'shroom']) {
+    for (const kind of ['rock', 'bigcrystal', 'crystal', 'shroom']) {
       let n = Math.floor(want[kind]) + (rnd() < want[kind] % 1 ? 1 : 0);
       const K = DEEP_KINDS[kind];
       for (let tries = 0; tries < n * 8 && n > 0; tries++) {
         const a = rnd() * TAU, d = Math.sqrt(rnd()) * R * 0.92, x = sp.x + Math.cos(a) * d, z = sp.z + Math.sin(a) * d;
-        const s = kind === 'crystal' ? 0.6 + rnd() * 0.7 + kk * 0.35 : kind === 'shroom' ? 0.75 + rnd() * 0.6 : 0.65 + rnd() * 0.4;
+        const s = kind === 'crystal' ? 0.6 + rnd() * 0.7 + kk * 0.35 : kind === 'bigcrystal' ? 1.9 + rnd() * 0.9 : kind === 'shroom' ? 0.75 + rnd() * 0.6
+          : rnd() < 0.4 ? 1.1 + rnd() * 0.8 : 0.45 + rnd() * 0.4;   // камни: большие и маленькие
         if (!freeAt(x, z, K.reach * s + 0.5)) continue;
         const y = spotOn(solid, x, z, K.reach * s, K.h * s);
         if (y === null) continue;
         take(x, z, K.reach * s + 0.3);
-        out[kind].push({ x, y, z, s, rot: rnd() * TAU, tilt: (rnd() - 0.5) * 0.25, hue: rnd(), kk: depthK(y) });
+        (kind === 'rock' ? rocks : out[kind]).push({ x, y, z, s, rot: rnd() * TAU, tilt: (rnd() - 0.5) * 0.25, hue: rnd(), kk: depthK(y) });
         n--;
       }
     }
@@ -337,8 +325,8 @@ export function planDeep() {
     out.big.push({ x, y: g - 0.05, z, s, rot: rnd() * TAU, tilt: (rnd() - 0.5) * 0.12, hue: rnd(), kk: 1 });
     colliders.push({ x, z, r: 0.32 * s, y0: g - 0.5, y1: g + 3.2 * s });
   }
-  for (const o of out.ore) colliders.push({ x: o.x, z: o.z, r: 0.5 * o.s, y0: o.y - 0.4, y1: o.y + 0.55 * o.s });
-  return { lists: out, colliders };
+  for (const o of out.bigcrystal) colliders.push({ x: o.x, z: o.z, r: 0.22 * o.s, y0: o.y - 0.4, y1: o.y + 1.1 * o.s });
+  return { lists: out, rocks, colliders };
 }
 
 // ---------- цвета ----------
@@ -347,10 +335,35 @@ export function planDeep() {
 const _c = new THREE.Color();
 function tint(kind, o) {
   const k = o.kk, j = o.hue;
-  if (kind === 'crystal') return _c.setHSL((0.5 + k * 0.28 + (j - 0.5) * 0.08) % 1, 0.85, 0.5);
+  if (kind === 'crystal' || kind === 'bigcrystal') return _c.setHSL(0.57 + j * 0.07, 0.9, 0.5 + k * 0.03);   // синий кристалл
   if (kind === 'shroom') return _c.setHSL(j < 0.25 + k * 0.4 ? 0.76 + j * 0.06 : 0.47 + j * 0.06, 0.8, 0.5);
   if (kind === 'big') return _c.setHSL(j < 0.6 ? 0.72 + j * 0.08 : 0.5 + j * 0.05, 0.75, 0.48);
   return _c.setHSL(j < 0.6 ? 0.09 + j * 0.03 : 0.5, 0.9, 0.52);
+}
+
+// ---------- серые камни ----------
+// Такие же камни, как на дне шахты (модель и материал из flora.js): большие и маленькие.
+// Отдаём их в общий список валунов — кирка разбивает их тем же кодом (mine.js), что и остальные.
+export function deepRocks(scene, plan, rockGeo, propMaterial) {
+  const L = plan.rocks, out = [];
+  if (!L.length) return out;
+  const im = new THREE.InstancedMesh(rockGeo, propMaterial, L.length), dummy = new THREE.Object3D(), c = new THREE.Color(), v = new THREE.Vector3();
+  const P = rockGeo.attributes.position;
+  L.forEach((t, i) => {
+    dummy.position.set(t.x, t.y - 0.15 * t.s, t.z);
+    dummy.rotation.set(t.tilt, t.rot, t.tilt * 0.6);
+    dummy.scale.set(t.s, t.s * (0.62 + t.hue * 0.3), t.s * (0.85 + t.kk * 0.25));
+    dummy.updateMatrix();
+    const g = 0.42 + t.hue * 0.16;
+    im.setMatrixAt(i, dummy.matrix); im.setColorAt(i, c.setRGB(g * 0.72, g * 0.78, g * 0.92));
+    const tris = new Float32Array(P.count * 3);
+    for (let k = 0; k < P.count; k++) { v.fromBufferAttribute(P, k).applyMatrix4(dummy.matrix); tris[k * 3] = v.x; tris[k * 3 + 1] = v.y; tris[k * 3 + 2] = v.z; }
+    const solid = addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0 });
+    out.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone(), solid });
+  });
+  im.frustumCulled = false; im.matrixAutoUpdate = false;
+  scene.add(im);
+  return out;
 }
 
 // ---------- добыча ----------
@@ -361,7 +374,7 @@ export class Deep {
     this.target = null; this.cd = 0; this.busy = []; this.pending = null; this.flying = [];
     this.cells = new Map(); this.byId = new Map();
     this.colliders = plan.colliders;
-    const geos = { crystal: crystalGeo(), shroom: smallShroomGeo(), ore: oreGeo(), big: bigShroomGeo() };
+    const cg = crystalGeo(), geos = { crystal: cg, bigcrystal: cg, shroom: smallShroomGeo(), big: bigShroomGeo() };
     const material = deepMaterial();
     this.meshes = {}; this.fly = {};
     const halos = [];
@@ -379,7 +392,7 @@ export class Deep {
         this.byId.set(o.id, o);
         const k = Math.floor(o.x / CELL) + ',' + Math.floor(o.z / CELL);
         (this.cells.get(k) || this.cells.set(k, []).get(k)).push(o);
-        if (kind !== 'ore') halos.push(o);
+        halos.push(o);
       });
       im.frustumCulled = false; im.matrixAutoUpdate = false;
       scene.add(im);
@@ -396,7 +409,7 @@ export class Deep {
     halos.forEach((o, i) => {
       o.hi = i;
       o.hm = new THREE.Matrix4().makeTranslation(o.x, o.y + DEEP_KINDS[o.kind].h * o.s * (o.kind === 'big' ? 0.72 : 0.5), o.z)
-        .multiply(new THREE.Matrix4().makeScale(...Array(3).fill(o.kind === 'big' ? 7.5 * o.s : o.kind === 'crystal' ? 2.6 * o.s : 1.4 * o.s)));
+        .multiply(new THREE.Matrix4().makeScale(...Array(3).fill(o.kind === 'big' ? 7.5 * o.s : o.kind === 'crystal' || o.kind === 'bigcrystal' ? 2.6 * o.s : 1.4 * o.s)));
       this.halo.setMatrixAt(i, o.hm); this.halo.setColorAt(i, o.col);
     });
     this.halo.frustumCulled = false; this.halo.matrixAutoUpdate = false; this.halo.renderOrder = 5;
@@ -495,13 +508,13 @@ export class Deep {
     const r = o.reward; o.reward = null;
     if (!r) return; // добывал не я
     const K = DEEP_KINDS[o.kind], n = r[K.item] || 0, left = this.inv.add(K.item, n);
-    const it = K.item === 'stone' ? '🪨 Камень' : K.item === 'crystal' ? '💎 Кристалл' : '🍄 Гриб';
+    const it = K.item === 'crystal' ? '💎 Синий кристалл' : '🍄 Гриб';
     this.toast(left === 0 ? `+${n} ${it}` : left < n ? `+${n - left} ${it.split(' ')[0]} — инвентарь полон` : 'Инвентарь полон');
     const f = this.fly[o.kind];
     for (let i = 0; i < Math.min(n, 3); i++) {
       const a = i * 2.1 + o.x;
       f.setColorAt(i, o.col); f.instanceColor.needsUpdate = true;
-      this.flying.push({ f, i, t: -i * 0.07, x: o.x, y: o.y + 0.2, z: o.z, vx: Math.cos(a) * 1.1, vz: Math.sin(a) * 1.1, rot: a, s: o.kind === 'big' ? 0.16 : o.kind === 'ore' ? 0.35 : 0.5 });
+      this.flying.push({ f, i, t: -i * 0.07, x: o.x, y: o.y + 0.2, z: o.z, vx: Math.cos(a) * 1.1, vz: Math.sin(a) * 1.1, rot: a, s: o.kind === 'big' ? 0.16 : o.kind === 'bigcrystal' ? 0.25 : 0.5 });
     }
   }
   animFly(dt) {

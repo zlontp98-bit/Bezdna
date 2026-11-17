@@ -10,7 +10,7 @@ export const ITEMS = {
   spear:  { name: 'Копьё',   icon: '🗡️', max: 1, tool: true, svg: `<svg viewBox="0 0 48 48"><g transform="rotate(45 24 24)"><rect x="21.6" y="17" width="4.8" height="31" rx="2.4" fill="#4a2e1c"/><rect x="22.6" y="17" width="2.8" height="30" rx="1.4" fill="#a8703f"/><path d="M24 0 C30.5 7 30.5 14 24 19.5 C17.5 14 17.5 7 24 0 Z" fill="#b8c3cd" stroke="#3f4650" stroke-width="1.6" stroke-linejoin="round"/><path d="M24 3 L24 17" stroke="#eef3f7" stroke-width="1.3" stroke-linecap="round"/><rect x="20.6" y="17.5" width="6.8" height="5" rx="1.2" fill="#5a3824" stroke="#3a2416" stroke-width="1"/><path d="M27 21 q5 2 4 7 M27 21 q2 4 -1 8" stroke="#e5483a" stroke-width="1.6" fill="none" stroke-linecap="round"/></g></svg>`, tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
   stone:  { name: 'Камень',  icon: '🪨', max: 20, tip: 'Материал для построек' },
   shroom: { name: 'Гриб',    icon: '🍄', max: 20, tip: 'Светится в темноте. Растёт на глыбах глубже −75 м, большие — у озера' },
-  crystal:{ name: 'Кристалл',icon: '💎', max: 20, tip: 'Светится в темноте. Добывается киркой на глыбах глубже −75 м' },
+  crystal:{ name: 'Синий кристалл', icon: '💎', max: 20, tip: 'Светится в темноте. Добывается киркой на глыбах глубже −75 м; большой даёт больше' },
 };
 export const HOT = 3, BAG = 12;
 // значок предмета: нарисованный (svg), если есть, иначе эмодзи
