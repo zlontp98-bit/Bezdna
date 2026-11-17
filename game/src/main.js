@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { U, setStyle, loadTerrainTextures } from './shaders.js';
+import { U, setStyle, loadTerrainTextures, LITE } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
@@ -67,7 +67,7 @@ function setQuality(mode) {
   Q.mode = mode; store.set('bezdna.q', mode);
   const dpr = Math.min(devicePixelRatio || 1, 3);
   Q.maxPR = mode === 'low' ? Math.min(dpr, 1) : mode === 'high' ? Math.min(dpr, 2) : Math.min(dpr, 1.5);
-  Q.scale = 1; Q.ceil = 1; Q.good = 0;
+  Q.scale = 1; Q.ceil = 1; Q.dceil = 1; Q.good = 0;
   Q.density = mode === 'low' ? 0.45 : 1;
   if (grass) grass.setDensity(Q.density);
   applyRes();
@@ -75,8 +75,12 @@ function setQuality(mode) {
 }
 // Цель — ровные 60 кадров. Судим по среднему за секунду, а не по отдельным кадрам:
 // одна заминка (сборка мусора, подгрузка) не должна срезать качество.
-// Не тянем стабильно — снижаем разрешение, потом густоту травы. Поднимаем осторожно:
+// Не тянем стабильно — снижаем густоту травы, потом разрешение. Поднимаем осторожно:
 // только после 6 с запаса, а уровень, который уже «не потянул», запоминаем и больше не трогаем.
+function lower(min) {
+  Q.ceil = Math.max(0.55, Math.min(Q.ceil, Q.scale - 0.05));
+  Q.scale = Math.max(min, Q.scale - 0.1); applyRes();
+}
 function adaptQuality(dtMs) {
   Q.t += dtMs; Q.n++; Q.clock += dtMs;
   (Q.fr || (Q.fr = [])).push(dtMs);
@@ -90,15 +94,19 @@ function adaptQuality(dtMs) {
     // снижаем, только если тяжело две секунды подряд
     if (!Q.bad) { Q.bad = true; return; }
     Q.bad = false; Q.good = 0;
-    Q.ceil = Math.max(0.55, Math.min(Q.ceil, Q.scale - 0.05)); // уровень, который не потянули, больше не пробуем: каждая смена — рывок
-    if (Q.scale > 0.56) { Q.scale = Math.max(0.55, Q.scale - 0.1); applyRes(); }
-    else if (Q.density > 0.35) { Q.density -= 0.15; grass.setDensity(Q.density); }
+    // сначала трава (её вершины — главная нагрузка на телефоне, и меньшее разрешение тут не спасает),
+    // потом разрешение, и уже в конце — ещё немного травы
+    const thin = (min, step) => { Q.dceil = Math.min(Q.dceil ?? 1, Q.density - 0.1); Q.density = Math.max(min, Q.density - step); grass.setDensity(Q.density); };
+    if (Q.density > 0.6) thin(0.6, 0.2);
+    else if (Q.scale > 0.66) { lower(0.65); }
+    else if (Q.density > 0.35) thin(0.35, 0.15);
+    else if (Q.scale > 0.56) { lower(0.55); }
   } else if (avg < 17.4) {
     Q.bad = false;
     Q.good += 1000;
     if (Q.good < 6000) return;
     Q.good = 0;
-    if (Q.density < 1) { Q.density = Math.min(1, Q.density + 0.15); grass.setDensity(Q.density); }
+    if (Q.density < (Q.dceil ?? 1) - 0.01) { Q.density = Math.min(Q.dceil ?? 1, Q.density + 0.15); grass.setDensity(Q.density); }
     else if (Q.scale < Q.ceil - 0.01) { Q.scale = Math.min(Q.ceil, Q.scale + 0.05); Q.upT = Q.clock; applyRes(); }
   } else { Q.good = 0; Q.bad = false; }
 }
@@ -143,7 +151,7 @@ async function build() {
   buildMist(scene);
   buildShafts(scene);
   await loadStep(92, 'Растим траву…');
-  grass = buildGrass(scene, isMobile ? 16000 : 30000);
+  grass = buildGrass(scene, isMobile ? 16000 : 30000, LITE);
   motes = buildMotes(scene, 220);
   await loadStep(97, 'Будим героя…');
 

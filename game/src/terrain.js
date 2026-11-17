@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { fbm, smoothstep, clamp, hash2 } from './noise.js';
-import { U, mat } from './shaders.js';
+import { U, mat, LITE } from './shaders.js';
 
 const TAU = Math.PI * 2;
 
@@ -912,7 +912,7 @@ function buildChannelStrips(scene, material) {
 }
 
 const terrainMat = () => mat({
-  defines: { WET: 1 }, // мокрые скалы у водопадов — только у земли и камня (трава, вода и прочее их не считают)
+  defines: LITE ? { WET: 1, LITE: 1 } : { WET: 1 }, // мокрые скалы у водопадов — только у земли и камня (трава, вода и прочее их не считают)
   vertexShader: /* glsl */ `
     attribute vec2 aB; varying vec2 vB;
     varying vec3 vW; varying vec3 vN;
@@ -960,7 +960,13 @@ const terrainMat = () => mat({
       vec3 tW = texture2D(uRockWall, vW.zy*0.085).rgb * wx + texture2D(uRockWall, vW.xy*0.085 + 0.31).rgb * (1.0 - wx);
       vec3 tP = texture2D(uRockPlain, vW.xz*0.12 + 0.17).rgb;
       rock = mix(tP, tW, steepM);
+      // Переход земляные стены → серые горы: граница рваная (по шуму), растянута на ~25 м высоты
+      // и по радиусу, так что горы не «начинаются» ровной линией
+      float mixK = clamp(smoothstep(8.0, 36.0, vW.y + (facet - 0.5)*26.0 + (vnoise(vW.xz*0.11) - 0.5)*10.0)
+                  + smoothstep(188.0, 222.0, rr + (facet2 - 0.5)*30.0) - 0.0, 0.0, 1.0);
       // Серые горы. Масштаб плавно растёт от подножия к хребту: у долины плитка 20 м, в горах 60 м
+      // серый камень гор считаем только там, где он виден: в долине и в шахте это 3–6 выборок текстур даром
+      if (mixK > 0.002) {
       float bigK = smoothstep(190.0, 218.0, rr);
       vec3 tM = vec3(0.0);
       if (bigK < 0.999) {
@@ -979,11 +985,8 @@ const terrainMat = () => mat({
       tM = mix(tM, tM * vec3(1.16,1.04,0.84), smoothstep(0.05, 0.4, bt));     // песочные
       tM = mix(tM, tM * vec3(0.86,0.9,1.0), smoothstep(-0.05, -0.4, bt));      // холодные серые
       tM *= 1.0 - vB.x * 0.62;
-      // Переход земляные стены → серые горы: граница рваная (по шуму), растянута на ~25 м высоты
-      // и по радиусу, так что горы не «начинаются» ровной линией
-      float mixK = clamp(smoothstep(8.0, 36.0, vW.y + (facet - 0.5)*26.0 + (vnoise(vW.xz*0.11) - 0.5)*10.0)
-                  + smoothstep(188.0, 222.0, rr + (facet2 - 0.5)*30.0) - 0.0, 0.0, 1.0);
       rock = mix(rock, tM, mixK);
+      }
       // контраст: картинка нарисована мягко, а в игре её надо читать издалека
       rock = pow(rock, vec3(1.3)) * 1.2;
       // Рисунок вдали усредняется в ровный цвет, поэтому структуру горы задаёт форма:
@@ -991,10 +994,14 @@ const terrainMat = () => mat({
       float yw = vW.y + (facet - 0.5)*7.0;
       float tang = atan(vW.z, vW.x) * length(vW.xz);
       float strata = vnoise(vec2(tang*0.006, yw*0.11));
-      float thin = vnoise(vec2(tang*0.025, yw*0.5));
       float seam = smoothstep(0.1, 0.0, abs(fract(yw*0.05) - 0.5) - 0.43) * steepM;
+      #ifdef LITE
+      float thin = 0.5, joint = 0.0;
+      #else
+      float thin = vnoise(vec2(tang*0.025, yw*0.5));
       float jn = vnoise(vec2(tang*0.07 + floor(yw*0.05)*3.7, vW.y*0.004));
       float joint = smoothstep(0.06, 0.0, abs(jn - 0.5)) * steepM;
+      #endif
       rock *= (0.88 + 0.24*strata) * (0.97 + 0.06*thin);
       rock *= mix(1.1, 0.8, steepM) * (1.0 - seam*0.2 * (1.0 - mtnK*0.6) - joint*0.14);
       rock *= mix(1.0, 0.9 + 0.2*facet2, mtnK);
@@ -1002,6 +1009,7 @@ const terrainMat = () => mat({
       rock = mix(rock, vec3(lumOf(rock)) * vec3(0.78,0.86,1.02), deepK*0.85);
       rock = mix(rock, mix(vec3(lumOf(rock)), rock, 0.7) * vec3(0.94,0.96,1.0), mtnK*smoothstep(60.0, 220.0, camD)*0.6);
       // небольшой рельеф по яркости картинки: плиты чуть выпуклые и ловят свет
+      #ifndef LITE
       float hh = lumOf(rock);
       vec3 dpx = dFdx(vW), dpy = dFdy(vW);
       vec3 r1 = cross(dpy, ng), r2 = cross(ng, dpx);
@@ -1010,6 +1018,9 @@ const terrainMat = () => mat({
       // рельеф только на скале и сглаженный по яркости (на земле производные дают «пунктир»)
       float bumpK = smoothstep(0.15, 0.45, steepM) * smoothstep(60.0, 12.0, camD) * 0.12;
       nn = normalize(abs(det)*ng - bumpK*clamp(grad, vec3(-3.0), vec3(3.0)));
+      #else
+      nn = ng; // на телефоне без рельефа по картинке
+      #endif
       // грани треугольников нужны только скалам; на траве и тропах свет считаем по гладкой нормали
       nn = normalize(mix(n, nn, smoothstep(0.12, 0.42, 1.0 - ng.y)));
       // снег — только на самых высоких вершинах и в их складках
@@ -1031,7 +1042,11 @@ const terrainMat = () => mat({
       // трава и тропа считаются только там, где они есть: на скалах и стенах (gm = 0) это 8 выборок текстур даром
       if (gm > 0.004) {
         vec3 gA = texture2D(uGrass, vW.xz*0.12).rgb;
+      #ifdef LITE
+        vec3 gB = gA;
+      #else
         vec3 gB = texture2D(uGrass, vec2(vW.z, -vW.x)*0.031 + 0.37).rgb;
+      #endif
         d2 = texture2D(uDetail, vec2(vW.z, -vW.x)*0.027 + 0.37);
         vec3 grass = grassCol(vW);
         grass = mix(grass, vec3(0.40,0.47,0.24), smoothstep(20.0, 80.0, vW.y));
@@ -1051,7 +1066,11 @@ const terrainMat = () => mat({
         // ---- тропы и вытоптанные проплешины (канал B карты) ----
         // Край рваный — в него заходят языки травы. Грунт — нарисованная тропа в двух масштабах (10 и 38 м).
         pA = texture2D(uPath, vW.xz*0.1).rgb;
+      #ifdef LITE
+        vec3 pB = pA;
+      #else
         vec3 pB = texture2D(uPath, vec2(vW.z, -vW.x)*0.026 + 0.21).rgb;
+      #endif
         float e = hm.b + (d2.b - 0.5)*0.5 + (lumOf(pA) - 0.55)*0.35*smoothstep(70.0, 18.0, camD);
         float dirtK = smoothstep(0.36, 0.5, e);
         float core = smoothstep(0.55, 0.9, e);
