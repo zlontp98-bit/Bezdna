@@ -5,6 +5,7 @@ import { SRC, POOLS, LAKE, poolDist, heightAt } from './terrain.js';
 // озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
 const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
 import { smoothstep } from './noise.js';
+import { groundAt } from './solids.js';
 
 // Водопады: пелена воды с кромки по параболе, у подножия — брызги и водяная пыль.
 // Список перепадов строит buildStreams; здесь только картинка.
@@ -95,34 +96,41 @@ export function buildWaterfalls(scene, falls) {
       }
       return true;
     };
-    const ROWS = Math.min(56, Math.max(18, Math.round(H * 1.1))), COLSN = 11;
-    const rows = [];
-    let oPrev = 0, hit = null;
-    for (let i = 0; i < ROWS; i++) {
-      const tt = (i / (ROWS - 1)) * T, y = f.y0 - 0.5 * G * tt * tt, d = (f.y0 - y) / H;
-      let o = Math.max(VH * tt, oPrev);
-      // у самой воды берега не в счёт: струя падает в чашу, а не обходит её края
-      if (i > 0 && y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
-      oPrev = o;
-      rows.push({ o, y, d });
-      hit = o;
+    const COLSN = 11;
+    // ряд пелены: центр c, вектор поперёк струи sd (по горизонтали), нормаль nr, доля пути d, высота над гладью hb
+    let rows;
+    if (f.open) rows = flowPath(f, cx, cz, H, VH);
+    else {
+      const ROWS = Math.min(56, Math.max(18, Math.round(H * 1.1)));
+      rows = [];
+      let oPrev = 0;
+      for (let i = 0; i < ROWS; i++) {
+        const tt = (i / (ROWS - 1)) * T, y = f.y0 - 0.5 * G * tt * tt, d = (f.y0 - y) / H;
+        let o = Math.max(VH * tt, oPrev);
+        // у самой воды берега не в счёт: струя падает в чашу, а не обходит её края
+        if (i > 0 && y > f.y1 + 2.5) for (let k = 0; k < 50 && !clear(o, y, halfAt(d)); k++) o += 0.2;
+        oPrev = o;
+        const [x, z] = P(o, 0);
+        rows.push({ c: [x, y, z], sd: [px, pz], nr: [outX, 0, outZ], d, q: Math.sqrt(f.y0 - y + 0.3), hb: y - f.y1 });
+      }
+      // последний ряд уходит под гладь чаши: линия входа в воду ровная, без щели
+      const b = rows[rows.length - 1];
+      rows.push({ ...b, c: [b.c[0], f.y1 - 0.4, b.c[2]], d: 1, q: Math.sqrt(f.y0 - f.y1 + 0.7), hb: -0.4 });
     }
-    // последний ряд уходит под гладь чаши: линия входа в воду ровная, без щели
-    { const b = rows[rows.length - 1]; rows.push({ o: b.o, y: f.y1 - 0.4, d: 1 }); }
-    const NR = rows.length;
+    const NR = rows.length, end = rows[NR - 1];
     const pos = [], uv = [], dir = [], idx = [];
     for (const L of [0, 1]) {
       const base = pos.length / 3;
-      for (const { o, y, d } of rows) {
+      for (const { c, sd, nr, d, q, hb } of rows) {
         const half = halfAt(d) + L * 0.3;
+        const nl = Math.hypot(nr[0], nr[2]) || 1;
         for (let j = 0; j < COLSN; j++) {
           const u = -1 + (2 * j) / (COLSN - 1);
           // посередине струя выгнута вперёд, задний слой ближе к скале
-          const oo = o + (1 - u * u) * (0.3 + 0.4 * d) * (L ? 1 : 0.5) - (L ? 0 : 0.25);
-          const [x, z] = P(oo, u * half);
-          pos.push(x, y, z);
-          uv.push(u, Math.sqrt(f.y0 - y + 0.3), L, d);
-          dir.push(outX, outZ, y - f.y1);
+          const oo = (1 - u * u) * (0.3 + 0.4 * d) * (L ? 1 : 0.5) - (L ? 0 : 0.25);
+          pos.push(c[0] + sd[0] * u * half + nr[0] * oo, c[1] + nr[1] * oo, c[2] + sd[1] * u * half + nr[2] * oo);
+          uv.push(u, q, L, d);
+          dir.push(nr[0] / nl, nr[2] / nl, hb);
         }
       }
       for (let i = 0; i < NR - 1; i++)
@@ -142,20 +150,22 @@ export function buildWaterfalls(scene, falls) {
     scene.add(sheet);
     // куда бьёт струя: чаша под ней рисует здесь кипящую пену и расходящиеся круги
     {
-      const [hx, hz] = P(hit, 0);
+      const hx = end.c[0], hz = end.c[2];
       for (const p of [...POOLS, lakePool]) if (poolDist(p, hx, hz) < 1) p.splash = { x: hx, z: hz, rad: halfAt(1) * 0.55 + Math.min(1.2, H * 0.02) };
     }
 
     // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
     const big = Math.min(1, H / 45), N = Math.round(10 + 22 * big), hw = halfAt(1);
+    const eo = Math.hypot(end.nr[0], end.nr[2]) || 1, ex = end.nr[0] / eo, ez = end.nr[2] / eo;
     const mp = new Float32Array(N * 3), aS = new Float32Array(N * 4), md = new Float32Array(N * 2);
     for (let i = 0; i < N; i++) {
-      const [x, z] = P(hit + (rnd() - 0.5) * 2.5, (rnd() - 0.5) * 2 * hw);
+      const a = (rnd() - 0.5) * 2.5, l = (rnd() - 0.5) * 2 * hw;
+      const x = end.c[0] + ex * a + end.sd[0] * l, z = end.c[2] + ez * a + end.sd[1] * l;
       mp[i * 3] = x; mp[i * 3 + 1] = f.y1 + 0.3 + rnd() * 1.5 * big; mp[i * 3 + 2] = z;
       aS[i * 4] = (2 + rnd() * 3) * (0.6 + 1.4 * big); aS[i * 4 + 1] = 0.1 + rnd() * 0.14;
       aS[i * 4 + 2] = rnd(); aS[i * 4 + 3] = rnd();
       const sp = (rnd() - 0.5) * 1.6;
-      md[i * 2] = outX * 0.8 - outZ * sp; md[i * 2 + 1] = outZ * 0.8 + outX * sp;
+      md[i * 2] = ex * 0.8 - ez * sp; md[i * 2 + 1] = ez * 0.8 + ex * sp;
     }
     const mg = new THREE.BufferGeometry();
     mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
@@ -261,4 +271,76 @@ function buildPools(scene) {
     mesh.renderOrder = 2;
     scene.add(mesh);
   }
+}
+
+// ---- водопад в шахту: путь воды с кромки до озера ----
+// Вода падает по параболе; встретив глыбу или уступ, растекается по её верху, стекает вниз по склону
+// (к озеру), срывается с края и падает дальше — так до самой глади. Упёрлась в стену — скользит по ней вниз.
+export function flowPath(f, cx, cz, H, VH) {
+  const DT = 0.025, WALL = 0.8, LIFT = 0.25;
+  let x = cx * f.lipR, z = cz * f.lipR, y = f.y0;
+  let hx = -cx, hz = -cz, hs = VH, vy = 0, air = true; // направление и скорость по горизонтали
+  const pts = [[x, y, z]];
+  let arc = 0, lastX = x, lastY = y, lastZ = z;
+  const sup = (px, pz, py) => groundAt(px, pz, py);
+  const toLake = (px, pz) => { const l = Math.hypot(px - LAKE.x, pz - LAKE.z) || 1; return [(LAKE.x - px) / l, (LAKE.z - pz) / l]; };
+  const inLake = (px, pz) => Math.hypot(px - LAKE.x, pz - LAKE.z) < LAKE.r - 1;
+  for (let it = 0; it < 40000 && y > LAKE.level; it++) {
+    if (air) {
+      vy -= G * DT;
+      let nx = x + hx * hs * DT, nz = z + hz * hs * DT, ny = y + vy * DT;
+      let g = sup(nx, nz, ny);
+      if (g - ny > WALL) { // стена или бок глыбы: горизонтальная скорость гаснет, вода скользит вниз
+        hs *= 0.3; nx = x; nz = z; g = sup(nx, nz, ny);
+        if (g - ny > WALL) { y = Math.max(y, g); air = false; continue; }
+      }
+      x = nx; z = nz; y = ny;
+      if (g >= y - 0.05 && !(inLake(x, z) && g < LAKE.level)) { y = g; air = false; vy = 0; hs = Math.max(hs, 1.5); }
+    } else {
+      // по верху: выбираем направление, где ниже и ближе к озеру, без резких поворотов
+      const [lx, lz] = toLake(x, z);
+      let best = null;
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2, dx = Math.cos(a), dz = Math.sin(a), st = 0.45;
+        const g = sup(x + dx * st, z + dz * st, y + 0.3);
+        if (g > y + 0.3) continue; // в гору или в стену
+        const sc = (y - g) * 1.2 + 0.35 * (dx * lx + dz * lz) + 0.5 * (dx * hx + dz * hz);
+        if (!best || sc > best.sc) best = { sc, dx, dz, g };
+      }
+      if (!best) { hx = lx; hz = lz; hs = 1.5; air = true; y += 0.3; continue; } // в ямке: перелить через край
+      hx = best.dx; hz = best.dz;
+      const step = 3.2 * DT * 4;
+      const nx = x + hx * step, nz = z + hz * step, g = sup(nx, nz, y + 0.3);
+      x = nx; z = nz;
+      if (g < y - 0.6 || (inLake(x, z) && g < LAKE.level)) { air = true; vy = 0; hs = 2.6; } // край: срывается вниз
+      else y = g;
+    }
+    const dd = Math.hypot(x - lastX, y - lastY, z - lastZ);
+    if (dd > 0.9) { arc += dd; pts.push([x, y, z]); lastX = x; lastY = y; lastZ = z; }
+  }
+  if (y > LAKE.level) console.warn('waterfall: путь не дошёл до озера', x, y, z);
+  pts.push([x, Math.min(y, LAKE.level) - 0.4, z]);
+  // сгладить ломаную (на воздухе она и так плавная, на камнях — ступеньки сетки)
+  for (let pass = 0; pass < 2; pass++)
+    for (let i = 1; i < pts.length - 1; i++)
+      for (let c = 0; c < 3; c++) pts[i][c] = pts[i][c] * 0.5 + (pts[i - 1][c] + pts[i + 1][c]) * 0.25;
+  // ряды пелены
+  const rows = [];
+  let sx = -cz, sz = cx, len = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)], c = pts[i];
+    if (i) len += Math.hypot(c[0] - pts[i - 1][0], c[1] - pts[i - 1][1], c[2] - pts[i - 1][2]);
+    let tx = b[0] - a[0], ty = b[1] - a[1], tz = b[2] - a[2];
+    const th = Math.hypot(tx, tz), tl = Math.hypot(tx, ty, tz) || 1;
+    if (th > 0.15 * tl) { sx = -tz / th; sz = tx / th; } // поперёк — по горизонтали к ходу струи
+    tx /= tl; ty /= tl; tz /= tl;
+    // нормаль пелены: sd × t, где sd = (sx, 0, sz)
+    const nx = -sz * ty, ny = sz * tx - sx * tz, nz = sx * ty;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    // пусть нормаль смотрит от скалы: вверх, если струя лежит на камне, и к озеру, если падает
+    let sgn = ny < -0.01 ? -1 : 1;
+    if (Math.abs(ny) < 0.3) { const [lx, lz] = toLake(c[0], c[2]); sgn = nx * lx + nz * lz < 0 ? -1 : 1; }
+    rows.push({ c, sd: [sx, sz], nr: [nx / nl * sgn, ny / nl * sgn, nz / nl * sgn], d: Math.min(1, (f.y0 - c[1]) / H), q: Math.sqrt(len + 0.3), hb: c[1] - LAKE.level });
+  }
+  return rows;
 }
