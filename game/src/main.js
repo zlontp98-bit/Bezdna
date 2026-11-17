@@ -21,6 +21,7 @@ import { Crafting } from './craft.js';
 import { Miner } from './mine.js';
 import { Chests } from './chest.js';
 import { planDeep, Deep, deepRocks } from './deep.js';
+import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
@@ -47,7 +48,7 @@ const store = {
   del(k) { pending.delete(k); try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
-let deep, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
+let deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
@@ -196,6 +197,7 @@ async function build() {
   chest = new Chests(scene, STACKS, flora.trees, player, inv, world, toast);
   mine = new Miner(scene, flora.boulders, flora.rockGeo, player, inv, world, toast);
   deep = new Deep(scene, deepPlan, player, inv, world, toast);
+  jelly = new Jellies(scene, player, inv, world, toast);
   renderCraft();
   setQuality(Q.mode);
   addEventListener('resize', onResize);
@@ -226,9 +228,9 @@ function updateHud(dt) {
   setCls('grab', 'on', player.climbing);
   setCls('grab', 'ready', player.canGrab);
   // одна кнопка действия: поговорить, прочитать доску или рубить — смотря что рядом
-  act = town.near ? 'talk' : town.nearBoard ? 'board' : craft.heldBlueprint() ? 'learn' : chest.target ? 'chest' : picks.target ? 'pick' : berries.target ? 'berry' : wood.target ? 'chop' : mine.target ? 'mine' : deep.target ? 'deep' : '';
+  act = town.near ? 'talk' : town.nearBoard ? 'board' : craft.heldBlueprint() ? 'learn' : chest.target ? 'chest' : jelly.target ? 'hunt' : picks.target ? 'pick' : berries.target ? 'berry' : wood.target ? 'chop' : mine.target ? 'mine' : deep.target ? 'deep' : '';
   setCls('chop', 'show', !!act);
-  if (act) setText('actIcon', act === 'deep' ? deep.icon : { talk: '💬', board: '📜', learn: '📖', chest: '🗝️', pick: '✋', berry: '🫐', chop: '🪓', mine: '⛏️' }[act]);
+  if (act) setText('actIcon', act === 'deep' ? deep.icon : act === 'hunt' ? jelly.icon : { talk: '💬', board: '📜', learn: '📖', chest: '🗝️', pick: '✋', berry: '🫐', chop: '🪓', mine: '⛏️' }[act]);
   if (talkOpen) { if (talkOpen !== act) closeTalk(); else showTalk(talkOpen); }
   const d = Math.round(-y);
   setText('depth', d > 0 ? `−${d} м` : d < -1 ? `+${-d} м` : '0 м');
@@ -503,6 +505,7 @@ function frame(now) {
     wood.update(dt, act === 'chop' && inp.chop);
     mine.update(dt, act === 'mine' && inp.chop);
     deep.update(dt, act === 'deep' && inp.chop, act === 'deep' && inp.chop && !actHeld);
+    jelly.update(dt, act === 'hunt' && inp.chop);
     picks.update(act === 'pick' && inp.chop && !actHeld);
     berries.update(act === 'berry' && inp.chop && !actHeld);
     chest.update(dt, act === 'chest' && inp.chop && !actHeld);
@@ -717,7 +720,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
+    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, jelly, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
