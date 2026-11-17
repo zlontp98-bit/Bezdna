@@ -223,8 +223,9 @@ function haloMaterial() {
 // ---------- расстановка ----------
 // Виды: что даёт, чем добывать, размер для поиска цели.
 export const DEEP_KINDS = {
-  crystal: { item: 'crystal', icon: '💎', name: 'Синий кристалл', reach: 0.55, h: 1.2 },
-  bigcrystal: { item: 'crystal', icon: '💎', name: 'Синий кристалл', reach: 0.5, h: 1.2 },
+  // из кристаллов выпадает не сам кристалл, а кристальная пыль
+  crystal: { item: 'dust', icon: '💎', name: 'Синий кристалл', reach: 0.55, h: 1.2 },
+  bigcrystal: { item: 'dust', icon: '💎', name: 'Синий кристалл', reach: 0.5, h: 1.2 },
   shroom: { item: 'shroom', icon: '🍄', name: 'Гриб', reach: 0.4, h: 0.45 },
   rock: { reach: 0.8, h: 1.0 },   // обычные серые камни (их добывает mine.js, как на дне шахты)
   big: { item: 'shroom', icon: '🍄', name: 'Гриб', reach: 0.6, h: 4.2 },
@@ -508,13 +509,13 @@ export class Deep {
     const r = o.reward; o.reward = null;
     if (!r) return; // добывал не я
     const K = DEEP_KINDS[o.kind], n = r[K.item] || 0, left = this.inv.add(K.item, n);
-    const it = K.item === 'crystal' ? '💎 Синий кристалл' : '🍄 Гриб';
+    const it = K.item === 'dust' ? '💠 Кристальная пыль' : '🍄 Гриб';
     this.toast(left === 0 ? `+${n} ${it}` : left < n ? `+${n - left} ${it.split(' ')[0]} — инвентарь полон` : 'Инвентарь полон');
     const f = this.fly[o.kind];
-    for (let i = 0; i < Math.min(n, 3); i++) {
+    for (let i = 0; i < Math.min(n, K.item === 'dust' ? 6 : 3); i++) {
       const a = i * 2.1 + o.x;
       f.setColorAt(i, o.col); f.instanceColor.needsUpdate = true;
-      this.flying.push({ f, i, t: -i * 0.07, x: o.x, y: o.y + 0.2, z: o.z, vx: Math.cos(a) * 1.1, vz: Math.sin(a) * 1.1, rot: a, s: o.kind === 'big' ? 0.16 : o.kind === 'bigcrystal' ? 0.25 : 0.5 });
+      this.flying.push({ f, i, t: -i * 0.07, x: o.x, y: o.y + 0.2, z: o.z, vx: Math.cos(a) * 1.1, vz: Math.sin(a) * 1.1, rot: a, s: o.kind === 'big' ? 0.16 : o.kind === 'bigcrystal' ? 0.12 : 0.22 });   // кристалл — летят мелкие осколки-пылинки
     }
   }
   animFly(dt) {
