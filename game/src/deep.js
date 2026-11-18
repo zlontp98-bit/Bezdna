@@ -7,6 +7,7 @@ import { fieldTop as solidTop, groundAt, ceiling, addMeshTop } from './solids.js
 import { STREAMS } from './waterfall.js';
 import { SWING } from './player.js';
 import { objId, RULES } from './world.js';
+const NO_TRIS = new Float32Array(0); // верх отдельно не передаём: всё тело — в full
 
 // Глубина: светящиеся кристаллы, грибы и рудные камни на глыбах поля.
 // Начинаются с −75 м и чем глубже, тем их больше; у озера растут большие грибы.
@@ -364,7 +365,7 @@ export function deepRocks(scene, plan, rockGeo, propMaterial) {
     im.setMatrixAt(i, dummy.matrix); im.setColorAt(i, c.setRGB(g * 0.72, g * 0.78, g * 0.92));
     const tris = new Float32Array(P.count * 3);
     for (let k = 0; k < P.count; k++) { v.fromBufferAttribute(P, k).applyMatrix4(dummy.matrix); tris[k * 3] = v.x; tris[k * 3 + 1] = v.y; tris[k * 3 + 2] = v.z; }
-    const solid = addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0 });
+    const solid = addMeshTop(NO_TRIS, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, full: tris });   // тело целиком: без бесконечного низа (см. flora.js rockSolid)
     out.push({ mesh: im, i, x: t.x, y: t.y, z: t.z, s: t.s, m: dummy.matrix.clone(), solid });
   });
   im.frustumCulled = false; im.matrixAutoUpdate = false;
