@@ -460,6 +460,8 @@ export class Player {
     if (!f) return false;
     const hx = f.bx + f.nx * 0.42, hz = f.bz + f.nz * 0.42;
     if (rockAt(hx, hz, this.pos.y + 0.8)) return false; // на этом месте грудь была бы в камне
+    // и голова или всё тело — в соседней скале (узкая щель): иначе герой «вставал» внутрь камня, а камера в голову
+    if (rockAt(hx, hz, this.pos.y + 1.3) || this.G(hx, hz) - this.pos.y > 0.6) return false;
     const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
     this.pos.x = f.bx + f.nx * 0.42; this.pos.z = f.bz + f.nz * 0.42;
     this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
