@@ -23,6 +23,7 @@ import { Chests } from './chest.js';
 import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
+import { buildPits, clearPits } from './pits.js';
 import { buildVines } from './vines.js';
 import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
@@ -147,6 +148,8 @@ async function build() {
   const ruins = buildRuins(scene);
   // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
   buildDescent(scene);
+  clearPits();                 // ямы-спуски у озера: убрать глыбы карты, стоящие прямо в яме,
+  buildPits(scene);            // и поставить стены, уступы и подпорки из глыб (по ним можно лазать)
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
   planWater();
