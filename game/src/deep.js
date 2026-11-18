@@ -474,6 +474,10 @@ export class Deep {
       L.push({ o, y: o.y + DEEP_KINDS[o.kind].h * o.s * (big ? 0.7 : 0.45), r: big ? 6.5 * o.s : bc ? 4.2 * o.s : cr ? 2.8 * o.s : 1.6 * o.s,
         k: big ? 0.55 : bc ? 0.9 : cr ? 0.6 : 0.35, ph: o.hue * 40, col: big ? [0.25, 0.75, 0.85] : cr ? [0.3, 0.6, 1.0] : [0.3, 0.85, 0.85] });
     }
+    if (this.extraLights) {   // фонари и прочие огоньки (scale.js): тот же отбор по расстоянию
+      for (const e of this.extraLights) L.push({ o: { x: e.x, z: e.z, state: 'idle' }, y: e.y, r: e.r, k: e.k, ph: e.x * 3.1, col: e.col });
+      this.extraLights = null;
+    }
     cand.length = 0;
     for (const g of L) {
       if (g.o.state === 'gone' || g.o.state === 'break') continue;

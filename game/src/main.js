@@ -24,6 +24,7 @@ import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { buildVines } from './vines.js';
+import { buildWallFalls, buildLanterns, buildBridges } from './scale.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
 
@@ -49,7 +50,7 @@ const store = {
   del(k) { pending.delete(k); try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
-let vines, deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
+let vines, lanterns, deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
@@ -162,6 +163,9 @@ async function build() {
   grass = buildGrass(scene, isMobile ? 16000 : 30000, LITE);
   motes = buildMotes(scene, 220);
   vines = buildVines(scene);   // лианы и корни с краёв глыб в шахте (украшение, без коллизий)
+  buildWallFalls(scene);      // тонкие водопады по стенам шахты — для масштаба
+  buildBridges(scene);        // верёвочные мостики между соседними глыбами (по ним можно ходить)
+  lanterns = buildLanterns(scene);   // фонари на кронштейнах по бокам глыб (их свет — в deep.lights)
   await loadStep(97, 'Будим героя…');
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
@@ -199,6 +203,7 @@ async function build() {
   chest = new Chests(scene, STACKS, flora.trees, player, inv, world, toast);
   mine = new Miner(scene, flora.boulders, flora.rockGeo, player, inv, world, toast);
   deep = new Deep(scene, deepPlan, player, inv, world, toast);
+  deep.extraLights = lanterns;
   jelly = new Jellies(scene, player, inv, world, toast);
   renderCraft();
   setQuality(Q.mode);
