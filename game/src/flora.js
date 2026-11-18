@@ -570,6 +570,7 @@ export function buildFlora(scene) {
 
 // Валун становится твёрдым: верх его настоящей модели запекается в карту высот
 const _v = new THREE.Vector3();
+export const NO_TRIS = new Float32Array(0);
 function rockSolid(geo, m, t) {
   if (t.s < 0.3) return null;
   const P = geo.attributes.position, tris = new Float32Array(P.count * 3);
@@ -577,7 +578,9 @@ function rockSolid(geo, m, t) {
     _v.fromBufferAttribute(P, i).applyMatrix4(m);
     tris[i * 3] = _v.x; tris[i * 3 + 1] = _v.y; tris[i * 3 + 2] = _v.z;
   }
-  return addMeshTop(tris, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, hang: !!t.hang });
+  // Всё тело камня (full), а не только верх: опора — от его низа до верха в каждой клетке.
+  // Раньше низ был «бесконечным»: камень у края уступа давал невидимую стену до самого дна под собой.
+  return addMeshTop(NO_TRIS, Math.min(0.3, t.s * 0.15), { soft: t.s < 1.0, hang: !!t.hang, full: tris });
 }
 
 // ---------- трава и цветы: «ковёр», который ездит за игроком ----------
