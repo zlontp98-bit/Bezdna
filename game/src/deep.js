@@ -464,6 +464,34 @@ export class Deep {
     o.mesh.setMatrixAt(o.i, _m); o.mesh.instanceMatrix.needsUpdate = true;
     if (o.hi !== undefined) { this.halo.setMatrixAt(o.hi, ZERO); this.halo.instanceMatrix.needsUpdate = true; }
   }
+  // Свет в общий шейдер (U.uGlowP/uGlowC): n ближайших к точке светящихся кристаллов и грибов.
+  // Вес плавно падает к границе выбора — когда кристалл входит в число ближайших или выходит, свет не «щёлкает».
+  lights(px, py, pz, P, C, n, t) {
+    const L = this._gl || (this._gl = []), cand = this._cand || (this._cand = []);
+    if (!L.length) for (const o of this.byId.values()) {
+      const big = o.kind === 'big', bc = o.kind === 'bigcrystal', cr = o.kind === 'crystal' || bc;
+      if (o.purple) continue;
+      L.push({ o, y: o.y + DEEP_KINDS[o.kind].h * o.s * (big ? 0.7 : 0.45), r: big ? 6.5 * o.s : bc ? 4.2 * o.s : cr ? 2.8 * o.s : 1.6 * o.s,
+        k: big ? 0.55 : bc ? 0.9 : cr ? 0.6 : 0.35, ph: o.hue * 40, col: big ? [0.25, 0.75, 0.85] : cr ? [0.3, 0.6, 1.0] : [0.3, 0.85, 0.85] });
+    }
+    cand.length = 0;
+    for (const g of L) {
+      if (g.o.state === 'gone' || g.o.state === 'break') continue;
+      const dx = g.o.x - px, dy = g.y - py, dz = g.o.z - pz, d = Math.sqrt(dx * dx + dy * dy + dz * dz) - g.r;
+      if (d < 40) { g.d = d; cand.push(g); }
+    }
+    cand.sort((a, b) => a.d - b.d);
+    const edge = cand.length > n ? cand[n].d : 40;
+    for (let i = 0; i < n; i++) {
+      const g = cand[i];
+      if (!g) { P[i].set(0, -1e4, 0, 1); C[i].setRGB(0, 0, 0); continue; }
+      const fade = Math.min(1, Math.max(0, (edge - g.d) / 6)) * Math.min(1, Math.max(0, (40 - g.d) / 10));
+      const pulse = 0.85 + 0.15 * Math.sin(t * 1.3 + g.ph);
+      const k = g.k * fade * pulse;
+      P[i].set(g.o.x, g.y, g.o.z, g.r);
+      C[i].setRGB(g.col[0] * k, g.col[1] * k, g.col[2] * k);
+    }
+  }
   need(o) { return RULES.deep[o.kind].tool; }
   find() {
     const p = this.player.pos, cx = Math.floor(p.x / CELL), cz = Math.floor(p.z / CELL);
