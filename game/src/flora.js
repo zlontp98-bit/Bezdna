@@ -298,13 +298,17 @@ export function buildFlora(scene) {
   const BULK = { leaf: [3.2, 7], pine: [2.4, 8], shroom: [2.2, 4], rock: [1.2, 1.5], crystal: [1.0, 2.2], small: [0.6, 0.8], bush: [1.4, 1.6] };
   const add = (list, x, y, z, s, color, rot = rnd() * TAU, tilt = 0) => {
     const key = Object.keys(lists).find((k) => lists[k] === list), bk = BULK[key];
-    if (bk && waterNear(x, y, z, bk[0] * s, bk[1] * s)) return;
-    if (y < -9 && inRock(x, y, z, list === lists.shroom ? 3.4 * s : 1.2 * s, list === lists.shroom ? 1.7 * s : 0)) return;
+    if (bk && waterNear(x, y, z, bk[0] * s, bk[1] * s)) return false;
+    if (y < -9 && inRock(x, y, z, list === lists.shroom ? 3.4 * s : 1.2 * s, list === lists.shroom ? 1.7 * s : 0)) return false;
     // кристаллы и грибы теперь живут в глубине и добываются (deep.js); вызовы оставлены,
     // чтобы случайная расстановка остального мира (деревья, камни) не сдвинулась
-    if (list === lists.crystal || list === lists.small || list === lists.shroom) return;
+    if (list === lists.crystal || list === lists.small || list === lists.shroom) return false;
     list.push({ x, y, z, s, color, rot, tilt });
+    return true;
   };
+  // круг столкновения — только у того, что действительно посажено, и только на своей высоте:
+  // иначе невидимая стена там, где дерево пропущено (у воды, в скале), и на уровнях выше/ниже него
+  const col3 = (ok, x, y, z, r, h) => { if (ok) colliders.push({ x, z, r, y0: y - 0.6, y1: y + h }); };
 
   // ---- камни у водопадов ----
   // Не ряды и не кольцо, а естественные группы: у воды лежит одна крупная глыба, рядом две-три
@@ -382,9 +386,8 @@ export function buildFlora(scene) {
     col.setHSL(deep ? 0.42 + rnd() * 0.05 : hue, 0.45, 0.29 + rnd() * 0.07);
     // осенние деревья для пятен цвета
     if (!deep && rnd() < 0.09) col.setHSL(0.06 + rnd() * 0.04, 0.6, 0.42);
-    add(lists.leaf, x, y - 0.1, z, s, col.getHex());
+    col3(add(lists.leaf, x, y - 0.1, z, s, col.getHex()), x, y, z, 0.42 * s, 4.5 * s);
     taken.push({ x, z, r: 2.2 });
-    colliders.push({ x, z, r: 0.42 * s });
     blobs.push({ x, z, r: 3.3 * s, h: 3.2 * s });
     return true;
   });
@@ -393,9 +396,8 @@ export function buildFlora(scene) {
     if (ny < 0.86 || !free(x, z, 2.2)) return false;
     const s = 0.9 + rnd() * 0.8;
     col.setHSL(0.36 + rnd() * 0.05, 0.42, 0.27 + rnd() * 0.07);
-    add(lists.pine, x, y - 0.1, z, s, col.getHex());
+    col3(add(lists.pine, x, y - 0.1, z, s, col.getHex()), x, y, z, 0.36 * s, 6 * s);
     taken.push({ x, z, r: 1.8 });
-    colliders.push({ x, z, r: 0.36 * s });
     blobs.push({ x, z, r: 2.4 * s, h: 3.5 * s });
     return true;
   });
@@ -442,8 +444,8 @@ export function buildFlora(scene) {
   scatter(14, W.PIT + 4, W.HOLE - 4, (x, y, z, ny) => {
     if (ny < 0.9 || y > -40 || !free(x, z, 3)) return false;
     col.setHSL(0.40 + rnd() * 0.05, 0.4, 0.22 + rnd() * 0.05);
-    add(lists.pine, x, y - 0.1, z, 0.8 + rnd() * 0.7, col.getHex());
-    taken.push({ x, z, r: 2 }); colliders.push({ x, z, r: 0.35 });
+    col3(add(lists.pine, x, y - 0.1, z, 0.8 + rnd() * 0.7, col.getHex()), x, y, z, 0.35, 9);
+    taken.push({ x, z, r: 2 });
     return true;
   });
   // кристаллы: глубина
@@ -468,9 +470,8 @@ export function buildFlora(scene) {
     if (fbm(x * 0.035 + 8, z * 0.035 - 3, 2) < -0.05) return false;
     const s = 0.8 + rnd() * 0.9;
     col.setHSL(0.35 + rnd() * 0.06, 0.4, 0.24 + rnd() * 0.07);
-    add(lists.pine, x, y - 0.15, z, s, col.getHex());
+    col3(add(lists.pine, x, y - 0.15, z, s, col.getHex()), x, y, z, 0.36 * s, 6 * s);
     taken.push({ x, z, r: 1.6 });
-    colliders.push({ x, z, r: 0.36 * s });
     return true;
   });
   scatter(90, W.MEADOW + 15, W.OUTER - 30, (x, y, z, ny) => {
