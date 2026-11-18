@@ -466,7 +466,7 @@ export class Deep {
   }
   // Свет в общий шейдер (U.uGlowP/uGlowC): n ближайших к точке светящихся кристаллов и грибов.
   // Вес плавно падает к границе выбора — когда кристалл входит в число ближайших или выходит, свет не «щёлкает».
-  lights(px, py, pz, P, C, n, t) {
+  lights(px, py, pz, P, C, n, t, B = null) {
     const L = this._gl || (this._gl = []), cand = this._cand || (this._cand = []);
     if (!L.length) for (const o of this.byId.values()) {
       const big = o.kind === 'big', bc = o.kind === 'bigcrystal', cr = o.kind === 'crystal' || bc;
@@ -486,6 +486,13 @@ export class Deep {
     }
     cand.sort((a, b) => a.d - b.d);
     const edge = cand.length > n ? cand[n].d : 40;
+    // сфера вокруг всех выбранных огоньков (с их радиусами): шейдер за её пределами свет не считает
+    let bx = 0, by = 0, bz = 0, m = Math.min(n, cand.length);
+    for (let i = 0; i < m; i++) { bx += cand[i].o.x; by += cand[i].y; bz += cand[i].o.z; }
+    if (m) { bx /= m; by /= m; bz /= m; }
+    let br = 0;
+    for (let i = 0; i < m; i++) br = Math.max(br, Math.hypot(cand[i].o.x - bx, cand[i].y - by, cand[i].o.z - bz) + cand[i].r);
+    if (B) B.set(bx, m ? by : -1e4, bz, br);
     for (let i = 0; i < n; i++) {
       const g = cand[i];
       if (!g) { P[i].set(0, -1e4, 0, 1); C[i].setRGB(0, 0, 0); continue; }
