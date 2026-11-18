@@ -24,7 +24,7 @@ import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { buildVines } from './vines.js';
-import { buildWallFalls, buildLanterns, buildBridges } from './scale.js';
+import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
@@ -169,7 +169,6 @@ async function build() {
   grass = buildGrass(scene, isMobile ? 16000 : 30000, LITE);
   motes = buildMotes(scene, 220);
   vines = buildVines(scene);   // лианы и корни с краёв глыб в шахте (украшение, без коллизий)
-  buildWallFalls(scene);      // тонкие водопады по стенам шахты — для масштаба
   buildBridges(scene);        // верёвочные мостики между соседними глыбами (по ним можно ходить)
   lanterns = buildLanterns(scene);   // фонари на кронштейнах по бокам глыб (их свет — в deep.lights)
   spores = buildSpores(scene);  // споры и искры у ближайших кристаллов, грибов и фонарей
