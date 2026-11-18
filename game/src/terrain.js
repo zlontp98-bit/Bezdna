@@ -1151,6 +1151,13 @@ export function buildTerrain(scene) {
   buildPatches();
 
   const material = rockMat = terrainMat();
+  // Обратная сторона скал — отдельным проходом после всех лицевых. Там, где поверхность скалы делает
+  // складку (уступы, трещины), её изнанка смотрит на камеру, а односторонняя отрисовка её не рисовала:
+  // в камне была щель, через которую видно насквозь. Изнанка за лицевой стеной отбрасывается тестом
+  // глубины ещё до шейдера, поэтому почти ничего не стоит (в отличие от двусторонней отрисовки, +50%).
+  const back = rockMat.clone();
+  back.uniforms = rockMat.uniforms; back.side = THREE.BackSide;
+  rockMat.userData.back = back;
   const SECT = 8, per = COLS / SECT;
   const n = new THREE.Vector3();
   for (let s = 0; s < SECT; s++) {

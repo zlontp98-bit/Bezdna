@@ -5,6 +5,7 @@ import { addMeshTop, removeSolid, solidsNear, groundAt, lastSolid, rockAt } from
 import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { chunkMesh } from './chunks.js';
+const inRock = (x, y, z) => rockAt(x, z, y) || heightAt(x, z) > y;
 
 // Спуск в бездну — отдельный участок поверх шахты (остальную карту не трогает).
 //
@@ -704,7 +705,7 @@ function flushStones() {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
     geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(n / 3 * 2), 2));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nn, 3));
-    const m = chunkMesh(geo, rockMat);
+    const m = chunkMesh(geo, rockMat, inRock);
     fieldScene.add(m); SBINS.set(k, m);
   }
   SDIRTY.clear();
@@ -1106,7 +1107,7 @@ export function buildDescent(scene) {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
     geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(list.length * 6), 2));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nn, 3));
-    scene.add(chunkMesh(geo, rockMat));
+    scene.add(chunkMesh(geo, rockMat, inRock));
   }
 
   // звенья для проверки ботом: пути героя в мировых координатах

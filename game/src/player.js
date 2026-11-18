@@ -211,6 +211,9 @@ const MAX_SLOPE = 0.9;
 const SLIDE_IN = 1.05, SLIDE_OUT = 0.8;
 const CLIMBV = 2.2, CLIMB = 2.5, STEEP = 0.77, SWIM = 2.6, SWIM_FAST = 4.0;
 // толщина тела у стен: радиус, высота «стены» (круче ~65° на длине радиуса) и куда щупаем
+// Порог до STEP герой перешагивает сам (картинка поднимается плавно), выше — перелезает.
+// Раньше между 0.36 и 0.45 была «мёртвая зона»: ни шагнуть, ни перелезть — герой дёргался у порога.
+const STEP = 0.5;
 const MANTLE_MIN = 0.45, MANTLE_MAX = 1.9; // перелезть можно уступ такой высоты, м
 const FALL_MAX = 1e9; // срыв при падении отключён на время тестов // падение выше этого — срыв, возврат на последний уступ
 const SWIM_R = 0.4; // радиус тела в воде
@@ -292,8 +295,8 @@ export class Player {
       const h = this.G(x, z);
       // допуск — доли миллиметра: раньше 1.5 см на каждый микрошаг давали на малой скорости
       // вползать на склоны под 60° и тут же съезжать обратно
-      if (this.grounded) return h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.0005 || (hitSolid && h - p.y <= 0.36);
-      return h <= p.y + 0.3;
+      if (this.grounded) return h - p.y <= Math.hypot(x - p.x, z - p.z) * MAX_SLOPE + 0.0005 || (hitSolid && h - p.y <= STEP);
+      return h <= p.y + 0.5; // в прыжке край чуть выше ног — запрыгиваем (приземление поднимет плавно), а не цепляемся
     };
     let nx = p.x + dx, nz = p.z + dz;
     // У героя есть толщина: перед отвесной стеной или боком валуна он останавливается
@@ -311,6 +314,12 @@ export class Player {
       for (const [c, s] of TURN) {
         const tx = (dx * c - dz * s) * c, tz = (dz * c + dx * s) * c, tl = Math.hypot(tx, tz);
         if (wall(p.x + tx, p.z + tz, tx / tl, tz / tl) || !ok(p.x + tx, p.z + tz)) continue;
+        // В «углу» (камень впереди слева и справа) обход в одну сторону на следующем кадре упирался,
+        // и шаг поворачивал в другую: герой мотался на месте, а с ним и камера. Обход в сторону,
+        // противоположную недавнему, не делаем — просто стоим у камня.
+        const tl2 = Math.hypot(tx, tz), lt = this._turn;
+        if (lt && this._clk - lt.t < 0.25 && (tx * lt.x + tz * lt.z) / tl2 < 0.2) break;
+        this._turn = { x: tx / tl2, z: tz / tl2, t: this._clk };
         nx = p.x + tx; nz = p.z + tz; done = true;
         break;
       }
@@ -337,7 +346,9 @@ export class Player {
     // (иначе шаг вползал в камень сбоку, а выталкивание отбрасывало назад — герой и камера тряслись у стены).
     // Вместо него — шаг вдоль стены, если он свободен.
     const h0 = this.ringHits(p.x, p.z), h1 = this.ringHits(nx, nz);
-    if (h1.n > h0.n) {
+    // В прыжке угол камня, задевший край круга тела, не останавливает: раньше герой «упирался в воздух»
+    // у угла глыбы. Дрожи в полёте нет — тут достаточно мягкого выталкивания (pushOutOfWalls).
+    if (h1.n > h0.n && (this.grounded || h1.n - h0.n >= 3)) {
       const l = Math.hypot(h1.sx, h1.sz);
       if (l < 0.01) return;
       const ux = h1.sx / l, uz = h1.sz / l, mx = nx - p.x, mz = nz - p.z, into = mx * ux + mz * uz;
@@ -354,6 +365,17 @@ export class Player {
       // идём вдоль/от камня и задели лишь одну точку — шагаем, pushOutOfWalls мягко отодвинет
       if (!found && (into < 0 || h0.n > 0 || h1.n > 1)) return;
     }
+    // Обход (по склону, вдоль камня) повернул шаг — и на прошлых кадрах обход шёл в обратную сторону:
+    // это дрожь на месте у порога или в углу. Стоим, а не мотаемся туда-сюда (с героем тряслась и камера).
+    {
+      const sx = nx - p.x, sz = nz - p.z, sl = Math.hypot(sx, sz);
+      if (this.grounded && sl > 1e-5 && (sx * dx + sz * dz) < -0.05 * sl * step) { this.vel.x *= 0.5; this.vel.z *= 0.5; return; } // обход назад — нет
+      if (sl > 1e-5 && (sx * dx + sz * dz) < 0.9 * sl * step) {
+        const lt = this._div;
+        if (lt && this._clk - lt.t < 0.25 && (sx * lt.x + sz * lt.z) < -0.3 * sl) { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
+        this._div = { x: sx / sl, z: sz / sl, t: this._clk };
+      }
+    }
     p.x = nx; p.z = nz;
     if (this.grounded) {
       const h = this.G(nx, nz);
@@ -369,11 +391,17 @@ export class Player {
   // Условие — игрок давит в уступ и стоит у него вплотную; верх проверяем на 0.5 м вглубь,
   // чтобы не «запрыгнуть» на острый гребень или обрыв.
   tryMantle(mx, mz, ml) {
-    if (!this.grounded || this.sliding || ml < 0.6 || this.mantleCd > 0 || this.speed > 1.6) return false;
+    if (!this.grounded || this.sliding || ml < 0.6 || this.mantleCd > 0) return false;
     const p = this.pos, l = Math.hypot(mx, mz), ux = mx / l, uz = mz / l;
+    // Пологий подъём (берег, осыпь), по которому и так можно идти, — не уступ: на бегу герой
+    // раньше «прыгал» по нему серией перелезаний. Перелезаем, только если по дороге есть крутая ступень.
+    let hp = p.y, dp = 0, steep = false;
     for (let d = 0.25; d <= 0.95; d += 0.1) {
       const h = this.G(p.x + ux * d, p.z + uz * d);
+      if (h - hp > (d - dp) * MAX_SLOPE + 0.03) steep = true;
+      hp = h; dp = d;
       if (h - p.y < MANTLE_MIN) continue;
+      if (!steep) return false;
       if (h - p.y > MANTLE_MAX + 0.4) return false;
       // верхняя кромка найдена: смотрим площадку за ней
       const tx = p.x + ux * (d + 0.55), tz = p.z + uz * (d + 0.55), ty = this.G(tx, tz), up = ty - p.y;
@@ -523,6 +551,18 @@ export class Player {
     if (!inp.grab && this.noGrab && Math.hypot(this.pos.x - this.noGrab.x, this.pos.z - this.noGrab.z) < 1.5) return false;
     const a = ml > 0.3 ? Math.atan2(mx, mz) : this.facing, ux = Math.sin(a), uz = Math.cos(a);
     if (!inp.grab && ml < 0.5) return false;
+    // Невысокий край (до 1.9 м над ногами — руки и так достают до верха) не хватаем, а сразу перелезаем на него: раньше герой на миг
+    // повисал на стене (поза лазания) и тут же вылезал — это мелькало при прыжке с уступа на уступ.
+    const f = this.findFace(ux, uz, 0.3), p = this.pos;
+    if (f && f.top - p.y < 1.9) {
+      const tx = f.bx - f.nx * 0.55, tz = f.bz - f.nz * 0.55, ty = this.G(tx, tz), up = ty - p.y;
+      if (up > -0.2 && up < 2.0 && !rockAt(tx, tz, ty + 1.0)) {
+        this.mantle = { sx: p.x, sy: p.y, sz: p.z, tx, ty, tz, t: 0, dur: 0.2 + Math.max(0, up) * 0.12 };
+        this.mantleCd = 0.4; this.speed = 0;
+        this.mantleStep(0);
+        return true;
+      }
+    }
     return this.grabFace(ux, uz, 0.3);
   }
   faceStep(dt, inp) {
@@ -580,7 +620,13 @@ export class Player {
       f.nx = ax / al; f.nz = az / al;
     }
     const ox = p.x, oz = p.z;
-    p.x = b[0] + f.nx * HUG; p.z = b[1] + f.nz * HUG;
+    {
+      // от стены/к стене — сглаженно: на неровной колонне точка опоры прыгала то ближе, то дальше,
+      // и герой дрожал на стене каждый кадр. Вдоль стены — сразу.
+      const tx = b[0] + f.nx * HUG, tz = b[1] + f.nz * HUG, ddx = tx - ox, ddz = tz - oz, nd = ddx * f.nx + ddz * f.nz;
+      const k = Math.abs(nd) > 0.4 ? 1 : 0.15;
+      p.x = tx - f.nx * nd * (1 - k); p.z = tz - f.nz * nd * (1 - k);
+    }
     this.vOff.x += ox - p.x; this.vOff.z += oz - p.z;
     let topIn = fieldTop(s, b[0] - f.nx * 0.35, b[1] - f.nz * 0.35);
     if (topIn < -1e8) topIn = p.y + 5;
@@ -861,6 +907,7 @@ export class Player {
   }
 
   update(dt, inp, camYaw) {
+    this._clk = (this._clk || 0) + dt;
     const p = this.pos, v = this.vel;
     const px0 = p.x, pz0 = p.z;
     // желаемая скорость относительно камеры

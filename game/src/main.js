@@ -485,6 +485,7 @@ function updateCamera(dt, inp) {
 function setRockSides(both) {
   const v = both ? THREE.DoubleSide : THREE.FrontSide;
   if (rockMat && rockMat.side !== v) rockMat.side = v;
+  if (rockMat && rockMat.userData.back) rockMat.userData.back.visible = !both; // при двусторонней изнанка уже нарисована
 }
 
 function setNear(v) {
