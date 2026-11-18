@@ -171,10 +171,10 @@ async function build() {
   vines = buildVines(scene);   // лианы и корни с краёв глыб в шахте (украшение, без коллизий)
   buildBridges(scene);        // верёвочные мостики между соседними глыбами (по ним можно ходить)
   lanterns = buildLanterns(scene);   // фонари на кронштейнах по бокам глыб (их свет — в deep.lights)
-  spores = buildSpores(scene);  // споры и искры у ближайших кристаллов, грибов и фонарей
+  spores = buildSpores(scene, deepPlan);  // споры у грибов и искры у кристаллов (у каждой частицы своё место)
   extras.push(vines.mesh);
   spores.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
-  extras.push(buildMoths(scene), spores.userData.pts);   // светящиеся мотыльки кружат у огоньков
+  extras.push(buildMoths(scene, deepPlan), spores.userData.pts);   // светящиеся мотыльки — только у больших грибов на дне
   for (const o of extras) o.visible = Q.mode !== 'low';
   await loadStep(97, 'Будим героя…');
 

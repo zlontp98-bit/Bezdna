@@ -38,6 +38,7 @@ export function buildVines(scene) {
     const nC = 1 + Math.floor(rnd() * 3);
     for (let c = 0; c < nC; c++) {
       const a0 = rnd() * Math.PI * 2, nv = 3 + Math.floor(rnd() * 5), root = rnd() < 0.15;
+      if (root) continue;   // корни убраны (не понравились): только лианы
       for (let v = 0; v < nv; v++) {
         const a = a0 + (v - nv / 2) * (0.42 / R) + (rnd() - 0.5) * 0.06, ux = Math.cos(a), uz = Math.sin(a);
         const top = sp.y;
