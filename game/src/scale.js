@@ -65,8 +65,35 @@ export function buildBridges(scene) {
   const rnd = mulberry32(SEED + 6607);
   const all = STONEAPI.all().filter((s) => s.spec.y < -95 && s.spec.y > -168);
   const MAX = LITE ? 7 : 11;
-  const parts = [], used = new Set(), list = [];
-  const WOOD = [0x7a5034, 0x6b4630, 0x86593a], ROPE = 0x9c8662, POST = 0x5a3b26;
+  const used = new Set(), list = [];
+  // Геометрия моста — в свой материал (старое дерево, мох, верёвка): для каждой вершины помним
+  // координаты вдоль волокон доски/столба/верёвки (aW.xy, метры), номер доски (aW.z) и вид (aW.w).
+  const rw = mulberry32(SEED + 6611), BP = [], BN = [], BW = [];
+  const bp = (geo, m, kind, axis) => {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone(), L = g.attributes.position, id = rw();
+    const loc = [];
+    for (let i = 0; i < L.count; i++) {
+      const x = L.getX(i), y = L.getY(i), z = L.getZ(i);
+      loc.push(axis === 'z' ? [z, x * 0.6 + y] : axis === 'y' ? [y, Math.atan2(z, x) * 0.08] : [x, y + z]);
+    }
+    g.applyMatrix4(m); g.computeVertexNormals();
+    const P2 = g.attributes.position, N2 = g.attributes.normal;
+    for (let i = 0; i < P2.count; i++) {
+      BP.push(P2.getX(i), P2.getY(i), P2.getZ(i)); BN.push(N2.getX(i), N2.getY(i), N2.getZ(i));
+      BW.push(loc[i][0], loc[i][1], id, kind);
+    }
+  };
+  // свисающая травинка-плеть с края настила: стебель и листики, вид 3 (качается)
+  const plant = (x, y, z, ox, oz, len) => {
+    const id = rw(), segs = Math.max(2, Math.round(len / 0.14));
+    const tri = (a, b, c, h) => { for (const v of [a, b, c]) { BP.push(v[0], v[1], v[2]); BN.push(ox, 0.3, oz); BW.push(h, 0, id, 3); } };
+    for (let k = 0; k < segs; k++) {
+      const y0 = y - k * 0.14, y1 = y0 - 0.14, h0 = k * 0.14, h1 = h0 + 0.14, w = 0.012;
+      tri([x - oz * w, y0, z + ox * w], [x - oz * w, y1, z + ox * w], [x + oz * w, y0, z - ox * w], h0);
+      const sd = k % 2 ? 1 : -1, sz = 0.05 + rw() * 0.04;
+      tri([x, y0 - 0.03, z], [x - oz * sd * sz * 2 + ox * sz * 0.6, y0 - 0.03 - sz * 0.9, z + ox * sd * sz * 2 + oz * sz * 0.6], [x - oz * sd * sz + ox * sz, y0 + sz * 0.2, z + ox * sd * sz + oz * sz], h1);
+    }
+  };
   const edgeR = (cx, cz, ux, uz, y, r1) => {
     let last = -1;
     for (let r = 0; r <= r1; r += 0.1) { if (rockAt(cx + ux * r, cz + uz * r, y)) last = r; else if (last >= 0) break; }
@@ -109,7 +136,9 @@ export function buildBridges(scene) {
     for (let k = 0; k < n; k++) {
       const t = (k + 0.5) / n, [x, y, z] = at(t);
       const slope = ((at(Math.min(1, t + 0.01))[1] - at(Math.max(0, t - 0.01))[1]) / (0.02 * L));
-      parts.push(part(new THREE.BoxGeometry(0.42, 0.07, 1.1 + (k % 3 === 1 ? 0.12 : 0)), WOOD[k % 3], { m: T(x, y - 0.035, z, 1, 1, 1, ry, Math.atan(slope)) }));
+      bp(new THREE.BoxGeometry(0.42, 0.07, 1.1 + (k % 3 === 1 ? 0.12 : 0)), T(x, y - 0.035, z, 1, 1, 1, ry, Math.atan(slope)), 0, 'z');
+      // плети травы свисают с концов некоторых досок
+      if (rw() < 0.28) { const sd = rw() < 0.5 ? -1 : 1; plant(x - uz * sd * 0.5, y - 0.07, z + ux * sd * 0.5, -uz * sd, ux * sd, 0.3 + rw() * 0.9); }
     }
     // по паре досок — одна плита для ходьбы
     for (let k = 0; k < n; k += 2) {
@@ -119,20 +148,92 @@ export function buildBridges(scene) {
     }
     // столбики и верёвочные перила
     for (const [px, py, pz] of [p0, p1]) for (const o of [-0.62, 0.62]) {
-      parts.push(part(new THREE.CylinderGeometry(0.06, 0.07, 1.1, 5), POST, { m: T(px - uz * o, py + 0.5, pz + ux * o) }));
+      bp(new THREE.CylinderGeometry(0.06, 0.07, 1.1, 5), T(px - uz * o, py + 0.5, pz + ux * o), 1, 'y');
     }
     for (const o of [-0.62, 0.62]) for (let k = 0; k < n; k++) {
       const ta = k / n, tb = (k + 1) / n, a = at(ta), b = at(tb), h = 0.85 - 0.25 * Math.sin(Math.PI * (ta + tb) / 2);
       const mx = (a[0] + b[0]) / 2 - uz * o, my = (a[1] + b[1]) / 2 + h, mz = (a[2] + b[2]) / 2 + ux * o;
       const len = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-      parts.push(part(new THREE.BoxGeometry(len + 0.02, 0.035, 0.035), ROPE, { m: T(mx, my, mz, 1, 1, 1, ry, Math.atan2(b[1] - a[1], Math.hypot(b[0] - a[0], b[2] - a[2]))) }));
-      if (k % 2 === 0) parts.push(part(new THREE.BoxGeometry(0.025, h, 0.025), ROPE, { m: T(a[0] - uz * o, a[1] + h / 2, a[2] + ux * o) }));
+      bp(new THREE.BoxGeometry(len + 0.02, 0.035, 0.035), T(mx, my, mz, 1, 1, 1, ry, Math.atan2(b[1] - a[1], Math.hypot(b[0] - a[0], b[2] - a[2]))), 2, 'x');
+      if (k % 2 === 0) bp(new THREE.BoxGeometry(0.025, h, 0.025), T(a[0] - uz * o, a[1] + h / 2, a[2] + ux * o), 2, 'y');
     }
   }
-  if (!parts.length) return 0;
-  const mesh = new THREE.Mesh(merge(parts), propMaterial());
+  buildBridges.list = list;
+  if (!BP.length) return 0;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(BP, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(BN, 3));
+  geo.setAttribute('aW', new THREE.Float32BufferAttribute(BW, 4));
+  const mesh = new THREE.Mesh(geo, bridgeMaterial());
   mesh.frustumCulled = false; mesh.matrixAutoUpdate = false;
   scene.add(mesh);
-  buildBridges.list = list;
   return made;
+}
+
+// ---------- материал моста: старое мокрое дерево, мох, тёмная верёвка ----------
+// Без текстур: рисунок — из общего шума (uNoise), свет — общий (shade + applyFog: кристаллы, туман, фонарик).
+// aW: x, y — метры вдоль и поперёк волокон; z — случайное число доски; w — вид: 0 доска, 1 столб, 2 верёвка, 3 трава.
+function bridgeMaterial() {
+  return mat({
+    side: THREE.DoubleSide,
+    vertexShader: /* glsl */ `
+      attribute vec4 aW;
+      varying vec3 vW; varying vec3 vN; varying vec4 vA;
+      void main(){
+        vec3 p = position;
+        if (aW.w > 2.5) {   // трава у края: качается, сильнее к концу плети
+          float k = aW.x * aW.x * 0.12;
+          p.x += sin(uTime * 1.1 + aW.z * 20.0) * k; p.z += cos(uTime * 0.9 + aW.z * 17.0) * k;
+        }
+        vW = p; vN = normal; vA = aW;
+        gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: /* glsl */ `
+      varying vec3 vW; varying vec3 vN; varying vec4 vA;
+      void main(){
+        vec3 n = normalize(vN);
+        if (!gl_FrontFacing) n = -n;
+        float kind = vA.w, id = vA.z;
+        vec2 g = vA.xy;
+        vec3 alb;
+        if (kind < 1.5) {
+          // ---- дерево ----
+          // свой оттенок у каждой доски: тёмно-бурый, серо-бурый, чуть зеленоватый
+          vec3 c0 = vec3(0.20, 0.15, 0.11), c1 = vec3(0.23, 0.21, 0.18), c2 = vec3(0.17, 0.18, 0.13);
+          alb = mix(mix(c0, c1, smoothstep(0.2, 0.7, id)), c2, smoothstep(0.65, 0.95, fract(id * 7.3)));
+          alb *= 0.85 + 0.3 * fract(id * 13.7);
+          // волокна: шум, сильно вытянутый вдоль доски
+          float gr = vnoise(vec2(g.y * 26.0 + id * 31.0, g.x * 1.6));
+          float gr2 = vnoise(vec2(g.y * 60.0 - id * 17.0, g.x * 3.5));
+          alb *= 0.8 + 0.25 * gr + 0.12 * gr2;
+          // трещины: редкие тонкие тёмные линии вдоль волокон
+          float cr = smoothstep(0.035, 0.0, abs(vnoise(vec2(g.y * 9.0 + id * 5.0, g.x * 0.7)) - 0.5));
+          alb *= 1.0 - cr * 0.45;
+          // потёртости сверху (там ходят): светлее и серее пятнами
+          float wear = smoothstep(0.55, 0.8, vnoise(vec2(g.x * 2.2 + id * 9.0, g.y * 3.0))) * smoothstep(0.4, 0.9, n.y) * (1.0 - kind);
+          alb = mix(alb, vec3(dot(alb, vec3(0.33))) * 1.25 + vec3(0.02, 0.02, 0.015), wear * 0.5);
+          // сырость: снизу и на концах досок темнее
+          float endK = smoothstep(0.38, 0.6, abs(g.x)) * (1.0 - kind);
+          alb *= 1.0 - 0.35 * smoothstep(0.2, -0.6, n.y) - 0.25 * endK;
+          // мох пятнами: у концов досок и по столбам снизу/сверху; не сплошь
+          float mn = vnoise(vW.xz * 2.3 + vW.y * 1.7 + id * 11.0);
+          float mossK = kind < 0.5 ? smoothstep(0.64, 0.82, mn + endK * 0.3) * smoothstep(-0.2, 0.5, n.y)
+                                   : smoothstep(0.62, 0.8, mn + smoothstep(-0.1, -0.5, g.x) * 0.35);
+          vec3 mc = mix(vec3(0.10, 0.18, 0.08), vec3(0.18, 0.28, 0.12), vnoise(vW.xz * 7.0 + vW.y * 5.0));
+          alb = mix(alb, mc, mossK * 0.85);
+        } else if (kind < 2.5) {
+          // ---- верёвка: тёмная, старая, с витыми прядями ----
+          float tw = sin(g.x * 70.0 + g.y * 140.0);
+          alb = mix(vec3(0.16, 0.14, 0.12), vec3(0.24, 0.21, 0.17), 0.5 + 0.5 * tw);
+          alb *= 0.8 + 0.35 * vnoise(vec2(g.x * 4.0 + id * 20.0, id));
+          alb = mix(alb, vec3(0.13, 0.18, 0.11), smoothstep(0.62, 0.8, vnoise(vec2(g.x * 2.5, id * 9.0))) * 0.6); // зеленоватая сырость
+        } else {
+          // ---- свисающая трава ----
+          alb = mix(vec3(0.10, 0.22, 0.10), vec3(0.20, 0.36, 0.15), fract(id * 5.1)) * (0.8 + 0.4 * fract(id * 9.7));
+        }
+        // свет как у всего мира, но без блика по краю: дерево матовое и не бросается в глаза
+        vec3 c = shade(alb * 1.3, n, 0.65);
+        gl_FragColor = vec4(applyFog(c, vW), 1.0);
+      }`,
+  });
 }
