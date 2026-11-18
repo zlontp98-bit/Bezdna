@@ -25,6 +25,7 @@ import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { buildVines } from './vines.js';
 import { buildWallFalls, buildLanterns, buildBridges } from './scale.js';
+import { buildSpores, buildMoths } from './life.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
 
@@ -50,7 +51,8 @@ const store = {
   del(k) { pending.delete(k); try { localStorage.removeItem(k); } catch (_) { /* нечего стирать */ } },
 };
 
-let vines, lanterns, deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
+const extras = []; // украшения, которые в режиме «Низкое» выключаем (лианы, частицы, мотыльки)
+let vines, lanterns, spores, deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
@@ -65,6 +67,7 @@ const Q = {
 function applyRes() {
   renderer.setPixelRatio(Q.maxPR * Q.scale);
   renderer.setSize(innerWidth, innerHeight, false);
+  if (spores) spores.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
   if (motes) motes.uniforms.uPx.value = falls.uniforms.uPx.value = player.halo.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
 }
 function setQuality(mode) {
@@ -74,6 +77,9 @@ function setQuality(mode) {
   Q.scale = 1; Q.ceil = 1; Q.dceil = 1; Q.good = 0;
   Q.density = mode === 'low' ? 0.45 : 1;
   if (grass) grass.setDensity(Q.density);
+  // «Низкое»: без лиан, спор, мотыльков и подсветки от кристаллов — самый лёгкий кадр
+  for (const o of extras) o.visible = mode !== 'low';
+  if (mode === 'low') { U.uGlowB.value.set(0, -1e4, 0, 0); for (const c of U.uGlowC.value) c.setRGB(0, 0, 0); }
   applyRes();
   document.querySelectorAll('[data-q]').forEach((b) => b.classList.toggle('on', b.dataset.q === mode));
 }
@@ -166,6 +172,11 @@ async function build() {
   buildWallFalls(scene);      // тонкие водопады по стенам шахты — для масштаба
   buildBridges(scene);        // верёвочные мостики между соседними глыбами (по ним можно ходить)
   lanterns = buildLanterns(scene);   // фонари на кронштейнах по бокам глыб (их свет — в deep.lights)
+  spores = buildSpores(scene);  // споры и искры у ближайших кристаллов, грибов и фонарей
+  extras.push(vines.mesh);
+  spores.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
+  extras.push(buildMoths(scene), spores.userData.pts);   // светящиеся мотыльки кружат у огоньков
+  for (const o of extras) o.visible = Q.mode !== 'low';
   await loadStep(97, 'Будим героя…');
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
@@ -565,7 +576,7 @@ function frame(now) {
   setCss('fade', 'opacity', fade.toFixed(2));
 
   updateCamera(dt, inp);
-  if (deep) { const c = camera.position; deep.lights(c.x, c.y, c.z, U.uGlowP.value, U.uGlowC.value, GLOW_N, now / 1000); }
+  if (deep && Q.mode !== 'low') { const c = camera.position; deep.lights(c.x, c.y, c.z, U.uGlowP.value, U.uGlowC.value, GLOW_N, now / 1000, U.uGlowB.value); }
   if (creative.on) { creative.camera(yaw, pitch); hands.hide(); }
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы

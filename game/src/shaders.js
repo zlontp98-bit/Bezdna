@@ -36,6 +36,7 @@ export const U = {
   // это одна формула в общем шейдере, так что на телефоне это дёшево.
   uGlowP: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -1e4, 0, 1)) },
   uGlowC: { value: Array.from({ length: 8 }, () => new THREE.Color(0, 0, 0)) },
+  uGlowB: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // сфера, в которой все огоньки (центр, радиус)
 };
 export const GLOW_N = LITE ? 4 : 8;
 const LAKE_Y = -175.0; // уровень озера (terrain.js LAKE.level), для лежащего тумана
@@ -145,7 +146,7 @@ uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
 uniform vec4 uLure;
 #define GLOW_N ${GLOW_N}
-uniform vec4 uGlowP[8]; uniform vec3 uGlowC[8];
+uniform vec4 uGlowP[8]; uniform vec3 uGlowC[8]; uniform vec4 uGlowB;
 uniform sampler2D uShadow, uShadowH, uNoise, uDetail, uLeaf, uBark, uWater, uWet;
 
 // общая цветокоррекция стиля
@@ -214,6 +215,9 @@ vec3 applyFog(vec3 c, vec3 w){
   vec3 lit = c + (c*1.8 + 0.045) * vec3(1.0, 0.82, 0.55) * ll;
   // голубой свет кристаллов и грибов: пятна света на камне, траве и воде рядом с ними
   vec3 gl = vec3(0.0);
+  // общая сфера всех огоньков: вне её (дальний план) цикл не считаем
+  vec3 gb = w - uGlowB.xyz;
+  if (dot(gb, gb) < uGlowB.w * uGlowB.w)
   for (int i = 0; i < GLOW_N; i++) {
     vec3 dv = w - uGlowP[i].xyz;
     float k = max(0.0, 1.0 - dot(dv, dv) / (uGlowP[i].w * uGlowP[i].w));
@@ -253,8 +257,9 @@ vec3 applyFog(vec3 c, vec3 w){
   {
     float y0 = ${LAKE_Y.toFixed(1)}, H = 3.2;
     float lk = 1.0 - smoothstep(60.0, 90.0, length(w.xz));
-    if (lk > 0.0 && cameraPosition.y < y0 + 60.0) {
-      float ya = cameraPosition.y - y0, yb = w.y - y0, dy = yb - ya;
+    float ya = cameraPosition.y - y0, yb = w.y - y0;
+    if (lk > 0.0 && min(ya, yb) < 14.0) {          // луч целиком выше 14 м над водой — тумана на нём нет
+      float dy = yb - ya;
       float ea = exp(-max(ya, -2.0)/H), eb = exp(-max(yb, -2.0)/H);
       float I = abs(dy) > 0.05 ? (ea - eb) * H / dy : 0.5*(ea + eb);
       float m = 1.0 - exp(-0.07 * I * min(d, 90.0));
