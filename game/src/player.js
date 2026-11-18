@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { heightAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
+import { heightAt, terrainAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
 import { groundAt, hitSolid, ceiling, solidNormal, solidSloped, lastSolid, rockAt, rockFace, rockNormal, fieldTop } from './solids.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
@@ -268,6 +268,8 @@ export class Player {
   G(x, z) { return groundAt(x, z, this.pos.y); }
   N(x, z, out, e) {
     normalAt(x, z, out, e);
+    // в туннеле под скалой пол почти ровный (нормаль сетки рельефа тут — от стены шахты над ним)
+    if (terrainAt(x, z, this.pos.y + 0.3) < heightAt(x, z) - 0.2) out.set(0, 1, 0);
     groundAt(x, z, this.pos.y);
     // на наклонной плите нормаль её собственная (по ней скользим), на остальных объектах — вверх
     if (hitSolid && !solidNormal(x, z, out)) out.set(0, 1, 0);
@@ -591,8 +593,8 @@ export class Player {
       let [d, r] = best;
       { let lo = d - 0.05, hi = d; for (let k = 0; k < 4; k++) { const m = (lo + hi) / 2; if (rockAt(qx + ux * m, qz + uz * m, y + best[2])) hi = m; else lo = m; } d = hi; }
       const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05), hx = bx + f.nx * 0.42, hz = bz + f.nz * 0.42;
-      if (stay) return rockAt(hx, hz, y + 0.8) || heightAt(hx, hz) > y + 0.8 ? null : [bx, bz, r];   // но не грудью в камне
-      if (heightAt(hx, hz) > y + 0.35) return null;                              // там порода стены шахты
+      if (stay) return rockAt(hx, hz, y + 0.8) || terrainAt(hx, hz, y + 0.8) > y + 0.8 ? null : [bx, bz, r];   // но не грудью в камне
+      if (terrainAt(hx, hz, y + 0.35) > y + 0.35) return null;                              // там порода стены шахты
       if (rockAt(hx, hz, y + 0.3) || rockAt(hx, hz, y + 1.25)) return null;        // там чужая скала (голова или ноги)
       return [bx, bz, r];
     };

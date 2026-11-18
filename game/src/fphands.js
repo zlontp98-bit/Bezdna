@@ -1,6 +1,6 @@
 import * as THREE from '../vendor/three.min.js';
 import { rockAt } from './solids.js';
-import { heightAt } from './terrain.js';
+import { heightAt, terrainAt } from './terrain.js';
 
 // Руки героя от первого лица: кисти-варежки цвета героя — ладонь, четыре пальца, большой палец, предплечье.
 // Рисуются отдельным проходом после всего мира (своя сцена, буфер глубины очищен), поэтому всегда поверх:
@@ -101,7 +101,7 @@ export function buildHands() {
     let d = 0.45;
     for (let q = 0; q < 1.2; q += 0.04) {
       const qx = bx - nx * q, qz = bz - nz * q;
-      if (rockAt(qx, qz, by + 0.05) || heightAt(qx, qz) > by + 0.05) { d = q; break; }
+      if (rockAt(qx, qz, by + 0.05) || terrainAt(qx, qz, by + 0.05) > by + 0.05) { d = q; break; }
     }
     const lift = 0.04 * Math.max(reach, feel); // тянущаяся рука чуть отходит от камня
     _v.set(bx - nx * (d - 0.035 - lift), by, bz - nz * (d - 0.035 - lift));

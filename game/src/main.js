@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.min.js';
 import { U, setStyle, loadTerrainTextures, LITE, GLOW_N } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
-import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
+import { W, SOURCES, buildTerrain, bakeShadows, heightAt, terrainAt, rockMat } from './terrain.js';
 import { buildFlora, buildGrass, updateFloraDist, propMaterial } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
@@ -23,7 +23,7 @@ import { Chests } from './chest.js';
 import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
-import { buildPits, clearPits } from './pits.js';
+import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
 import { buildVines } from './vines.js';
 import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
@@ -148,8 +148,7 @@ async function build() {
   const ruins = buildRuins(scene);
   // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
   buildDescent(scene);
-  clearPits();                 // ямы-спуски у озера: убрать глыбы карты, стоящие прямо в яме,
-  buildPits(scene);            // и поставить стены, уступы и подпорки из глыб (по ним можно лазать)
+  buildTunnels(scene);         // два больших туннеля из шахты у дна: арка в стене, ход полого вниз, глыбы по стенам
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
   planWater();
@@ -216,7 +215,7 @@ async function build() {
   chest = new Chests(scene, STACKS, flora.trees, player, inv, world, toast);
   mine = new Miner(scene, flora.boulders, flora.rockGeo, player, inv, world, toast);
   deep = new Deep(scene, deepPlan, player, inv, world, toast);
-  deep.extraLights = lanterns;
+  deep.extraLights = [...lanterns, ...TUN_LIGHTS];   // + фонари в туннелях
   jelly = new Jellies(scene, player, inv, world, toast);
   renderCraft();
   setQuality(Q.mode);
@@ -525,7 +524,7 @@ function menuFrame(dt, t) {
   const a = player.facing + 0.45 + Math.sin(t * 0.25) * 0.3;
   const dist = wide ? 3.4 : 4.6;
   camPos.set(p.x + Math.sin(a) * dist, p.y + 1.25, p.z + Math.cos(a) * dist);
-  camPos.y = Math.max(camPos.y, heightAt(camPos.x, camPos.z) + 0.5);
+  camPos.y = Math.max(camPos.y, terrainAt(camPos.x, camPos.z, camPos.y) + 0.5);
   camera.position.lerp(camPos, Math.min(1, dt * 4));
   // на широком экране герой справа от кнопок, на вертикальном — над ними
   const rx = Math.cos(a), rz = -Math.sin(a);

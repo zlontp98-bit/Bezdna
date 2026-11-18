@@ -25,34 +25,49 @@ export const W = {
 };
 // Озеро на дне шахты: сюда стекают водопады с кольца. Глубина берега — со всех сторон камни.
 export const LAKE = { x: 0, z: 0, r: 33, level: -(W.LOW + W.DEEP) - 2.0 };
-// Две ямы-спуска на дне шахты у озера: отверстие ≈15 м длиной, уходит на ≈30 м вниз (дальше мир будем расширять).
-// Здесь — только вырез в рельефе; стены, уступы и спуск из глыб строит pits.js. Ямы смотрят в разные стороны.
-// (th, rc — где на дне: угол и расстояние от центра; dir — куда уходит спуск, угол в градусах)
-export const PITS = [
-  { th: 5.40, rc: 48, dir: 15 },
-  { th: 3.15, rc: 42, dir: 255 },
-].map((p) => {
-  const a = p.dir * Math.PI / 180, dx = Math.cos(a), dz = Math.sin(a);
-  return { ...p, x: Math.cos(p.th) * p.rc, z: Math.sin(p.th) * p.rc, dx, dz, nx: -dz, nz: dx, L: 15, hw: 4.6, rim: -(W.LOW + W.DEEP), depth: 30 };
+// Два больших туннеля из шахты у самого дна: вход-арка в стене, дальше ход идёт вперёд (от шахты) и полого
+// уходит вниз. Рельеф — карта высот без потолков, поэтому туннель — «пустота под скалой»: внутри него земля —
+// пол туннеля (terrainAt), а стены, свод и пол рисует tunnels.js. Туннели смотрят в разные стороны.
+// th — угол на стене шахты, L — длина хода, hw — полуширина, H — высота свода, drop — насколько уходит вниз
+export const TUNNELS = [
+  { th: 5.36, L: 36, hw: 6.5, H: 10, drop: 9 },
+  { th: 2.96, L: 36, hw: 6.5, H: 10, drop: 9 },
+].map((T) => {
+  const c = Math.cos(T.th), s = Math.sin(T.th);
+  return { ...T, dx: c, dz: s, nx: -s, nz: c, t0: 0, ready: false };   // ready: начало (x, z) и пол F0 — после сетки высот
 });
-// местные координаты ямы: t — вдоль спуска (−L/2 у входа … +L/2 в глубине), w — поперёк
-export const pitLocal = (P, x, z) => [(x - P.x) * P.dx + (z - P.z) * P.dz, (x - P.x) * P.nx + (z - P.z) * P.nz];
-// расстояние до края ямы (скруглённый прямоугольник), < 0 — внутри
-export function pitDist(P, x, z) {
-  const [t, w] = pitLocal(P, x, z), R = 3.2;
-  const qx = Math.abs(t) - (P.L / 2 - R), qz = Math.abs(w) - (P.hw - R);
-  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - R;
+// местные координаты: t — вдоль хода (0 — у подножия стены, растёт вглубь скалы), w — поперёк
+export const tunLocal = (T, x, z) => [(x - T.x) * T.dx + (z - T.z) * T.dz, (x - T.x) * T.nx + (z - T.z) * T.nz];
+// пол хода: у входа вровень с дном шахты, дальше полого вниз; лёгкие неровности
+// у входа пол хода плавно подхватывает пол шахты перед стеной (в этой же точке поперёк): ни порога, ни щели
+const tunFront = (T, w) => Math.min(heightAt(T.x - T.dx * 1.5 + T.nx * w, T.z - T.dz * 1.5 + T.nz * w), heightAt(T.x - T.dx * 3 + T.nx * w, T.z - T.dz * 3 + T.nz * w));
+const tunBase = (T, t, w) => T.F0 - T.drop * smoothstep(3, T.L - 2, t) + fbm(t * 0.21 + T.th * 7, w * 0.21, 2) * 0.25 + Math.abs(w) / T.hw * 0.35;
+export const tunFloor = (T, t, w) => {
+  const b = tunBase(T, t, w);
+  if (t >= 4) return b;
+  return b + (tunFront(T, w) - tunBase(T, 0, w)) * (1 - smoothstep(0, 4, Math.max(0, t)));
+};
+// свод: почти отвесные стены, плоский верх
+export const tunRoof = (T, t, w) => tunFloor(T, t, w) + T.H * Math.sqrt(Math.max(0, 1 - Math.pow(Math.abs(w) / T.hw, 4)));
+// перед входом в туннель (подход от озера): тут большие грибы не растут, чтобы не закрывать арку
+export function nearTunnelMouth(x, z, r = 0) {
+  for (const T of TUNNELS) {
+    if (!T.ready) continue;
+    const [t, w] = tunLocal(T, x, z);
+    if (t > -10 - r && t < 1 + r && Math.abs(w) < T.hw + 2 + r) return true;
+  }
+  return false;
 }
-// дно ямы: ровное, на depth ниже края (спуск — витком уступов-глыб по стенам, pits.js)
-export const pitFloor = (P, t) => P.rim - P.depth;
-function carvePits(h, x, z) {
-  for (const P of PITS) {
-    if (Math.abs(x - P.x) > 14 || Math.abs(z - P.z) > 14) continue;
-    const d = pitDist(P, x, z);
-    if (d > 1.2) continue;
-    const t = pitLocal(P, x, z)[0];
-    const f = pitFloor(P, t);                                        // дно ровное: у стен не горка, а сразу стена из глыб
-    h = Math.min(h, h + (f - h) * smoothstep(1.2, -1.0, d));          // стенка почти отвесная (её закрывают глыбы)
+const TUN_PAD = 1.0;   // физика упирается в стену чуть раньше, чем видна скала (стены неровные)
+// Земля под ногами на высоте y: внутри туннеля (в толще скалы, ниже свода) — его пол, иначе — обычный рельеф
+export function terrainAt(x, z, y) {
+  const h = heightAt(x, z);
+  for (const T of TUNNELS) {
+    if (!T.ready) continue;
+    const [t, w] = tunLocal(T, x, z);
+    if (t < T.t0 || t > T.L - TUN_PAD || Math.abs(w) > T.hw - TUN_PAD) continue;
+    const f = tunFloor(T, t, w);
+    if (h > f + 0.3 && y < tunRoof(T, t, w) - 0.2) return f;
   }
   return h;
 }
@@ -366,7 +381,7 @@ function rawHeight(x, z) {
   // чаша озера на дне: пологий спуск от берега к середине (≈9 м глубины)
   if (r < LAKE.r + 14) h -= 9.5 * smoothstep(LAKE.r + 6, LAKE.r - 14, r) * (1 + fbm(x * 0.08 + 4, z * 0.08 - 2, 2) * 0.2);
   for (const p of POOLS) if (!p.src) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
-  return applySources(carvePits(h, x, z), x, z, r, th);
+  return applySources(h, x, z, r, th);
 }
 
 // ---- полярная сетка: густая на стенах, редкая в горах ----
@@ -374,8 +389,7 @@ const COLS = 256;
 const radii = [];
 {
   let r = 1;
-  while (r < 34) { radii.push(r); r += 3; }
-  while (r < W.PIT - 7) { radii.push(r); r += 1.0; }   // дно у озера — чаще: в нём вырезаны ямы-спуски
+  while (r < W.PIT - 7) { radii.push(r); r += 3; }
   while (r < W.R + 8) { radii.push(r); r += 1.0; }
   while (r < W.MEADOW) { radii.push(r); r += 3; }
   while (r < W.MEADOW + 40) { radii.push(r); r += 2.5; }
@@ -486,6 +500,8 @@ export function poolDist(p, x, z) {
   const r = Math.hypot(x, z);
   return basinDist(p.s, r - W.SRC_R, angDiff(Math.atan2(z, x), p.s.tw) * r) / SRC.POOL;
 }
+// высота самой сетки рельефа (как её рисуем; под глыбами она чуть ниже heightAt) — для стыка стены у входа в туннель
+export const meshHeightAt = (x, z) => sampleGrid(MG, x, z);
 function sampleGrid(G, x, z) {
   const r = Math.sqrt(x * x + z * z);
   let th = Math.atan2(z, x);
@@ -1162,6 +1178,39 @@ const terrainMat = () => mat({
     }`,
 });
 
+// Туннели: начало хода, уровень пола у входа и полоса стены шахты (клетки сетки), которую заменит стена с аркой
+function setupTunnels() {
+  for (const T of TUNNELS) {
+    const rw = pitR(T.dx * W.PIT, T.dz * W.PIT);
+    T.x = T.dx * (rw - 2); T.z = T.dz * (rw - 2);
+    // стена шахты неровная: начало хода (t = 0) ставим к самому выступающему месту её подножия по ширине арки
+    const F = heightAt(T.x - T.dx * 3, T.z - T.dz * 3);
+    let tmin = 3;
+    for (let w = -T.hw; w <= T.hw + 1e-6; w += 0.5) {
+      for (let t = -8; t < tmin; t += 0.1) {
+        if (heightAt(T.x + T.dx * t + T.nx * w, T.z + T.dz * t + T.nz * w) > F + 0.8) { tmin = t; break; }
+      }
+    }
+    T.x += T.dx * (tmin - 0.3); T.z += T.dz * (tmin - 0.3);
+    T.F0 = heightAt(T.x - T.dx * 1.5, T.z - T.dz * 1.5);   // уровень пола шахты прямо перед входом: порога нет
+    T.ready = true;
+    // полоса: по углу — ширина арки с запасом, по радиусу — вся стена (от пола перед ней до уступа над ней)
+    const half = (T.hw + 5) / rw, c0 = Math.floor(((T.th - half) / TAU) * COLS), c1 = Math.ceil(((T.th + half) / TAU) * COLS);
+    let lo = 1e9, hi = -1e9;
+    for (let c = c0; c <= c1; c++) { const a = (c / COLS) * TAU, pr = pitR(Math.cos(a) * W.PIT, Math.sin(a) * W.PIT); lo = Math.min(lo, pr); hi = Math.max(hi, pr); }
+    let iA = 0; while (iA < ROWS - 1 && radii[iA + 1] <= lo - 4) iA++;
+    let iB = iA; while (iB < ROWS - 1 && radii[iB] < hi + 3) iB++;
+    T.band = { c0: ((c0 % COLS) + COLS) % COLS, n: c1 - c0, iA, iB, rA: radii[iA], rB: radii[iB], cols: COLS };
+  }
+}
+function inTunnelBand(ri, c) {
+  for (const T of TUNNELS) {
+    const b = T.band;
+    if (b && ri >= b.iA && ri < b.iB && ((c - b.c0 + COLS) % COLS) < b.n) return true;
+  }
+  return false;
+}
+
 export function buildTerrain(scene) {
   // место чаш: идём вдоль ручья от края внутрь до подножия стены
   for (const th of W.STREAMS) {
@@ -1201,6 +1250,7 @@ export function buildTerrain(scene) {
   }
 
   buildPatches();
+  setupTunnels();
 
   const material = rockMat = terrainMat();
   // Обратная сторона скал — отдельным проходом после всех лицевых. Там, где поверхность скалы делает
@@ -1234,6 +1284,7 @@ export function buildTerrain(scene) {
     for (let ri = 0; ri < ROWS - 1; ri++) {
       for (let ci = 0; ci < per; ci++) {
         const a = ri * (per + 1) + ci, b = a + 1, c = a + per + 1, d = c + 1;
+        if (inTunnelBand(ri, s * per + ci)) continue;   // стену у входа в туннель рисует tunnels.js (с аркой)
         idx.push(a, b, c, b, d, c);
       }
     }
