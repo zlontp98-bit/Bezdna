@@ -201,6 +201,8 @@ function blobShadow() {
   return mesh;
 }
 
+// на скале: центр тела в стольких метрах от камня (тело ~0.36 в глубину) — герой прижат к камню, а не висит в воздухе
+const HUG = 0.36;
 export const SWING = 0.42; // длительность взмаха топором
 const WALK = 5.2, RUN = 8.6, GRAV = 27, JUMP = 9.4;
 // Пешком — до ~42°. Съезжать начинаем только круче ~46°, а останавливаемся положе ~40°:
@@ -273,6 +275,13 @@ export class Player {
   addCollider(c) {
     const k = ((c.x / 8) | 0) + ',' + ((c.z / 8) | 0);
     (this.cells.get(k) || this.cells.set(k, []).get(k)).push(c);
+    c.cell = k;
+  }
+  // препятствие переехало (ящик на новом островке) — переложить в нужную клетку
+  moveCollider(c) {
+    const l = c.cell && this.cells.get(c.cell);
+    if (l) { const i = l.indexOf(c); if (i >= 0) l.splice(i, 1); }
+    this.addCollider(c);
   }
 
   tryMove(dx, dz) {
@@ -332,10 +341,18 @@ export class Player {
       const l = Math.hypot(h1.sx, h1.sz);
       if (l < 0.01) return;
       const ux = h1.sx / l, uz = h1.sz / l, mx = nx - p.x, mz = nz - p.z, into = mx * ux + mz * uz;
-      if (into >= 0) return;
-      const tx = p.x + mx - ux * into, tz = p.z + mz - uz * into;
-      if (this.ringHits(tx, tz).n > h0.n || !ok(tx, tz)) return;
-      nx = tx; nz = tz;
+      // Шаг вдоль стены — без части «в стену». На свободном месте (круг тела пуст) у угла или выступа
+      // касательного шага мало: раньше тут был return, и герой намертво вставал у камня на ровном месте
+      // («невидимый блок»). Тогда пробуем касательный шаг с небольшим отступом от камня.
+      const tx = p.x + mx - ux * Math.min(0, into), tz = p.z + mz - uz * Math.min(0, into);
+      let found = false;
+      for (const away of h0.n || into < -0.5 * step ? [0] : [0, 0.03, 0.07]) {
+        const qx = tx + ux * away, qz = tz + uz * away;
+        if (this.ringHits(qx, qz).n > h0.n || !ok(qx, qz)) continue;
+        nx = qx; nz = qz; found = true; break;
+      }
+      // идём вдоль/от камня и задели лишь одну точку — шагаем, pushOutOfWalls мягко отодвинет
+      if (!found && (into < 0 || h0.n > 0 || h1.n > 1)) return;
     }
     p.x = nx; p.z = nz;
     if (this.grounded) {
@@ -463,7 +480,7 @@ export class Player {
     // и голова или всё тело — в соседней скале (узкая щель): иначе герой «вставал» внутрь камня, а камера в голову
     if (rockAt(hx, hz, this.pos.y + 1.3) || this.G(hx, hz) - this.pos.y > 0.6) return false;
     const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
-    this.pos.x = f.bx + f.nx * 0.42; this.pos.z = f.bz + f.nz * 0.42;
+    this.pos.x = f.bx + f.nx * HUG; this.pos.z = f.bz + f.nz * HUG;
     this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
     this.face = { s: f.s, nx: f.nx, nz: f.nz };
     this.climbing = true; this.grounded = false; this.climbT0 = (this.climbT0 || 0) + 1; this.vel.set(0, 0, 0);
@@ -485,7 +502,7 @@ export class Player {
     const bx = p.x + ux * (d - 0.05), bz = p.z + uz * (d - 0.05), n = this._n3 || (this._n3 = { x: 0, z: 0 });
     if (!rockNormal(bx, bz, yq, n)) { n.x = ux; n.z = uz; }
     const ox = p.x, oy = p.y, oz = p.z;
-    p.x = bx + n.x * 0.42; p.z = bz + n.z * 0.42; p.y -= 1.5;
+    p.x = bx + n.x * HUG; p.z = bz + n.z * HUG; p.y -= 1.5;
     this.vOff.x += ox - p.x; this.vOff.y += oy - p.y; this.vOff.z += oz - p.z;
     this.face = { s, nx: n.x, nz: n.z };
     this.climbing = true; this.grounded = false; this.climbT0 = (this.climbT0 || 0) + 1; this.vel.set(0, 0, 0);
@@ -563,7 +580,7 @@ export class Player {
       f.nx = ax / al; f.nz = az / al;
     }
     const ox = p.x, oz = p.z;
-    p.x = b[0] + f.nx * 0.42; p.z = b[1] + f.nz * 0.42;
+    p.x = b[0] + f.nx * HUG; p.z = b[1] + f.nz * HUG;
     this.vOff.x += ox - p.x; this.vOff.z += oz - p.z;
     let topIn = fieldTop(s, b[0] - f.nx * 0.35, b[1] - f.nz * 0.35);
     if (topIn < -1e8) topIn = p.y + 5;
@@ -676,6 +693,29 @@ export class Player {
       // крутой берег или бок глыбы — упёрлись; щупаем и на толщину тела вперёд, чтобы не вплыть в камень
       const sl = Math.hypot(nx - p.x, nz - p.z) || 1, ux = (nx - p.x) / sl, uz = (nz - p.z) / sl;
       if (this.G(nx, nz) - p.y > 0.9 || this.G(nx + ux * SWIM_R, nz + uz * SWIM_R) - p.y > 0.9) { v.x *= 0.3; v.z *= 0.3; break; }
+      // Как и пешком: шаг, после которого камень глубже зашёл в круг тела, не делаем — иначе подплыли
+      // вплотную, выталкивание отбросило назад, снова подплыли… (герой и камера тряслись у скалы).
+      // Вместо него — шаг вдоль камня, если он свободен.
+      const h0 = this.swimRing(p.x, p.z, p.y), h1 = this.swimRing(nx, nz, p.y);
+      const l1 = Math.hypot(h1.sx, h1.sz), wx = h1.sx / (l1 || 1), wz = h1.sz / (l1 || 1), mx2 = nx - p.x, mz2 = nz - p.z;
+      if (h1.n > h0.n && l1 > 0.01 && mx2 * wx + mz2 * wz < 0) {
+        const into = mx2 * wx + mz2 * wz, ml2 = Math.hypot(mx2, mz2);
+        let tx = p.x + mx2 - wx * into, tz = p.z + mz2 - wz * into, ok = false;
+        // в выемке камня касательного шага мало — пробуем чуть отступив от камня
+        for (const away of h0.n || into < -0.5 * ml2 ? [0] : [0, 0.03, 0.07]) {
+          const qx = tx + wx * away, qz = tz + wz * away;
+          if (this.swimRing(qx, qz, p.y).n > h0.n || this.G(qx, qz) - p.y > 0.9) continue;
+          tx = qx; tz = qz; ok = true; break;
+        }
+        if (!ok && !h0.n && h1.n === 1 && into > -0.5 * ml2) { tx = nx; tz = nz; ok = true; } // задели лишь выступ
+        if (!ok) {
+          const vn = v.x * wx + v.z * wz; if (vn < 0) { v.x -= wx * vn; v.z -= wz * vn; }
+          break;
+        }
+        p.x = tx; p.z = tz;
+        const vn = v.x * wx + v.z * wz; if (vn < 0) { v.x -= wx * vn; v.z -= wz * vn; }
+        continue;
+      }
       p.x = nx; p.z = nz;
     }
     // Тело пловца — круг радиусом с героя: если бок глыбы зашёл в него (подплыли боком, течение),
@@ -688,7 +728,7 @@ export class Player {
       }
       const l = Math.hypot(sx, sz);
       if (l < 0.01) break;
-      p.x += (sx / l) * 0.06; p.z += (sz / l) * 0.06;
+      p.x += (sx / l) * 0.03; p.z += (sz / l) * 0.03;
       const vn = v.x * (sx / l) + v.z * (sz / l);
       if (vn < 0) { v.x -= (sx / l) * vn; v.z -= (sz / l) * vn; }
     }
@@ -702,6 +742,15 @@ export class Player {
       this.swimming = false; this.grounded = false; this.airT = 1;
       v.y = 6.2;
     }
+  }
+
+  swimRing(x, z, y) {
+    let n = 0, sx = 0, sz = 0;
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
+      if (this.G(x + cx * SWIM_R, z + cz * SWIM_R) - y > 0.9) { n++; sx -= cx; sz -= cz; }
+    }
+    return { n, sx, sz };
   }
 
   // сколько точек круга тела (12 по кругу на BODY) упираются в стену и куда от неё отходить

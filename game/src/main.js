@@ -145,7 +145,7 @@ async function build() {
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   // глубина: кристаллы, грибы и руда на глыбах ниже −75 м (по глыбам загруженной карты)
-  deepPlan = planDeep();
+  deepPlan = planDeep(flora.boulders);
   flora.boulders.push(...deepRocks(scene, deepPlan, flora.rockGeo, propMaterial()));   // серые камни глубины — обычные валуны под кирку
   await loadStep(60, 'Разбиваем лагерь…');
   const camp = buildCamp(scene, flora.spawn);
@@ -429,23 +429,26 @@ function updateCamera(dt, inp) {
   if ((camLiftT -= dt) <= 0) {
     camLiftT = 0.12;
     const base = camHit(fx, fy, fz, camDist);
+    // Поднимаем только в настоящей тесноте — когда штанга иначе сжимается почти в голову. У обычной стены
+    // за спиной (стоим на камне у скалы и водим камерой) камера просто подъезжает ближе, как в других играх:
+    // раньше она взлетала на макушку и смотрела на голову сверху. Берём наименьший подъём, которого хватает.
     let best = 0, bestD = base;
-    if (base < camDist * 0.6) {
-      for (const e of [0.35, 0.7, 1.05]) {
-        const pe = Math.min(1.4, pitch + e), c2 = Math.cos(pe);
+    if (base < 1.1) {
+      for (const e of [0.3, 0.6]) {
+        const pe = Math.min(1.15, pitch + e), c2 = Math.cos(pe);
         const d = camHit(-Math.sin(yaw) * c2, -Math.sin(pe), -Math.cos(yaw) * c2, camDist);
-        if (d > bestD + 0.6) { best = e; bestD = d; }
+        if (d > bestD + 0.6) { best = e; bestD = d; if (d > 2.4) break; }
       }
       // держим прежний подъём, если он всё ещё не хуже выбранного (без метаний туда-сюда)
       if (camLiftGoal > 0 && best !== camLiftGoal) {
-        const pe = Math.min(1.4, pitch + camLiftGoal), c2 = Math.cos(pe);
+        const pe = Math.min(1.15, pitch + camLiftGoal), c2 = Math.cos(pe);
         if (camHit(-Math.sin(yaw) * c2, -Math.sin(pe), -Math.cos(yaw) * c2, camDist) > bestD - 0.6) best = camLiftGoal;
       }
-    }
+    } else if (camLiftGoal > 0 && base < 1.6) best = camLiftGoal; // гистерезис
     camLiftGoal = best;
   }
   camLift += (camLiftGoal - camLift) * (1 - Math.exp(-dt * (camLiftGoal > camLift ? 5 : 2)));
-  const pb = Math.min(1.4, pitch + camLift), cb = Math.cos(pb);
+  const pb = camLift > 0.001 ? Math.max(pitch, Math.min(1.15, pitch + camLift)) : pitch, cb = Math.cos(pb);
   const bx = -Math.sin(yaw) * cb, by = -Math.sin(pb), bz = -Math.cos(yaw) * cb;
   const hit = camHit(bx, by, bz, camDist);
   if (hit < camCur - 1) camLiftT = 0; // штангу вдруг перекрыло — сразу пересчитать подъём

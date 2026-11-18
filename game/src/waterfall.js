@@ -325,6 +325,14 @@ function shaftRows(f, cx, cz, px, pz) {
     const k = smoothstep(0, 4, p[3]);
     rows.push({ kind: 'run', c: [p[0], p[1] + 0.1, p[2]], half: hw0 * (1 - 0.3 * k), hb: 99, foam: 0.9 * smoothstep(16, 2, p[3]) });
   }
+  // Вода не течёт в гору: если завеса упала в яму на дне, ручей раньше «вылезал» из неё отвесной
+  // ступенькой (а сама яма выглядела дырой). Теперь вода заполняет яму до края, через который
+  // переливается дальше: уровень рядов по пути к озеру только опускается.
+  const r0 = rows.length - pts.length;
+  for (let i = rows.length - 2; i >= r0; i--) rows[i].c[1] = Math.max(rows[i].c[1], rows[i + 1].c[1]);
+  // завеса, упавшая в такую заводь, уходит под её гладь
+  const pondY = pts.length ? rows[r0].c[1] : -1e9;
+  for (let i = 0; i < r0; i++) if (rows[i].c[1] < pondY - 0.4) { rows.splice(i, r0 - i); break; }
   // в озеро: последний ряд под гладью
   const e = rows[rows.length - 1];
   rows.push({ ...e, kind: 'run', c: [e.c[0], LAKE.level - 0.3, e.c[2]], foam: e.foam });
