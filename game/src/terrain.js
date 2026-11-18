@@ -1021,6 +1021,26 @@ const terrainMat = () => mat({
       // глубже — холоднее и темнее; высоко и вдали — серее (воздух и камень, а не охра)
       rock = mix(rock, vec3(lumOf(rock)) * vec3(0.78,0.86,1.02), deepK*0.85);
       rock = mix(rock, mix(vec3(lumOf(rock)), rock, 0.7) * vec3(0.94,0.96,1.0), mtnK*smoothstep(60.0, 220.0, camD)*0.6);
+      // Мох: на верхах и пологих плечах глыб (где трава уже не держится) и рваными языками,
+      // стекающими с краёв вниз по стенке. Только в шахте — наверху скалы остаются как были.
+      {
+        float mk = smoothstep(-60.0, -100.0, vW.y);
+        if (mk > 0.0) {
+          float mn = vnoise(vW.xz*0.55 + vW.y*0.3);
+          #ifndef LITE
+          mn = mn * 0.6 + vnoise(vW.xz*2.1 - vW.y*0.9) * 0.4;
+          #endif
+          float top = smoothstep(0.15, 0.6, ng.y + (mn - 0.5)*0.5);                  // плечи и верх
+          // потёки по стене и пятна на боках — один шум, вытянутый по вертикали
+          float sn = vnoise(vec2(dot(vW.xz, vec2(0.7, -0.7))*1.1, vW.y*0.1));
+          float drip = smoothstep(0.5, 0.72, sn) * 0.8;
+          float mpatch = 0.0;
+          float moss = clamp(max(max(top, drip), mpatch) * smoothstep(0.3, 0.55, mn), 0.0, 1.0) * mk;
+          vec3 mc = mix(vec3(0.16, 0.33, 0.17), vec3(0.30, 0.50, 0.22), mn);
+          mc = mix(mc, mc * vec3(0.75, 1.0, 1.05), deepK);                          // в глубине — чуть бирюзовый
+          rock = mix(rock, mc * (0.75 + 0.5*lumOf(rock)), moss * 0.85);
+        }
+      }
       // небольшой рельеф по яркости картинки: плиты чуть выпуклые и ловят свет
       #ifndef LITE
       float hh = lumOf(rock);
