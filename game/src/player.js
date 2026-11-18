@@ -324,6 +324,19 @@ export class Player {
         if (flat(nx, p.z)) nz = p.z; else if (flat(p.x, nz)) nx = p.x; else { this.vel.x *= 0.5; this.vel.z *= 0.5; return; }
       }
     }
+    // Тот же круг тела, что и в pushOutOfWalls: шаг, после которого стена зашла в круг глубже, не делаем
+    // (иначе шаг вползал в камень сбоку, а выталкивание отбрасывало назад — герой и камера тряслись у стены).
+    // Вместо него — шаг вдоль стены, если он свободен.
+    const h0 = this.ringHits(p.x, p.z), h1 = this.ringHits(nx, nz);
+    if (h1.n > h0.n) {
+      const l = Math.hypot(h1.sx, h1.sz);
+      if (l < 0.01) return;
+      const ux = h1.sx / l, uz = h1.sz / l, mx = nx - p.x, mz = nz - p.z, into = mx * ux + mz * uz;
+      if (into >= 0) return;
+      const tx = p.x + mx - ux * into, tz = p.z + mz - uz * into;
+      if (this.ringHits(tx, tz).n > h0.n || !ok(tx, tz)) return;
+      nx = tx; nz = tz;
+    }
     p.x = nx; p.z = nz;
     if (this.grounded) {
       const h = this.G(nx, nz);
@@ -374,7 +387,27 @@ export class Player {
 
   // Упёрся в крутую стену и давит на неё: хватаемся сами (на уступах не нужно жать «Хват»
   // заново после каждой полки). Нужно ~0.3 с упора, чтобы случайное касание не цепляло.
+  // Лезем, а с места не сдвигаемся (угол, низ навеса, гладкий бок) — отпускаем стену, и здесь
+  // сама по себе (без кнопки «Хват») больше не хватаемся, пока не отойдём: иначе герой хватался
+  // и срывался снова и снова, а камера тряслась
+  climbStall(dt, inp) {
+    const p = this.pos;
+    if (!this.climbing || Math.hypot(inp.mx, inp.my) < 0.3) { this.cRef = null; return; }
+    // уже залезли куда-то (и, например, упёрлись в навес) — висим, не срываемся: можно лезть вбок или вниз
+    if (this.cS && Math.hypot(p.x - this.cS.x, p.y - this.cS.y, p.z - this.cS.z) > 0.5) { this.cRef = null; return; }
+    const r = this.cRef;
+    if (!r || Math.hypot(p.x - r.x, p.y - r.y, p.z - r.z) > 0.25) { this.cRef = { x: p.x, y: p.y, z: p.z, t: 0 }; return; }
+    if ((r.t += dt) < 0.7) return;
+    this.cRef = null;
+    this.climbing = false; this.face = null; this.climbCd = 0.6; this.airT = 1; this.vel.set(0, 0, 0);
+    this.noGrab = { x: p.x, z: p.z };
+  }
+
   autoGrab(ml, dt) {
+    if (this.noGrab) {
+      const d = Math.hypot(this.pos.x - this.noGrab.x, this.pos.z - this.noGrab.z);
+      if (d > 2) this.noGrab = null; else if (d < 1.5) { this.pushT = 0; return false; }
+    }
     if (!this.grounded || this.sliding || ml < 0.6 || this.climbCd > 0 || this.speed > 1.2) { this.pushT = 0; return false; }
     if ((this.pushT += dt) < 0.3) return false;
     this.pushT = 0;
@@ -409,7 +442,7 @@ export class Player {
     const ox = this.pos.x, oy = this.pos.y, oz = this.pos.z;
     this.pos.set(w.x, this.G(w.x, w.z), w.z);
     this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
-    this.climbing = true; this.grounded = false;
+    this.climbing = true; this.grounded = false; this.climbT0 = (this.climbT0 || 0) + 1;
     this.vel.set(0, 0, 0);
     return true;
   }
@@ -431,7 +464,7 @@ export class Player {
     this.pos.x = f.bx + f.nx * 0.42; this.pos.z = f.bz + f.nz * 0.42;
     this.vOff.x += ox - this.pos.x; this.vOff.y += oy - this.pos.y; this.vOff.z += oz - this.pos.z;
     this.face = { s: f.s, nx: f.nx, nz: f.nz };
-    this.climbing = true; this.grounded = false; this.vel.set(0, 0, 0);
+    this.climbing = true; this.grounded = false; this.climbT0 = (this.climbT0 || 0) + 1; this.vel.set(0, 0, 0);
     return true;
   }
   // Повиснуть на кромке, на которой стоишь, чтобы спуститься по отвесной стене вниз (кнопка «Хват» у обрыва)
@@ -453,7 +486,7 @@ export class Player {
     p.x = bx + n.x * 0.42; p.z = bz + n.z * 0.42; p.y -= 1.5;
     this.vOff.x += ox - p.x; this.vOff.y += oy - p.y; this.vOff.z += oz - p.z;
     this.face = { s, nx: n.x, nz: n.z };
-    this.climbing = true; this.grounded = false; this.vel.set(0, 0, 0);
+    this.climbing = true; this.grounded = false; this.climbT0 = (this.climbT0 || 0) + 1; this.vel.set(0, 0, 0);
     return true;
   }
   // Стоим на кромке скалы с обрывом впереди — можно повиснуть и слезть по грани (для подсветки кнопки «Хват»)
@@ -468,6 +501,7 @@ export class Player {
   // В прыжке: тянемся к грани, к которой летим, — «долететь до уступа и успеть зацепиться»
   airGrab(inp, mx, mz, ml) {
     if (this.airT < 0.12 || this.mantle) return false;
+    if (!inp.grab && this.noGrab && Math.hypot(this.pos.x - this.noGrab.x, this.pos.z - this.noGrab.z) < 1.5) return false;
     const a = ml > 0.3 ? Math.atan2(mx, mz) : this.facing, ux = Math.sin(a), uz = Math.cos(a);
     if (!inp.grab && ml < 0.5) return false;
     return this.grabFace(ux, uz, 0.3);
@@ -489,12 +523,14 @@ export class Player {
         for (let d = -0.6; d <= 1.5; d += 0.05) {
           const r = rockAt(qx + ux * d, qz + uz * d, y + yh);
           if (!r) continue;
-          if (!best || d < best[0]) best = [d, r];
+          if (!best || d < best[0]) best = [d, r, yh];
           break;
         }
       }
       if (!best) return null;
-      const [d, r] = best;
+      // уточняем, где начинается камень (шаг поиска 5 см давал «пилу»: герой на стене дрожал туда-сюда)
+      let [d, r] = best;
+      { let lo = d - 0.05, hi = d; for (let k = 0; k < 4; k++) { const m = (lo + hi) / 2; if (rockAt(qx + ux * m, qz + uz * m, y + best[2])) hi = m; else lo = m; } d = hi; }
       const bx = qx + ux * (d - 0.05), bz = qz + uz * (d - 0.05), hx = bx + f.nx * 0.42, hz = bz + f.nz * 0.42;
       if (stay) return rockAt(hx, hz, y + 0.8) || heightAt(hx, hz) > y + 0.8 ? null : [bx, bz, r];   // но не грудью в камне
       if (heightAt(hx, hz) > y + 0.35) return null;                              // там порода стены шахты
@@ -506,7 +542,18 @@ export class Player {
       b = seat(p.x - uz * ml * kl, p.z + ux * ml * kl, p.y + dy * kv, kl === 0 && kv === 0);
       if (b) { ny = p.y + dy * kv; break; }
     }
-    if (!b) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; return; }
+    if (!b) {
+      // Упёрлись головой в навес (или грудью в его край), а стена перед нами на месте — просто висим,
+      // а не срываемся вниз. Срываемся, только если держаться и правда не за что.
+      let hold = false;
+      for (const yh of [0.35, 0.8]) for (let d = 0; d <= 0.9 && !hold; d += 0.1) if (rockAt(p.x + ux * d, p.z + uz * d, p.y + yh)) hold = true;
+      if (!hold) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; return; }
+      v.set(0, 0, 0);
+      this.climbAmt = 0; this.climbMx = 0; this.climbMy = 0;
+      if (inp.jump) { this.face = null; this.climbing = false; this.climbCd = 0.35; this.airT = 1; v.set(f.nx * 4.5, 7.5, f.nz * 4.5); }
+      else if (inp.grab) { this.face = null; this.climbing = false; this.climbCd = 0.3; this.airT = 1; v.set(f.nx * 1.5, 0, f.nz * 1.5); }
+      return;
+    }
     const s = f.s = b[2], yq = ny + 0.6;
     const nn = this._n4 || (this._n4 = { x: 0, z: 0 });
     if (rockNormal(b[0], b[1], yq, nn)) {
@@ -574,7 +621,13 @@ export class Player {
       this.slideGrace = 1.0; this.sliding = false;
       return;
     }
-    const ux = -n.x / hl, uz = -n.z / hl; // вверх по склону (в плане)
+    // вверх по склону (в плане). Сглаживаем: в углу между двумя гранями нормаль прыгает с кадра на кадр,
+    // и герой дёргался туда-сюда на месте, не поднимаясь
+    let ux = -n.x / hl, uz = -n.z / hl;
+    const cu = this.cUp || (this.cUp = { x: ux, z: uz });
+    if (this.cUpT !== this.climbT0) { cu.x = ux; cu.z = uz; this.cUpT = this.climbT0; }
+    cu.x += (ux - cu.x) * Math.min(1, dt * 10); cu.z += (uz - cu.z) * Math.min(1, dt * 10);
+    { const l = Math.hypot(cu.x, cu.z); if (l > 0.2) { ux = cu.x / l; uz = cu.z / l; } else { ux = cu.x / 0.2; uz = cu.z / 0.2; } }
     // Скорость вдоль самой поверхности постоянная. Наклон меряем прямо под рукой, в сторону движения:
     // усреднённая нормаль на полке посреди отвесной стены «видит» стену, и герой полз по полке
     // секундами, будто застрял
@@ -647,6 +700,17 @@ export class Player {
       this.swimming = false; this.grounded = false; this.airT = 1;
       v.y = 6.2;
     }
+  }
+
+  // сколько точек круга тела (12 по кругу на BODY) упираются в стену и куда от неё отходить
+  ringHits(x, z) {
+    const y = this.pos.y, r = this._ring || (this._ring = { n: 0, sx: 0, sz: 0 });
+    r.n = 0; r.sx = 0; r.sz = 0;
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, cx = Math.cos(a), cz = Math.sin(a);
+      if (this.G(x + cx * BODY, z + cz * BODY) - y > WALL_H) { r.n++; r.sx -= cx; r.sz -= cz; }
+    }
+    return { n: r.n, sx: r.sx, sz: r.sz };
   }
 
   // Тело героя — круг радиусом BODY. Шаг щупает стену только впереди, поэтому боком (идя вдоль глыбы,
@@ -768,8 +832,9 @@ export class Player {
       const a = ml > 0.3 ? Math.atan2(mx, mz) : this.facing;
       if (this.grabFace(Math.sin(a), Math.cos(a), 0.3)) { this.swimming = false; inp = { ...inp, grab: false }; } // это нажатие — «схватиться», а не «отпустить»
     }
+    const wasClimb = this.climbing;
     if (this.swimming) this.swimStep(dt, inp, mx, mz, wl);
-    else if (this.climbing) this.climbStep(dt, inp);
+    else if (this.climbing) { this.climbStep(dt, inp); this.climbStall(dt, inp); }
     else if (this.mantle) this.mantleStep(dt);
     else if (!inp.grab && this.tryMantle(mx, mz, ml)) { this.mantleStep(0); }
     else if (inp.grab && this.grounded && this.climbCd <= 0 && this.grabEdge(Math.sin(this.facing), Math.cos(this.facing))) { /* повисли на кромке */ }
@@ -857,6 +922,13 @@ export class Player {
     }
     }
 
+    // схватились и почти сразу сорвались, не сдвинувшись (под навесом, на гладком боку) — тоже не хватаемся тут сами
+    if (!wasClimb && this.climbing) this.cS = { x: p.x, y: p.y, z: p.z, t: 0 };
+    else if (this.climbing && this.cS) this.cS.t += dt;
+    else if (wasClimb && !this.climbing && this.cS && !this.mantle && !inp.grab && !inp.jump) {
+      if (this.cS.t < 0.6 && Math.hypot(p.x - this.cS.x, p.y - this.cS.y, p.z - this.cS.z) < 0.4) this.noGrab = { x: p.x, z: p.z };
+      this.cS = null;
+    }
     this.canGrab = !this.climbing && this.climbCd <= 0 && (!!this.findWall() || !!this.findFace(Math.sin(this.facing), Math.cos(this.facing)) || this.edgeAhead());
     this.N(p.x, p.z, this.n, 0.35);
 
