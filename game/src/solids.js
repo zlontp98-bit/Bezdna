@@ -1,4 +1,4 @@
-import { heightAt } from './terrain.js';
+import { terrainAt } from './terrain.js';
 
 // Твёрдые объекты поверх ландшафта: столбы, плиты, арки.
 // На них можно стоять и запрыгивать, под арками — проходить.
@@ -148,7 +148,7 @@ export function addBox(x, z, hx, hz, rot, top, bottom = -1e9) {
 
 // Высота опоры под точкой для героя, чьи ноги на высоте y
 export function groundAt(x, z, y, forCamera = false) {
-  let h = heightAt(x, z);
+  let h = terrainAt(x, z, y);   // в туннеле под скалой — его пол
   hitSolid = false; ceiling = 1e9; lastSolid = null;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return h;
@@ -258,7 +258,7 @@ export function solidsNear(x, z, rad) {
 // soft (мелочь) не считается; pad — запас над землёй, м.
 // soft = true — считать и мелкие камни (для камеры: иначе валун у камеры закрывал героя)
 export function solidAt(x, y, z, pad = 0, soft = false) {
-  if (y < heightAt(x, z) + pad) return true;
+  if (y < terrainAt(x, z, y) + pad) return true;
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
   if (!list) return false;
   for (const s of list) {

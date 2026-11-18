@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mat, LITE } from './shaders.js';
 import { STONEAPI } from './descent.js';
-import { PIT_GONE } from './pits.js';
+import { TUN_GONE } from './tunnels.js';
 import { rockAt, groundAt, addBox } from './solids.js';
 import { waterNear } from './waterfall.js';
 import { part, merge, T, propMaterial } from './flora.js';
@@ -14,7 +14,8 @@ import { mulberry32, SEED } from './noise.js';
 // Возвращает список огоньков для общего света (Deep.lights): тёплые пятна на камне вокруг фонаря.
 export function buildLanterns(scene) {
   const rnd = mulberry32(SEED + 5501);
-  const stones = STONEAPI.all().filter((s) => s.spec.y < -85);
+  // убранные туннелями глыбы остаются в списке (порядок как раньше), но фонарь на них не вешаем
+  const stones = [...STONEAPI.all(), ...TUN_GONE].sort((a, b) => a.id - b.id).filter((s) => s.spec.y < -85);
   for (let i = stones.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [stones[i], stones[j]] = [stones[j], stones[i]]; }
   const MAX = LITE ? 22 : 36;
   const parts = [], lights = [];
@@ -26,6 +27,7 @@ export function buildLanterns(scene) {
   };
   for (const st of stones) {
     if (lights.length >= MAX) break;
+    if (TUN_GONE.includes(st)) continue;
     const sp = st.spec, R = Math.max(sp.A, sp.B);
     for (let k = 0; k < 6; k++) {
       const a = rnd() * Math.PI * 2, ux = Math.cos(a), uz = Math.sin(a), y = sp.y - 0.55 - rnd() * 1.2;
@@ -64,8 +66,8 @@ export function buildLanterns(scene) {
 // каждая пара досок — плоская плита с низом (под мостом проходишь свободно, «невидимой стены до земли» нет).
 export function buildBridges(scene) {
   const rnd = mulberry32(SEED + 6607);
-  // убранные ямами глыбы остаются в списке (порядок и случайный выбор пар — как раньше), но мост к ним не строим
-  const all = [...STONEAPI.all(), ...PIT_GONE].sort((a, b) => a.id - b.id).filter((s) => s.spec.y < -95 && s.spec.y > -168);
+  // убранные туннелями глыбы остаются в списке (порядок и случайный выбор пар — как раньше), но мост к ним не строим
+  const all = [...STONEAPI.all(), ...TUN_GONE].sort((a, b) => a.id - b.id).filter((s) => s.spec.y < -95 && s.spec.y > -168);
   const MAX = LITE ? 7 : 11;
   const used = new Set(), list = [];
   // Геометрия моста — в свой материал (старое дерево, мох, верёвка): для каждой вершины помним
@@ -112,7 +114,7 @@ export function buildBridges(scene) {
   for (const [i, j] of pairs) {
     if (made >= MAX) break;
     if (used.has(i) || used.has(j)) continue;
-    if (PIT_GONE.includes(all[i]) || PIT_GONE.includes(all[j])) continue;
+    if (TUN_GONE.includes(all[i]) || TUN_GONE.includes(all[j])) continue;
     const A = all[i].spec, B = all[j].spec;
     const d = Math.hypot(B.x - A.x, B.z - A.z), ux = (B.x - A.x) / d, uz = (B.z - A.z) / d;
     const ra = edgeR(A.x, A.z, ux, uz, A.y - 0.15, Math.max(A.A, A.B) * 1.6), rb = edgeR(B.x, B.z, -ux, -uz, B.y - 0.15, Math.max(B.A, B.B) * 1.6);

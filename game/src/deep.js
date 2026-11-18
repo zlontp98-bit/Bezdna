@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
 import { mat } from './shaders.js';
-import { LAKE, heightAt, waterAt } from './terrain.js';
+import { LAKE, heightAt, waterAt, nearTunnelMouth } from './terrain.js';
 import { STONEAPI } from './descent.js';
 import { fieldTop as solidTop, groundAt, ceiling, addMeshTop } from './solids.js';
 import { STREAMS } from './waterfall.js';
@@ -321,7 +321,7 @@ export function planDeep(boulders = []) {
   for (let tries = 0; tries < 3000 && out.big.length < bigN; tries++) {
     const a = rnd() * TAU, d = LAKE.r + 1 + rnd() * 24, x = Math.cos(a) * d, z = Math.sin(a) * d;
     const s = 0.8 + rnd() * 0.6, r = 2.0 * s;
-    if (!freeAt(x, z, r + 1.2)) continue;
+    if (!freeAt(x, z, r + 1.2) || nearTunnelMouth(x, z, r)) continue;
     const g = groundAt(x, z, LAKE.level + 30);
     if (g > LAKE.level + 14 || g < LAKE.level + 0.5 || ceiling < g + 4.4 * s) continue;
     // ровно под шляпкой и ножкой, сухо
