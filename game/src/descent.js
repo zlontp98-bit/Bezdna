@@ -678,6 +678,40 @@ function buildStone(spec) {
   const pos = new Float32Array(o.pos);
   return { l, pos, nrm: smoothNormals(pos) };
 }
+// Глыбы не из раскладки (ямы-спуски, pits.js): тот же вид и та же опора, что у глыб поля, но в редакторе их нет
+// hidden(x, y, z) — точка внутри соседней глыбы или под землёй: такие треугольники не рисуем (их всё равно не видно,
+// а на телефоне каждый лишний слой скалы — это перерисовка дорогим шейдером)
+// group(spec) — номер куска: каждый кусок — свой меш, three.js рисует их от ближнего к дальнему (меньше перерисовки)
+export function bakeStones(specs, hidden = null, group = () => 0) {
+  const parts = specs.map(buildStone);
+  const buckets = new Map();
+  parts.forEach((b, i) => {
+    const g = group(specs[i]), P = b.pos, N = b.nrm;
+    const bk = buckets.get(g) || buckets.set(g, { p: [], n: [] }).get(g);
+    for (let t = 0; t < P.length / 9; t++) {
+      const k = t * 9;
+      if (hidden) {
+        const ax = P[k + 3] - P[k], ay = P[k + 4] - P[k + 1], az = P[k + 5] - P[k + 2], bx = P[k + 6] - P[k], by = P[k + 7] - P[k + 1], bz = P[k + 8] - P[k + 2];
+        let fx = ay * bz - az * by, fy = az * bx - ax * bz, fz = ax * by - ay * bx; const fl = Math.hypot(fx, fy, fz) || 1;
+        fx /= fl; fy /= fl; fz /= fl;
+        let all = true;
+        for (let v = 0; v < 3 && all; v++) if (!hidden(P[k + v * 3] + fx * 0.2, P[k + v * 3 + 1] + fy * 0.2, P[k + v * 3 + 2] + fz * 0.2)) all = false;
+        if (all) continue;
+      }
+      for (let q = 0; q < 9; q++) { bk.p.push(P[k + q]); bk.n.push(N[k + q]); }
+    }
+  });
+  let tris = 0; for (const bk of buckets.values()) tris += bk.p.length / 9;
+  return { tris, solids: parts.map((b) => b.l.solid), meshes: (scene) => [...buckets.values()].filter((bk) => bk.p.length).map((bk) => {
+    const geo = new THREE.BufferGeometry(), n = bk.p.length;
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(bk.p, 3));
+    geo.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(n / 3 * 2), 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(bk.n, 3));
+    const m = chunkMesh(geo, rockMat, inRock);
+    scene.add(m);
+    return m;
+  }) };
+}
 const binKey = (sp) => Math.floor(sp.x / 24) + ',' + Math.floor(sp.z / 24) + ',' + Math.floor(sp.y / 50);
 function addStone(spec, id) {
   const b = buildStone(spec), s = { id: id ?? ++stoneSeq, spec, l: b.l, pos: b.pos, nrm: b.nrm, solid: b.l.solid, bin: binKey(spec) };

@@ -25,6 +25,37 @@ export const W = {
 };
 // Озеро на дне шахты: сюда стекают водопады с кольца. Глубина берега — со всех сторон камни.
 export const LAKE = { x: 0, z: 0, r: 33, level: -(W.LOW + W.DEEP) - 2.0 };
+// Две ямы-спуска на дне шахты у озера: отверстие ≈15 м длиной, уходит на ≈30 м вниз (дальше мир будем расширять).
+// Здесь — только вырез в рельефе; стены, уступы и спуск из глыб строит pits.js. Ямы смотрят в разные стороны.
+// (th, rc — где на дне: угол и расстояние от центра; dir — куда уходит спуск, угол в градусах)
+export const PITS = [
+  { th: 5.40, rc: 48, dir: 15 },
+  { th: 3.15, rc: 42, dir: 255 },
+].map((p) => {
+  const a = p.dir * Math.PI / 180, dx = Math.cos(a), dz = Math.sin(a);
+  return { ...p, x: Math.cos(p.th) * p.rc, z: Math.sin(p.th) * p.rc, dx, dz, nx: -dz, nz: dx, L: 15, hw: 4.6, rim: -(W.LOW + W.DEEP), depth: 30 };
+});
+// местные координаты ямы: t — вдоль спуска (−L/2 у входа … +L/2 в глубине), w — поперёк
+export const pitLocal = (P, x, z) => [(x - P.x) * P.dx + (z - P.z) * P.dz, (x - P.x) * P.nx + (z - P.z) * P.nz];
+// расстояние до края ямы (скруглённый прямоугольник), < 0 — внутри
+export function pitDist(P, x, z) {
+  const [t, w] = pitLocal(P, x, z), R = 3.2;
+  const qx = Math.abs(t) - (P.L / 2 - R), qz = Math.abs(w) - (P.hw - R);
+  return Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0) - R;
+}
+// дно ямы: ровное, на depth ниже края (спуск — витком уступов-глыб по стенам, pits.js)
+export const pitFloor = (P, t) => P.rim - P.depth;
+function carvePits(h, x, z) {
+  for (const P of PITS) {
+    if (Math.abs(x - P.x) > 14 || Math.abs(z - P.z) > 14) continue;
+    const d = pitDist(P, x, z);
+    if (d > 1.2) continue;
+    const t = pitLocal(P, x, z)[0];
+    const f = pitFloor(P, t);                                        // дно ровное: у стен не горка, а сразу стена из глыб
+    h = Math.min(h, h + (f - h) * smoothstep(1.2, -1.0, d));          // стенка почти отвесная (её закрывают глыбы)
+  }
+  return h;
+}
 W.CRAG.x = Math.cos(W.CRAG.th) * W.CRAG.r; W.CRAG.z = Math.sin(W.CRAG.th) * W.CRAG.r;
 
 const angDiff = (a, b) => {
@@ -335,7 +366,7 @@ function rawHeight(x, z) {
   // чаша озера на дне: пологий спуск от берега к середине (≈9 м глубины)
   if (r < LAKE.r + 14) h -= 9.5 * smoothstep(LAKE.r + 6, LAKE.r - 14, r) * (1 + fbm(x * 0.08 + 4, z * 0.08 - 2, 2) * 0.2);
   for (const p of POOLS) if (!p.src) h -= 1.5 * smoothstep(5.2, 2.0, Math.hypot(x - p.x, z - p.z)); // чаша под водопадом
-  return applySources(h, x, z, r, th);
+  return applySources(carvePits(h, x, z), x, z, r, th);
 }
 
 // ---- полярная сетка: густая на стенах, редкая в горах ----
@@ -343,7 +374,8 @@ const COLS = 256;
 const radii = [];
 {
   let r = 1;
-  while (r < W.PIT - 7) { radii.push(r); r += 3; }
+  while (r < 34) { radii.push(r); r += 3; }
+  while (r < W.PIT - 7) { radii.push(r); r += 1.0; }   // дно у озера — чаще: в нём вырезаны ямы-спуски
   while (r < W.R + 8) { radii.push(r); r += 1.0; }
   while (r < W.MEADOW) { radii.push(r); r += 3; }
   while (r < W.MEADOW + 40) { radii.push(r); r += 2.5; }
