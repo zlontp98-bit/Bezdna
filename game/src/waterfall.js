@@ -510,7 +510,8 @@ export function buildWater(scene) {
         // на глади — отражение неба и солнечные блики
         vec3 vd = normalize(cameraPosition - vW);
         float calm = (1.0 - fall) * (1.0 - fo);
-        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, pow(1.0 - max(vd.y, 0.0), 3.0) * calm * 0.4);
+        vec3 skyR = mix(mix(uFogCol, uZenith, 0.35) * 1.1, vec3(0.05, 0.16, 0.21), smoothstep(-40.0, -120.0, vW.y)); // в шахте неба нет
+        c = mix(c, skyR, pow(1.0 - max(vd.y, 0.0), 3.0) * calm * 0.4);
         vec3 nw = normalize(vec3((s2 - 0.5) * 0.35, 1.0, (s3 - 0.5) * 0.35));
         c += uSunCol * pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh * 1.4;
         // на языке завесы — узкий блик неба: вода гладкая и блестит
@@ -757,7 +758,9 @@ function buildPools(scene) {
         vec3 vd = normalize(cameraPosition - vW);
         float calm = 1.0 - foam;
         float fres = pow(1.0 - max(vd.y, 0.0), 3.0) * calm;
-        c = mix(c, mix(uFogCol, uZenith, 0.35) * 1.1, fres * 0.4);
+        // в глубине шахты неба нет: вода отражает тёмный бирюзовый свод, а не светлое небо
+        vec3 skyR = mix(mix(uFogCol, uZenith, 0.35) * 1.1, vec3(0.05, 0.16, 0.21), smoothstep(-40.0, -120.0, vW.y));
+        c = mix(c, skyR, fres * 0.4);
         float sh = shadowAt(vW.xz);
         c = shade(c, vec3(0.0, 1.0, 0.0), 0.6 + 0.4 * sh);
         // рябь: круги от струи качают блик
@@ -765,6 +768,13 @@ function buildPools(scene) {
         vec3 nw = normalize(vec3((n1 - 0.5) * 0.35 + dirv.x * wv * 0.12, 1.0, (n2 - 0.5) * 0.35 + dirv.y * wv * 0.12));
         float spec = pow(max(dot(reflect(-vd, nw), uSun), 0.0), 48.0) * calm * sh;
         c += uSunCol * spec * 1.4;
+        // отражения кристаллов и грибов: дрожащие голубые блики на воде
+        vec3 rr = reflect(-vd, nw);
+        for (int i = 0; i < GLOW_N; i++) {
+          vec3 L = uGlowP[i].xyz - vW; float ld = length(L);
+          float g = pow(max(dot(rr, L / ld), 0.0), 40.0) * smoothstep(uGlowP[i].w * 6.0, uGlowP[i].w, ld);
+          c += uGlowC[i] * g * 2.2 * calm;
+        }
         float a = mix(0.9, 1.0, max(dk, foam)) * vP.w;
         gl_FragColor = vec4(applyFog(c, vW), a);
       }`,

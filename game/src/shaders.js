@@ -31,7 +31,14 @@ export const U = {
   uRockWall: { value: null }, uRockPlain: { value: null }, uGround: { value: null }, uRockMtn: { value: null }, uGrass: { value: null }, uPath: { value: null },
   uLeaf: { value: null }, uBark: { value: null }, uWater: { value: null },
   uLure: { value: new THREE.Vector4(0, -1e4, 0, 0) }, // фонарик героя: где он и насколько ярко светит
+  // Свет от ближайших к камере кристаллов и грибов (main.js каждые ~0.2 с выбирает самые близкие):
+  // xyz — где, w — радиус света; цвет уже умножен на яркость. Настоящих источников света в сцене нет —
+  // это одна формула в общем шейдере, так что на телефоне это дёшево.
+  uGlowP: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -1e4, 0, 1)) },
+  uGlowC: { value: Array.from({ length: 8 }, () => new THREE.Color(0, 0, 0)) },
 };
+export const GLOW_N = LITE ? 4 : 8;
+const LAKE_Y = -175.0; // уровень озера (terrain.js LAKE.level), для лежащего тумана
 
 // Шум для шейдеров: заранее посчитанная гладкая шумовая текстура с мип-уровнями.
 // Одна выборка вместо четырёх хешей на вызов, и вдали шум сам сглаживается — без ряби.
@@ -137,6 +144,8 @@ uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
 uniform vec3 uZenith;
 uniform vec4 uLure;
+#define GLOW_N ${GLOW_N}
+uniform vec4 uGlowP[8]; uniform vec3 uGlowC[8];
 uniform sampler2D uShadow, uShadowH, uNoise, uDetail, uLeaf, uBark, uWater, uWet;
 
 // общая цветокоррекция стиля
@@ -203,6 +212,14 @@ vec3 applyFog(vec3 c, vec3 w){
   float ll = uLure.w / (1.0 + ld*ld*0.09) * smoothstep(9.0, 2.5, ld) * mix(0.35, 1.0, smoothstep(0.5, 1.8, ld));
   ll *= 0.94 + 0.06*sin(uTime*7.3 + sin(uTime*2.1)*2.0);
   vec3 lit = c + (c*1.8 + 0.045) * vec3(1.0, 0.82, 0.55) * ll;
+  // голубой свет кристаллов и грибов: пятна света на камне, траве и воде рядом с ними
+  vec3 gl = vec3(0.0);
+  for (int i = 0; i < GLOW_N; i++) {
+    vec3 dv = w - uGlowP[i].xyz;
+    float k = max(0.0, 1.0 - dot(dv, dv) / (uGlowP[i].w * uGlowP[i].w));
+    gl += uGlowC[i] * (k * k);
+  }
+  lit += (c*2.2 + 0.035) * gl;
   // потолок только для добавленного света: то, что было светлым и без фонарика, не темнеет
   vec3 over = max(lit - max(c, vec3(0.72)), 0.0);
   c = lit - over + over / (1.0 + over*2.5);
@@ -210,7 +227,7 @@ vec3 applyFog(vec3 c, vec3 w){
   float den = uFogDen * (1.0 - 0.6*smoothstep(10.0, 70.0, w.y));
   // дно шахты (озеро): туман мягче, цвет — голубой, и немного собственного света
   float lakeK = smoothstep(-70.0, -125.0, w.y) * (1.0 - smoothstep(52.0, 95.0, length(w.xz)));
-  c = c * (1.0 + lakeK*0.7) + vec3(0.02, 0.06, 0.08) * lakeK;
+  c = c * (1.0 + lakeK*0.4) + vec3(0.015, 0.05, 0.07) * lakeK; // светлее, но не плоско: пятна света кристаллов должны читаться
   float f = 1.0 - exp(-d * (den + deep*0.012*(1.0 - lakeK*0.75)));
   // большой мир за кольцом гор грузится чанками до ~420 м — край прячем в дымке
   f = max(f, smoothstep(280.0, 405.0, d) * step(340.0, length(w.xz)));
@@ -224,12 +241,29 @@ vec3 applyFog(vec3 c, vec3 w){
   // В шахте скала в тени почти чёрная: поднимаем только тёмное (до холодного «пола» яркости),
   // светлое и средние тона не трогаем — без пересвета, плавно, как рассеянный свет тумана
   float lum = dot(c, vec3(0.33));
-  vec3 lifted = vec3(0.17, 0.24, 0.31) + c * 0.8;
+  vec3 lifted = vec3(0.12, 0.18, 0.25) + c * 0.8; // пол яркости ниже, чем был: контраст света кристаллов и тени
   c = mix(c, max(c, lifted), inK * (1.0 - smoothstep(0.08, 0.32, lum)) * (1.0 - lakeK * 0.5));
   vec3 fc = mix(uFogCol, uAbyssA, deep);
   fc = mix(fc, uAbyssB, smoothstep(-60.0, -100.0, w.y));
   fc = mix(fc, vec3(0.05, 0.16, 0.21), lakeK * 0.8);
-  return grade(mix(c, fc, clamp(f, 0.0, 1.0)));
+  c = mix(c, fc, clamp(f, 0.0, 1.0));
+  // Лежащий туман над озером и в низинах дна: плотный у воды, тает к ~6 м над ней.
+  // Плотность по высоте — экспонента, её интеграл вдоль луча считается точно (без шагов),
+  // так что это одна формула, а не объёмный рендер.
+  {
+    float y0 = ${LAKE_Y.toFixed(1)}, H = 3.2;
+    float lk = 1.0 - smoothstep(60.0, 90.0, length(w.xz));
+    if (lk > 0.0 && cameraPosition.y < y0 + 60.0) {
+      float ya = cameraPosition.y - y0, yb = w.y - y0, dy = yb - ya;
+      float ea = exp(-max(ya, -2.0)/H), eb = exp(-max(yb, -2.0)/H);
+      float I = abs(dy) > 0.05 ? (ea - eb) * H / dy : 0.5*(ea + eb);
+      float m = 1.0 - exp(-0.07 * I * min(d, 90.0));
+      // свет кристаллов подсвечивает туман рядом с ними
+      vec3 mc = vec3(0.16, 0.30, 0.36) + gl * 0.5;
+      c = mix(c, mc, clamp(m * lk, 0.0, 0.75));
+    }
+  }
+  return grade(c);
 }
 // Цвет травы: наверху сочная зелень, глубже — бирюза, ещё глубже — сиреневый мох
 vec3 grassCol(vec3 w){

@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
-import { U, setStyle, loadTerrainTextures, LITE } from './shaders.js';
+import { U, setStyle, loadTerrainTextures, LITE, GLOW_N } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
 import { W, SOURCES, buildTerrain, bakeShadows, heightAt, rockMat } from './terrain.js';
@@ -558,6 +558,7 @@ function frame(now) {
   setCss('fade', 'opacity', fade.toFixed(2));
 
   updateCamera(dt, inp);
+  if (deep) { const c = camera.position; deep.lights(c.x, c.y, c.z, U.uGlowP.value, U.uGlowC.value, GLOW_N, now / 1000); }
   if (creative.on) { creative.camera(yaw, pitch); hands.hide(); }
   if (debugCam) { camera.position.fromArray(debugCam.p); camera.lookAt(debugCam.l[0], debugCam.l[1], debugCam.l[2]); }
   // камера прижата вплотную — героя прячем, чтобы не смотреть изнутри его головы
