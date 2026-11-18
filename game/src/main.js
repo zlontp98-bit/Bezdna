@@ -52,7 +52,7 @@ let deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass,
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
-let camSmDt = -1, camHold = 6.5, camHoldT = 0;
+let camSmDt = -1, camHold = 6.5, camHoldT = 0, camLift = 0, camLiftGoal = 0, camLiftT = 0;
 
 // ---- качество: держим плавность, а не разрешение ----
 const Q = {
@@ -311,19 +311,22 @@ function toast(text) {
 const CAM_R = 0.3;
 const _cr = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1], [0.7, 0.7, 0], [-0.7, 0.7, 0], [0.7, -0.7, 0], [-0.7, -0.7, 0]];
 const EYE_R = 0.16; // шар «глаз» от первого лица
-function camBlocked(x, y, z, r = CAM_R) {
-  for (const [a, b, c] of _cr) if (solidAt(x + a * r, y + b * r, z + c * r, 0, true)) return true;
+function camBlocked(x, y, z, r = CAM_R, soft = true) {
+  for (const [a, b, c] of _cr) if (solidAt(x + a * r, y + b * r, z + c * r, 0, soft)) return true;
   return false;
 }
 // на каком расстоянии от головы героя луч назад упирается в камень (или вся длина, если свободно).
 // Один и тот же шар и для поиска, и для проверки: иначе у стены расстояние «прыгало» между двумя ответами.
+// Толщина луча растёт с расстоянием от головы: у самой головы (ближняя плоскость тогда 5 см) хватает тонкого,
+// иначе в узкой щели между скал шар 0.3 м не помещался нигде, и камера застревала в голове героя
+const camR = (d) => Math.min(CAM_R, 0.1 + 0.12 * d);
 function camHit(fx, fy, fz, len) {
   const STEP = 0.15;
   let lo = 0;
   for (let d = STEP; d <= len + 1e-6; d += STEP) {
-    if (camBlocked(target.x - fx * d, target.y - fy * d, target.z - fz * d)) {
+    if (camBlocked(target.x - fx * d, target.y - fy * d, target.z - fz * d, camR(d), d > 0.9)) {
       let hi = d; // уточняем делением пополам: расстояние меняется плавно, без ступенек
-      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (camBlocked(target.x - fx * m, target.y - fy * m, target.z - fz * m)) hi = m; else lo = m; }
+      for (let k = 0; k < 6; k++) { const m = (lo + hi) / 2; if (camBlocked(target.x - fx * m, target.y - fy * m, target.z - fz * m, camR(m), m > 0.9)) hi = m; else lo = m; }
       return Math.max(0.05, lo - 0.05); // вплотную к стене камера у самой головы (герой тогда скрыт), но не в камне
     }
     lo = d;
@@ -354,13 +357,13 @@ function updateCamera(dt, inp) {
     let ok = false;
     for (const [o, dy] of [[off, off ? -0.2 : 0], [off, -0.6], [off + 0.4, -0.3], [off + 0.4, -0.8], [0, -1.0], [off + 0.8, -0.6], [off + 1.3, -0.3], [off + 1.8, 0]]) {
       _pw.set(-nx * o, dy, -nz * o);
-      if (!camBlocked(target.x + _pw.x, target.y + _pw.y, target.z + _pw.z)) { ok = true; break; }
+      if (!camBlocked(target.x + _pw.x, target.y + _pw.y, target.z + _pw.z, 0.15, false)) { ok = true; break; }
     }
-    if (!ok) _pw.set(0, -1.0, 0);
+    if (!ok) _pw.copy(camSmDt < 0 ? _pw.set(0, 0, 0) : pivOff); // свободного места нет — опору не дёргаем
     if (camSmDt < 0 || pivOff.distanceToSquared(_pw) > 4) pivOff.copy(_pw);
     else pivOff.lerp(_pw, 1 - Math.exp(-dt * 6));
     // сглаженная точка в камне — сразу на свободную
-    if (ok && camBlocked(target.x + pivOff.x, target.y + pivOff.y, target.z + pivOff.z)) pivOff.copy(_pw);
+    if (ok && camBlocked(target.x + pivOff.x, target.y + pivOff.y, target.z + pivOff.z, 0.15, false)) pivOff.copy(_pw);
     target.add(pivOff);
   }
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -420,7 +423,32 @@ function updateCamera(dt, inp) {
   // а назад отъезжает плавно. Камера никогда не «перепрыгивает» через камни вверх — только скользит по лучу.
   // В тесноте расстояние до камня меняется каждый кадр (шаг, поворот), и камера моталась «туда-сюда».
   // Ближе подъезжаем сразу, а отъезжаем, только когда путь свободен дольше 0.3 с.
-  const hit = camHit(fx, fy, fz, camDist);
+  // В тесной щели (между двумя скалами, в расселине) штанга назад упирается в стены по бокам, и камера
+  // сжималась в голову героя и дёргалась. Тогда пробуем поднять её выше (смотреть сверху-сзади):
+  // берём наклон, при котором луч свободен дальше всего. Подъём меняется плавно и только при заметной выгоде.
+  if ((camLiftT -= dt) <= 0) {
+    camLiftT = 0.12;
+    const base = camHit(fx, fy, fz, camDist);
+    let best = 0, bestD = base;
+    if (base < camDist * 0.6) {
+      for (const e of [0.35, 0.7, 1.05]) {
+        const pe = Math.min(1.4, pitch + e), c2 = Math.cos(pe);
+        const d = camHit(-Math.sin(yaw) * c2, -Math.sin(pe), -Math.cos(yaw) * c2, camDist);
+        if (d > bestD + 0.6) { best = e; bestD = d; }
+      }
+      // держим прежний подъём, если он всё ещё не хуже выбранного (без метаний туда-сюда)
+      if (camLiftGoal > 0 && best !== camLiftGoal) {
+        const pe = Math.min(1.4, pitch + camLiftGoal), c2 = Math.cos(pe);
+        if (camHit(-Math.sin(yaw) * c2, -Math.sin(pe), -Math.cos(yaw) * c2, camDist) > bestD - 0.6) best = camLiftGoal;
+      }
+    }
+    camLiftGoal = best;
+  }
+  camLift += (camLiftGoal - camLift) * (1 - Math.exp(-dt * (camLiftGoal > camLift ? 5 : 2)));
+  const pb = Math.min(1.4, pitch + camLift), cb = Math.cos(pb);
+  const bx = -Math.sin(yaw) * cb, by = -Math.sin(pb), bz = -Math.cos(yaw) * cb;
+  const hit = camHit(bx, by, bz, camDist);
+  if (hit < camCur - 1) camLiftT = 0; // штангу вдруг перекрыло — сразу пересчитать подъём
   if (hit <= camHold) { camHold = hit; camHoldT = 0; }
   else if ((camHoldT += dt) > 0.3) camHold = hit;
   else camHold = Math.min(hit, camHold + dt * 0.5);
@@ -429,14 +457,14 @@ function updateCamera(dt, inp) {
   // если промежуточная точка оказалась бы в камне — сразу на безопасное место
   if (want < camCur) {
     const c = Math.max(want, camCur - Math.max(dt * 3, (camCur - want) * (1 - Math.exp(-dt * 12))));
-    camCur = camBlocked(target.x - fx * c, target.y - fy * c, target.z - fz * c) ? want : c;
+    camCur = camBlocked(target.x - bx * c, target.y - by * c, target.z - bz * c, camR(c), c > 0.9) ? want : c;
   } else camCur += (want - camCur) * (1 - Math.exp(-dt * 3));
-  camPos.set(target.x - fx * camCur, target.y - fy * camCur, target.z - fz * camCur);
+  camPos.set(target.x - bx * camCur, target.y - by * camCur, target.z - bz * camCur);
   // лёгкий фильтр только против дрожи (≈30 мс); в камень сглаженная точка не заходит
   if (camSm.distanceToSquared(camPos) > 4 || camSmDt < 0) camSm.copy(camPos);
   else {
     _cs.copy(camSm).lerp(camPos, 1 - Math.exp(-dt * 35));
-    camSm.copy(camBlocked(_cs.x, _cs.y, _cs.z) ? camPos : _cs);
+    { const dd = _cs.distanceTo(target); camSm.copy(camBlocked(_cs.x, _cs.y, _cs.z, camR(dd), dd > 0.9) ? camPos : _cs); }
   }
   camSmDt = 0; // первый кадр прошёл — дальше фильтруем
   camera.position.copy(camSm);
@@ -720,7 +748,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, jelly, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
+    window.__game = { camDbg: () => ({ lift: camLift, goal: camLiftGoal, piv: pivOff.toArray().map((v) => +v.toFixed(2)), hold: +camHold.toFixed(2) }), outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, jelly, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
