@@ -257,17 +257,19 @@ function wet(x, y, z, rad) {
 }
 
 // Где что стоит. Делается один раз при загрузке, по глыбам текущей карты (своей или встроенной).
-export function planDeep() {
+export function planDeep(boulders = []) {
   const rnd = mulberry32(SEED + 75);
   const out = { crystal: [], bigcrystal: [], shroom: [], big: [] }, rocks = [], colliders = [];
   const used = new Map();
   const freeAt = (x, z, r) => {
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+    for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) {
       const l = used.get((Math.floor(x / 3) + a) + ',' + (Math.floor(z / 3) + b));
       if (l) for (const q of l) if (Math.hypot(q[0] - x, q[1] - z) < q[2] + r) return false;
     }
     return true;
   };
+  // валуны под кирку: на них и внутри них ничего не ставим — иначе разбил камень, а гриб висит в воздухе
+  for (const b of boulders) { const k = Math.floor(b.x / 3) + ',' + Math.floor(b.z / 3); (used.get(k) || used.set(k, []).get(k)).push([b.x, b.z, b.s * 1.15]); }
   const take = (x, z, r) => { const k = Math.floor(x / 3) + ',' + Math.floor(z / 3); (used.get(k) || used.set(k, []).get(k)).push([x, z, r]); };
   const depthK = (y) => Math.min(1, Math.max(0, (TOP - y) / (TOP - BOTTOM)));
   // верх глыбы в точке, если тут ровно, сухо и ничего не нависает

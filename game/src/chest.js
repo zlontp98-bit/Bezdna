@@ -61,7 +61,7 @@ export class Chests {
     this.root.add(this.lidPivot);
     this.root.visible = false;
     scene.add(this.root);
-    this.col = { x: 0, z: 0, r: -10 };
+    this.col = { x: 0, z: 0, r: -10, y0: 0, y1: 0 };
     player.addCollider(this.col);
     this.c = null; this.t = 0; this.tickT = 0; this.target = null;
     const snap = world.snapshot();
@@ -106,7 +106,8 @@ export class Chests {
     // стоит чуть криво — старый
     this.root.rotation.set(0.04, p.rot, -0.05);
     this.root.visible = true;
-    this.col.x = p.x; this.col.z = p.z; this.col.r = 0.42;
+    this.col.x = p.x; this.col.z = p.z; this.col.r = 0.42; this.col.y0 = p.y - 0.4; this.col.y1 = p.y + 0.9;
+    this.player.moveCollider(this.col);
   }
   update(dt, want) {
     // раз в пару секунд спрашиваем мир, не пора ли поставить новый ящик

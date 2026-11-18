@@ -85,5 +85,7 @@ export function buildCamp(scene, spawn) {
   tent.frustumCulled = false;
   scene.add(tent);
   // место под дом: там же, где палатка, входом к костру (угол a — как у палатки)
+  // у всех препятствий лагеря — высота, иначе они невидимыми столбами стоят и над, и под лагерем
+  for (const c of colliders) { const h = heightAt(c.x, c.z); c.y0 = h - 0.6; c.y1 = h + 2.5; }
   return { colliders, blobs, tent, tentCol, site: { x: cx + 3.2, z: cz + 1.5, a: -2.2 }, fire: { x: cx, z: cz } };
 }

@@ -60,7 +60,7 @@ export function buildHands() {
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
   const root = new THREE.Group();
   hs.add(root);
-  const H = [buildHand(mat, -1), buildHand(mat, 1)];
+  const H = [buildHand(mat, -1), buildHand(mat, 1)], REACH = 0.66;
   for (const h of H) { h.hand.traverse((o) => { o.frustumCulled = false; }); root.add(h.hand); h.curl = 0.5; h.pos = new THREE.Vector3(); h.rot = new THREE.Vector3(); h.init = false; h.wpos = new THREE.Vector3(); h.wq = new THREE.Quaternion(); h.wmode = false; }
   let t = 0, hangT = 0, color = -1, on = false;
   const want = [new THREE.Vector3(), new THREE.Vector3()], wrot = [new THREE.Vector3(), new THREE.Vector3()], wcurl = [0, 0];
@@ -191,6 +191,11 @@ export function buildHands() {
           h.pos.lerp(want[i], k); h.rot.lerp(wrot[i], k);
           h.hand.position.copy(h.pos); h.hand.rotation.set(h.rot.x, h.rot.y, h.rot.z);
         }
+        // рука не длиннее руки: если зацепка дальше (стена далеко, узкая щель, камера отъехала) —
+        // кисть останавливается на вытянутой руке, а не тянется к стене «сосиской»
+        _y.set(0.2 * (i === 0 ? -1 : 1), -0.34, 0.02);
+        _x.copy(h.hand.position).sub(_y);
+        if (_x.length() > REACH) { h.hand.position.copy(_y).addScaledVector(_x.normalize(), REACH); h.pos.copy(h.hand.position); }
         h.curl += (wcurl[i] - h.curl) * kc;
         // предплечье — от запястья к плечу (плечо чуть ниже и сбоку от глаз), где бы ни была кисть
         _v.set(0.2 * (i === 0 ? -1 : 1), -0.34, 0.02).sub(h.hand.position).applyQuaternion(_q.copy(h.hand.quaternion).invert());

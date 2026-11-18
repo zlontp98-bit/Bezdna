@@ -42,7 +42,7 @@ export class Settlement {
     this.m.root.rotation.y = this.npc.facing;
     this.m.armL.rotation.z = -0.3; this.m.armR.rotation.z = 0.3;
     scene.add(this.m.root);
-    player.addCollider({ x: nx, z: nz, r: 0.42 });
+    player.addCollider({ x: nx, z: nz, r: 0.42, y0: this.npc.y - 0.5, y1: this.npc.y + 1.9 });
 
     // ---- состояние из мира ----
     const snap = world.snapshot();
