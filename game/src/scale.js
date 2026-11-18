@@ -3,83 +3,11 @@ import { mat, LITE } from './shaders.js';
 import { STONEAPI } from './descent.js';
 import { rockAt, groundAt, addBox } from './solids.js';
 import { waterNear } from './waterfall.js';
-import { heightAt, pitR, LAKE } from './terrain.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { mulberry32, SEED } from './noise.js';
 
-// Масштаб шахты: тонкие водопады по стенам (видны в просветах между глыбами — шахта кажется огромной)
-// и фонари на кронштейнах по бокам глыб — тёплые огоньки вдалеке и в глубине.
+// Масштаб шахты: фонари на кронштейнах по бокам глыб — тёплые огоньки вдалеке и в глубине — и мостики.
 // Всё — украшение без коллизий; каждое — одна модель.
-
-// ---------- водопады по стенам шахты ----------
-export function buildWallFalls(scene) {
-  const rnd = mulberry32(SEED + 4411);
-  const N = LITE ? 5 : 8;
-  const P = [], UV = [], A = [], idx = [];
-  let made = 0;
-  for (let tries = 0; tries < 80 && made < N; tries++) {
-    const th = rnd() * Math.PI * 2, c = Math.cos(th), s = Math.sin(th);
-    const w = 0.8 + rnd() * 1.8, y0 = -62 - rnd() * 45;
-    // путь по стене: каждые 2 м вниз; кончается на дне или у воды
-    const rows = [];
-    let bad = false;
-    for (let y = y0; y > LAKE.level - 0.5; y -= 2) {
-      const r = pitR(c * 60, s * 60) - 0.45;
-      const x = c * r, z = s * r;
-      if (heightAt(x, z) > y - 0.3) break;
-      if (waterNear(x, y, z, w + 3, 4)) { bad = true; break; }
-      rows.push([x, y, z]);
-    }
-    if (bad || rows.length < 10) continue;
-    const base = P.length / 3, tx = -s, tz = c;
-    rows.forEach(([x, y, z], i) => {
-      const v = (y0 - y);
-      for (const u of [-1, 1]) {
-        P.push(x + tx * u * w, y, z + tz * u * w);
-        UV.push(u, v); A.push(w, rnd() * 50, rows.length * 2);
-      }
-      if (i > 0) { const o = base + i * 2; idx.push(o - 2, o, o - 1, o - 1, o, o + 1); }
-    });
-    made++;
-  }
-  if (!made) return null;
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
-  g.setAttribute('aUv', new THREE.Float32BufferAttribute(UV, 2));
-  g.setAttribute('aA', new THREE.Float32BufferAttribute(A, 3));
-  g.setIndex(idx);
-  const m = mat({
-    side: THREE.DoubleSide,
-    vertexShader: /* glsl */ `
-      attribute vec2 aUv; attribute vec3 aA;
-      varying vec2 vUv; varying vec3 vA; varying vec3 vW;
-      void main(){ vUv = aUv; vA = aA; vW = position; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: /* glsl */ `
-      varying vec2 vUv; varying vec3 vA; varying vec3 vW;
-      void main(){
-        float u = vUv.x, v = vUv.y, w = vA.x;
-        // струи бегут вниз; скорость одна (метры в секунду), рисунок — от метров, а не от доли длины
-        float q = v - uTime * 3.0;
-        // шум сильно вытянут вдоль падения: ровные струи, а не разводы
-        float s1 = vnoise(vec2(u * w * 2.6 + vA.y, q * 0.04));
-        float s2 = vnoise(vec2(u * w * 7.0 + vA.y * 2.0, q * 0.11));
-        float st = s1 * 0.6 + s2 * 0.4;
-        // рваные края без прозрачности: «сито» по шуму (одна непрозрачная модель)
-        float edge = abs(u) + (s2 - 0.5) * 0.5;
-        if (edge > 0.92) discard;
-        float top = smoothstep(0.0, 1.5, v), bot = smoothstep(vA.z, vA.z - 6.0, v);
-        if (vnoise(vec2(u * 6.0, v * 0.8 - uTime * 2.0)) > top * 1.4) discard;
-        vec3 c = mix(vec3(0.22, 0.45, 0.53), vec3(0.80, 0.92, 0.98), smoothstep(0.45, 0.85, st));
-        c = mix(c, vec3(0.92, 0.97, 1.0), (1.0 - bot) * 0.6);          // пена у подножия
-        c *= 0.75 + 0.25 * smoothstep(0.92, 0.3, edge);
-        gl_FragColor = vec4(applyFog(c, vW), 1.0);
-      }`,
-  });
-  const mesh = new THREE.Mesh(g, m);
-  mesh.frustumCulled = false; mesh.matrixAutoUpdate = false;
-  scene.add(mesh);
-  return mesh;
-}
 
 // ---------- фонари на кронштейнах ----------
 // Возвращает список огоньков для общего света (Deep.lights): тёплые пятна на камне вокруг фонаря.
