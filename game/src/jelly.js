@@ -3,6 +3,7 @@ import { mulberry32, SEED } from './noise.js';
 import { mat } from './shaders.js';
 import { LAKE, heightAt } from './terrain.js';
 import { SWING } from './player.js';
+import { sfx } from './sound.js';
 import { RULES } from './world.js';
 
 // Первый моб: медузы в озере на дне шахты.
@@ -231,6 +232,7 @@ export class Jellies {
   }
   gone(j, at, animate) {
     j.at = at; j.state = animate ? 'die' : 'gone'; j.t = 0;
+    if (animate) sfx('jellyDie');
     if (!animate) { j.k = 0; j.mesh.visible = false; }
   }
   pickTarget(j, away) {
@@ -272,7 +274,7 @@ export class Jellies {
     if (this.pending && (this.pending.at -= dt) <= 0) {
       const j = this.pending.j; this.pending = null;
       if (j.state === 'alive') {
-        j.hit = 1; j.hp -= RULES.mob.jelly.dmg(pl.held);
+        j.hit = 1; j.hp -= RULES.mob.jelly.dmg(pl.held); sfx('jelly');
         // отпрянула и уплывает прочь
         const dx = j.x - pl.pos.x, dz = j.z - pl.pos.z, l = Math.hypot(dx, dz) || 1;
         j.vx += dx / l * 1.6; j.vz += dz / l * 1.6; j.vy -= 0.4;

@@ -29,6 +29,7 @@ import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
 import { initCreative } from './editor.js';
 import { initOuter, updateOuter, outerStats } from './outer.js';
+import { initSound, updateSound, setSoundOn, soundOn, sfx, soundState } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -319,6 +320,7 @@ $('craftBtn').addEventListener('click', () => toggleCraft());
 // короткая подпись над слотами: «+3 бревна» и т.п.
 let toastT = 0;
 function toast(text) {
+  if (text[0] === '+') sfx('get'); // добыча попала в инвентарь
   $('toast').textContent = text;
   $('toast').classList.add('show');
   clearTimeout(toastT);
@@ -545,7 +547,7 @@ function frame(now) {
   const dt = dtMs / 1000;
   if (!renderer) return;
   U.uTime.value = now / 1000;
-  if (!running) { menuFrame(dt, now / 1000); return; }
+  if (!running) { menuFrame(dt, now / 1000); updateSound(dt, player, camera, false); return; }
   adaptQuality(dtMs);
 
   const inp = input.poll();
@@ -593,7 +595,8 @@ function frame(now) {
   clouds.rotation.y += dt * 0.003;
 
   renderer.render(scene, camera);
-  hands.render(renderer, camera); // руки от первого лица — поверх всего
+  hands.render(renderer, camera);
+  updateSound(dt, player, camera, !falling && !creative.on); // руки от первого лица — поверх всего
   updateHud(dt);
 
   frames++; fpsT += dtMs;
@@ -706,6 +709,11 @@ $('view').addEventListener('click', () => {
 });
 $('creaBtn').addEventListener('click', () => { if (creative) { $('panel').classList.remove('show'); creative.toggle(true); } });
 $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
+// звук: включён по умолчанию, выбор запоминается
+initSound(store);
+const sndLabel = () => { $('sound').textContent = soundOn() ? '🔊 Звук: включён' : '🔇 Звук: выключен'; };
+$('sound').addEventListener('click', () => { setSoundOn(!soundOn()); sndLabel(); });
+sndLabel();
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
 // дальность растительности (деревья, кусты, грибы, камни): близко — легче для телефона
 const VEG = { near: 70, mid: 130, far: 260 };
@@ -772,7 +780,7 @@ requestAnimationFrame(() => setTimeout(async () => {
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();
-    window.__game = { camDbg: () => ({ lift: camLift, goal: camLiftGoal, piv: pivOff.toArray().map((v) => +v.toFixed(2)), hold: +camHold.toFixed(2) }), outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, jelly, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
+    window.__game = { soundState, camDbg: () => ({ lift: camLift, goal: camLiftGoal, piv: pivOff.toArray().map((v) => +v.toFixed(2)), hold: +camHold.toFixed(2) }), outerStats, stepCam: (dt, lx, ly) => { updateCamera(dt, { lookX: lx, lookY: ly }); return camCur; }, player, camera, inv, scene, wood, world, town, picks, berries, craft, mine, chest, deep, jelly, setView: (y, p) => { yaw = y; pitch = p; }, setFirstPerson: (v) => { firstPerson = !!v; }, setCam: (c) => { debugCam = c; }, Q, renderer, creative };
   } catch (err) {
     console.error(err);
     $('loadText').textContent = 'Не удалось запустить 3D-графику на этом устройстве: ' + err.message;
