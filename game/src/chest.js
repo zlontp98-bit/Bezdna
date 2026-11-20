@@ -3,6 +3,7 @@ import { part, merge, T, propMaterial } from './flora.js';
 import { mulberry32 } from './noise.js';
 import { groundAt } from './solids.js';
 import { ITEMS } from './inventory.js';
+import { sfx } from './sound.js';
 
 // Старый потрёпанный деревянный ящик на одном из островков.
 // Где он стоит, решает мир (остров и «зерно»); точное место на острове игра выводит из них
@@ -69,7 +70,7 @@ export class Chests {
     world.on((ev) => {
       if (ev.type === 'chestSpawned') { this.set(ev.chest, false); toast('📦 На одном из островков над бездной появился старый ящик'); }
       if (ev.type === 'chestOpened' && this.c && ev.id === this.c.id) {
-        this.c.opened = ev.at; this.anim = 'open'; this.t = 0;
+        this.c.opened = ev.at; this.anim = 'open'; this.t = 0; sfx('chest');
         if (ev.by === world.me) {
           const got = [];
           for (const id in ev.loot) {

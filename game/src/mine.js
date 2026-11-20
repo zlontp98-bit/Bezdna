@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { propMaterial } from './flora.js';
 import { SWING } from './player.js';
+import { sfx } from './sound.js';
 import { objId, RULES } from './world.js';
 
 // Добыча камня. С киркой в руке у большого валуна — пять ударов: валун вздрагивает,
@@ -41,6 +42,7 @@ export class Miner {
   gone(b, at, animate) {
     b.at = at; b.solid.off = true;
     b.state = animate ? 'break' : 'gone'; b.t = 0;
+    if (animate) sfx('rockBreak');
     if (!animate) this.place(b, 0);
     if (!this.busy.includes(b)) this.busy.push(b);
   }
@@ -72,7 +74,7 @@ export class Miner {
     if (this.pending && (this.pending.at -= dt) <= 0) {
       const b = this.pending.b; this.pending = null;
       if (b.state === 'idle' || b.state === 'shake') {
-        b.state = 'shake'; b.t = 0;
+        b.state = 'shake'; b.t = 0; sfx('mine');
         if (!this.busy.includes(b)) this.busy.push(b);
         if (--b.hp <= 0) { b.hp = RULES.boulder.hits(b.s); this.world.send({ type: 'mine', id: b.id, s: b.s }); }
       }

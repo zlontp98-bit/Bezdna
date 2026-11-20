@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { SWING } from './player.js';
+import { sfx } from './sound.js';
 import { objId, RULES } from './world.js';
 
 // Рубка деревьев. С топором в руке у ствола — несколько ударов, дерево валится,
@@ -62,7 +63,7 @@ export class Woodcutter {
     if (t.col && t.r0 === undefined) t.r0 = t.col.r;
     if (t.col) t.col.r = -10; // ствол больше не мешает пройти
     this.stump(t, true);
-    if (animate && (t.state === 'idle' || t.state === 'shake')) { t.state = 'fall'; t.t = 0; }
+    if (animate && (t.state === 'idle' || t.state === 'shake')) { t.state = 'fall'; t.t = 0; sfx('treeFall'); }
     else { t.state = 'gone'; this.place(t, 0, 0); }
     if (!this.busy.includes(t)) this.busy.push(t);
   }
@@ -107,6 +108,7 @@ export class Woodcutter {
     if (t.state !== 'idle' && t.state !== 'shake') return;
     t.dx = dx; t.dz = dz; t.t = 0;
     t.state = 'shake';
+    sfx('chop');
     if (!this.busy.includes(t)) this.busy.push(t);
     // последний удар: просим мир срубить дерево; ответ (setCut) уронит его
     if (--t.hp <= 0) { t.hp = HITS; this.world.send({ type: 'chop', id: t.id }); }

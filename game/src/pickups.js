@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { propMaterial } from './flora.js';
 import { objId, RULES } from './world.js';
+import { sfx } from './sound.js';
 
 // То, что можно подобрать: камушки на земле и ягоды на кустах.
 // Подошёл — кнопка «подобрать», добыча летит в инвентарь. Собранное пропадает у всех
@@ -37,6 +38,7 @@ export class Pickups {
       const p = this.byId.get(ev.id);
       if (!p) return;
       p.gone = ev.at; this.show(p, false);
+      if (ev.by === world.me) sfx('pick');
       if (ev.by === world.me) {
         const n = ev.reward[this.K.item] || 0, left = inv.add(this.K.item, n);
         toast(left ? 'Инвентарь полон' : this.K.toast(n));

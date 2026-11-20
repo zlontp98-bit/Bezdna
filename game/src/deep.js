@@ -6,6 +6,7 @@ import { STONEAPI } from './descent.js';
 import { fieldTop as solidTop, groundAt, ceiling, addMeshTop } from './solids.js';
 import { STREAMS } from './waterfall.js';
 import { SWING } from './player.js';
+import { sfx } from './sound.js';
 import { objId, RULES } from './world.js';
 const NO_TRIS = new Float32Array(0); // верх отдельно не передаём: всё тело — в full
 
@@ -436,6 +437,7 @@ export class Deep {
         this.puddles.add(o.x, o.y, o.z, 1.15 + 0.45 * o.s);
         if (ev.by === world.me) { this.stuckT = STUCK; splat(); }
       }
+      if (ev.by === world.me || o.squash) sfx(o.squash ? 'shroom' : o.kind === 'crystal' || o.kind === 'bigcrystal' ? 'crystalBreak' : 'shroom', o.squash ? 1.2 : 1);
       this.gone(o, ev.at, true);
     });
     this.puddles = new Puddles(scene);
@@ -548,7 +550,7 @@ export class Deep {
     if (this.pending && (this.pending.at -= dt) <= 0) {
       const o = this.pending.o; this.pending = null;
       if (o.state === 'idle' || o.state === 'shake') {
-        o.state = 'shake'; o.t = 0;
+        o.state = 'shake'; o.t = 0; sfx(o.kind === 'crystal' || o.kind === 'bigcrystal' ? 'crystal' : 'shroom');
         if (!this.busy.includes(o)) this.busy.push(o);
         if (--o.hp <= 0) { o.hp = RULES.deep[o.kind].hits; this.world.send({ type: 'harvest', id: o.id, kind: o.kind }); }
       }
