@@ -187,13 +187,13 @@ function lavaD(e, x, y, z, noisy) {
     if (!noisy) return 0;
     const n = vn3(x * 0.3, y2 * 0.11, z * 0.3) * 0.65 + vn3(x * 0.8, y2 * 0.35, z * 0.8) * 0.35;
     const lo = smoothstep(top - 1.2, top - 4, y2);
-    return Math.max(0, n) * 0.55 * (1 - lo) + n * 2.2 * lo;
+    // бок глыбы только отступает внутрь: снаружи видимого камня всегда воздух (иначе герой
+    // проходил сквозь раздутый низ глыбы — физика его не знает)
+    return Math.max(0, n) * (0.55 * (1 - lo) + 1.4 * lo);
   };
   for (const p of e.pil) {
     if (Math.abs(x - p.x) > p.R + 6 || Math.abs(z - p.z) > p.R + 6) continue;
-    // ниже верха глыба шире (основание расползается к лаве)
-    const wid = noisy ? Math.min(1.6, Math.max(0, p.top - 1.0 - y) * 0.18) : 0;
-    d = Math.min(d, Math.max((bK(p, x, z) - 1) * p.m - wid + side(y, p.top), y - p.top));
+    d = Math.min(d, Math.max((bK(p, x, z) - 1) * p.m + side(y, p.top), y - p.top));
   }
   for (const c of e.caps) {
     const t = capT(c, x, z), top = c.ta + (c.tb - c.ta) * t;
@@ -397,7 +397,8 @@ function buildRock(scene, skip) {
     g.computeVertexNormals();
     const ng = g.toNonIndexed();
     ng.setAttribute('aB', new THREE.Float32BufferAttribute(new Float32Array(ng.attributes.position.count * 2), 2));
-    const m = chunkMesh(ng, rockMat);
+    // складки (тонкий лист породы) видны и с изнанки — иначе в них «дыры» насквозь
+    const m = chunkMesh(ng, rockMat, (x, y, z) => field(x, y, z, list) < 0);
     m.userData.mine = true;
     scene.add(m); meshes.push(m);
     tris += idx.length / 3;
