@@ -39,7 +39,7 @@ export const TUNNELS = [
     chim: [[40, 19, 5.5]], steps: [[16, 0.3], [33, 0.4], [54, 0.3]], pools: [[11, 2.1, 2.2], [27, -3.0, 1.6], [45, 1.0, 2.5], [59, -2.0, 1.8]] },
 ].map((T) => {
   const c = Math.cos(T.th), s = Math.sin(T.th);
-  return { ...T, dx: c, dz: s, nx: -s, nz: c, t0: 0, ready: false };   // ready: начало (x, z) и пол F0 — после сетки высот
+  return { ...T, dx: c, dz: s, nx: -s, nz: c, t0: 0, ready: false, open: true };   // open: конец хода открыт в шахты (mines.js)   // ready: начало (x, z) и пол F0 — после сетки высот
 });
 // местные координаты: t — вдоль хода (0 — у подножия стены, растёт вглубь скалы), w — поперёк (от прямой оси)
 export const tunLocal = (T, x, z) => [(x - T.x) * T.dx + (z - T.z) * T.dz, (x - T.x) * T.nx + (z - T.z) * T.nz];
@@ -95,13 +95,17 @@ export function terrainAt(x, z, y) {
   for (const T of TUNNELS) {
     if (!T.ready) continue;
     const [t, w] = tunLocal(T, x, z);
-    if (t < T.t0 || t > T.L - TUN_PAD || t > T.L + 2) continue;
+    if (t < T.t0 || t > (T.open ? T.L : T.L - TUN_PAD)) continue;
     if (Math.abs(w - tunC(T, t)) > tunHW(T, t) - TUN_PAD) continue;
     const f = tunFloor(T, t, w);
     if (h > f + 0.3 && y < tunRoof(T, t, w) - 0.2) return f;
   }
+  // шахты под озером (mines.js): пустоты в толще скалы — их пол под ногами
+  if (mineSpace && y < -184) { const f = mineSpace(x, z, y); if (f !== null && f < h) return f; }
   return h;
 }
+let mineSpace = null;
+export function setMineSpace(fn) { mineSpace = fn; }
 W.CRAG.x = Math.cos(W.CRAG.th) * W.CRAG.r; W.CRAG.z = Math.sin(W.CRAG.th) * W.CRAG.r;
 
 const angDiff = (a, b) => {
@@ -508,9 +512,10 @@ function applyChannel(h, x, z) {
   return Math.min(h, h + (ch - h) * flat);
 }
 // Уровень воды под точкой: ручей или чаша; -1e9 — суши
-export function waterAt(x, z) {
+export function waterAt(x, z, y) {
   let w = -1e9;
   const r = Math.hypot(x, z);
+  if (y !== undefined && y < -186 && r > W.PIT + 2) return w;   // в шахтах под землёй воды с поверхности нет
   if (r > W.PIT - 5 && r < W.SRC_R - 1 && streamAt(x, z) > 0.01) w = sampleGrid(WG, x, z);
   for (const p of POOLS) {
     // в чаше одна ровная гладь: уровень чаши, а не ручья, который через неё течёт
@@ -1024,6 +1029,9 @@ const terrainMat = () => mat({
       float lowK = ${PASS.open ? 1 : 0}.0 * (1.0 - smoothstep(${PASS.hw + 6}.0, ${PASS.hw + 30}.0, passA)) + smoothstep(${W.OUTER + 30}.0, ${W.OUTER + 120}.0, rr);
       float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr) * (1.0 - clamp(lowK, 0.0, 1.0) * (1.0 - smoothstep(18.0, 34.0, vW.y)))); // «горность»: форма, трава, снег
       float deepK = smoothstep(8.0, 50.0, -vW.y);
+      // шахты под озером (и концы туннелей): ниже −190 м и вне шахты — только голый камень, без гор, травы и снега
+      float mineW = smoothstep(-186.0, -194.0, vW.y) * smoothstep(58.0, 66.0, rr);
+      rr = mix(rr, 120.0, mineW); mtnK *= 1.0 - mineW;
       // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
       fn *= sign(fn.y + 1e-5);
@@ -1039,7 +1047,7 @@ const terrainMat = () => mat({
       // Сам треугольник крутой (зуб скалы у подножия стены), а сглаженная нормаль от соседнего пола
       // «смотрит вверх» — раньше такой зуб красился травой: зелёный шип на стене. Решает настоящий наклон грани.
       gn0 = min(gn0, fn.y + 0.25);
-      float gm0 = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn0 + (vnoise(vW.xz*0.9)-0.5)*0.08) * (1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0)) * (1.0 - smoothstep(-235.0, -262.0, vW.y)); // на дне шахты травы нет: галька и камень
+      float gm0 = smoothstep(mix(0.72, 0.70, mtnK), mix(0.86, 0.84, mtnK), gn0 + (vnoise(vW.xz*0.9)-0.5)*0.08) * (1.0 - smoothstep(84.0, 104.0, vW.y + facet*10.0)) * (1.0 - smoothstep(-235.0, -262.0, vW.y)) * (1.0 - mineW); // на дне шахты и в шахтах травы нет: галька и камень
       vec3 rock = vec3(0.35, 0.3, 0.28), nn = n;
       float snow = 0.0;
       if (gm0 < 0.995) {
@@ -1103,7 +1111,7 @@ const terrainMat = () => mat({
       // Мох: на верхах и пологих плечах глыб (где трава уже не держится) и рваными языками,
       // стекающими с краёв вниз по стенке. Только в шахте — наверху скалы остаются как были.
       {
-        float mk = smoothstep(-60.0, -100.0, vW.y);
+        float mk = smoothstep(-60.0, -100.0, vW.y) * (1.0 - mineW);   // в шахтах мха нет
         if (mk > 0.0) {
           float mn = vnoise(vW.xz*0.55 + vW.y*0.3);
           #ifndef LITE
@@ -1198,6 +1206,7 @@ const terrainMat = () => mat({
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
+      alb *= mix(vec3(1.0), vec3(0.74, 0.6, 0.5), mineW);   // в шахтах камень тёмный, тёплый (бурый)
 
       // на дне шахты темно, но не чёрно: мягкое голубое свечение от воды, кристаллов и грибов
       float deepGlow = smoothstep(-150.0, -230.0, vW.y) * (1.0 - smoothstep(52.0, 84.0, rr));

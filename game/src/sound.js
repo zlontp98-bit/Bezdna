@@ -167,6 +167,7 @@ const SFX = {
   pick: (v) => { tone(rnd(620, 700), 0.09, 0.17 * v, { type: 'triangle', f2: 900, rev: 0.15 }); },
   get: (v) => { tone(880, 0.12, 0.1 * v, { type: 'triangle', rev: 0.3 }); tone(1320, 0.18, 0.08 * v, { type: 'triangle', at: 0.07, rev: 0.3 }); },
   chest: (v) => { burst('lowpass', 400, 0.35, 0.4 * v, { q: 5, f2: 900, attack: 0.05, rev: 0.4 }); [784, 988, 1175, 1568].forEach((f, i) => tone(f, 0.4, 0.09 * v, { type: 'triangle', at: 0.25 + i * 0.08, rev: 0.6 })); },
+  hurt: (v) => { tone(150, 0.9, 0.35 * v, { type: 'sawtooth', f2: 45, rev: 0.7 }); burst('lowpass', 1400, 1.2, 0.35 * v, { f2: 200, attack: 0.15, rev: 0.8 }); },   // смерть в красном тумане
   drip: (v) => { const f = rnd(1400, 2600); tone(f, 0.12, 0.14 * v, { f2: f * 0.55, rev: 1.6 }); },
 };
 
@@ -214,7 +215,7 @@ export function updateSound(dt, pl, cam, running) {
     S.phaseStep = ph;
     if (ground && pl.speed > 0.7) {
       const v = Math.min(1, 0.45 + pl.speed / 9);
-      const wetFoot = waterAt(p.x, p.z) > y - 0.35;
+      const wetFoot = waterAt(p.x, p.z, y) > y - 0.35;
       const stone = !wetFoot && (y < -14 || y > 14 || y > heightAt(p.x, p.z) + 0.25);
       sfx(wetFoot ? 'step_water' : stone ? 'step_stone' : 'step_grass', v);
     }

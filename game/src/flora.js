@@ -144,7 +144,11 @@ export function propMaterial() {
         float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
         c += uSunCol * rim * 0.16 * (0.4 + 0.6*vSh);
         c = mix(c, vC * (1.25 + 0.2*sin(uTime*1.7 + vW.x + vW.z)), vGlow);
-        gl_FragColor = vec4(applyFog(c, vW), 1.0);
+        vec3 f = applyFog(c, vW);
+        // в тёмных шахтах светящееся (фонари, кристаллы, глаза пауков) не тонет в дымке: светит сквозь неё
+        float mk = smoothstep(-185.0, -193.0, cameraPosition.y) * smoothstep(52.0, 64.0, length(cameraPosition.xz));
+        if (mk > 0.0) f = mix(f, c * 0.9, vGlow * mk * 0.85 * exp(-distance(vW, cameraPosition) * 0.008));
+        gl_FragColor = vec4(f, 1.0);
       }`,
   });
   return _prop;

@@ -923,7 +923,7 @@ export class Player {
     // под струёй водопада: вода сносит по течению и давит вниз (на стене — тянет вниз, вверх лезть тяжело)
     const fp = fallPush(p.x, p.y + 0.9, p.z, this.fallP);
     if (this.climbing && fp.down + Math.abs(fp.x) + Math.abs(fp.z) > 0.05) inp = { ...inp, my: inp.my - 0.75 * Math.max(fp.down, 0.4) };
-    const wl = waterAt(p.x, p.z);
+    const wl = waterAt(p.x, p.z, p.y);
     if (!this.climbing && wl > -1e8 && p.y < wl - 0.85 && wl - this.G(p.x, p.z) > 1.0) {
       if (!this.swimming) { this.swimming = true; this.grounded = false; this.swimT = 0; v.y = Math.max(v.y, -1.5); }
     }
@@ -1036,7 +1036,7 @@ export class Player {
     if (this.grounded || this.climbing || this.swimming || this.mantle) this.fallTop = p.y;
     else { this.fallTop = Math.max(this.fallTop, p.y); if (this.fallTop - p.y > FALL_MAX) this.fell = true; }
     // запоминаем безопасное место для возврата после срыва
-    if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && waterAt(p.x, p.z) < p.y) {
+    if (this.grounded && !this.swimming && !this.sliding && this.n.y > 0.9 && waterAt(p.x, p.z, p.y) < p.y) {
       this.safeT += dt;
       if (this.safeT > 0.6) { this.safe.copy(p); this.safeT = 0; }
     }
