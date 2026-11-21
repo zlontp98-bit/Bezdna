@@ -76,7 +76,7 @@ export function buildGuild() {
       const off = at + nrm * (side > 0 ? 0.03 : -(WT + 0.03)) + (side > 0 ? 0 : 0) , len = a1 - a0, mid = (a0 + a1) / 2;
       const put = (along, y, l, h, c, th = 0.14) => ax === 'x' ? B(base, l, h, th, c, along, y, off) : B(base, th, h, l, c, off, y, along);
       if (side > 0) put(mid, 0.4, len + 0.1, 0.8, stoneD, 0.16);          // снаружи — каменный низ
-      for (const y of [0.85, BY, WH - 0.12]) put(mid, y, len, 0.22, side > 0 ? beam : beamD);
+      for (const y of [0.85, BY, WH - 0.12]) put(mid, y, len, 0.22, side > 0 ? beam : beamD, 0.1);
       const n = Math.max(1, Math.round(len / 2));
       for (let i = 0; i <= n; i++) put(a0 + (i * len) / n, (0.85 + WH) / 2, 0.22, WH - 0.85, side > 0 ? beam : beamD, 0.16);
       // косые раскосы снаружи на первом этаже, через пролёт
@@ -92,9 +92,9 @@ export function buildGuild() {
   B(base, 0.05, 0.85, D - 2 * WT, wood, -HX + WT + 0.03, 0.42, cz);
   B(base, 0.05, 0.85, D - 2 * WT, wood, HX - WT - 0.03, 0.42, cz);
   // тёплая штукатурка изнутри (снаружи стены светлые)
-  B(base, W - 2 * WT - 0.02, WH - 0.85, 0.03, plasterIn, 0, (0.85 + WH) / 2, Z0 + WT + 0.016);
-  for (const sx of [-1, 1]) B(base, 0.03, WH - 0.85, D - 2 * WT, plasterIn, sx * (HX - WT - 0.016), (0.85 + WH) / 2, cz);
-  for (const [x0, x1, y0] of [[-HX + WT, -OW, 0.85], [OW, HX - WT, 0.85], [-OW, OW, OH]]) B(base, x1 - x0, WH - y0, 0.03, plasterIn, (x0 + x1) / 2, (y0 + WH) / 2, Z1 - WT - 0.016);
+  B(base, W - 2 * WT - 0.02, WH - 0.85, 0.03, plasterIn, 0, (0.85 + WH) / 2, Z0 + WT + 0.035);
+  for (const sx of [-1, 1]) B(base, 0.03, WH - 0.85, D - 2 * WT, plasterIn, sx * (HX - WT - 0.035), (0.85 + WH) / 2, cz);
+  for (const [x0, x1, y0] of [[-HX + WT, -OW, 0.85], [OW, HX - WT, 0.85], [-OW, OW, OH]]) B(base, x1 - x0, WH - y0, 0.03, plasterIn, (x0 + x1) / 2, (y0 + WH) / 2, Z1 - WT - 0.035);
   // наличник и дверные столбы входа
   for (const sx of [-1, 1]) B(base, 0.4, OH, WT + 0.2, beam, sx * OW, OH / 2, Z1 - WT / 2);
   B(base, OW * 2 + 0.6, 0.4, WT + 0.2, beam, 0, OH, Z1 - WT / 2);
@@ -103,12 +103,12 @@ export function buildGuild() {
   const win = (ax, at, along, y, w, h, arch) => {
     const t = WT + 0.12;
     const put = (a, yy, ww, hh, c, th, o = {}) => ax === 'x' ? B(base, ww, hh, th, c, a, yy, at, o) : B(base, th, hh, ww, c, at, yy, a, o);
-    put(along, y, w + 0.3, h + 0.3, beam, t + 0.06);
-    put(along, y, w, h, glowC, t + 0.1, { glow: 0.85 });
-    put(along, y, 0.07, h, beamD, t + 0.14); put(along, y + h * 0.15, w, 0.07, beamD, t + 0.14);
+    put(along, y, w + 0.3, h + 0.3, beam, t + 0.3);
+    put(along, y, w, h, glowC, t + 0.36, { glow: 0.85 });
+    put(along, y, 0.07, h, beamD, t + 0.44); put(along, y + h * 0.15, w, 0.07, beamD, t + 0.44);
     if (arch) {
-      const g = new THREE.CylinderGeometry(w / 2 + 0.15, w / 2 + 0.15, t + 0.06, 12, 1, false, Math.PI / 2, Math.PI).rotateX(Math.PI / 2);
-      const g2 = new THREE.CylinderGeometry(w / 2, w / 2, t + 0.1, 12, 1, false, Math.PI / 2, Math.PI).rotateX(Math.PI / 2);
+      const g = new THREE.CylinderGeometry(w / 2 + 0.15, w / 2 + 0.15, t + 0.3, 12, 1, false, Math.PI / 2, Math.PI).rotateX(Math.PI / 2);
+      const g2 = new THREE.CylinderGeometry(w / 2, w / 2, t + 0.36, 12, 1, false, Math.PI / 2, Math.PI).rotateX(Math.PI / 2);
       if (ax === 'z') { g.rotateY(Math.PI / 2); g2.rotateY(Math.PI / 2); }
       const p = ax === 'x' ? [along, y + h / 2, at] : [at, y + h / 2, along];
       base.push(part(g, beam, { m: T(...p) }), part(g2, glowC, { glow: 0.85, m: T(...p) }));
@@ -201,18 +201,18 @@ export function buildGuild() {
   };
   shelf(-2.4, 2.0); shelf(2.4, 2.0); shelf(-6.2, 1.6);
   // герб между шкафами: щит со скрещёнными мечами
-  B(base, 1.1, 1.3, 0.08, red, 0, 2.2, Z0 + WT + 0.06); B(base, 1.2, 0.08, 0.1, gold, 0, 2.86, Z0 + WT + 0.07);
-  for (const sd of [-1, 1]) B(base, 0.08, 1.1, 0.1, cream, 0, 2.2, Z0 + WT + 0.1, { rz: sd * 0.7 });
+  B(base, 1.1, 1.3, 0.08, red, 0, 2.2, Z0 + WT + 0.2); B(base, 1.2, 0.08, 0.14, gold, 0, 2.86, Z0 + WT + 0.2);
+  for (const sd of [-1, 1]) B(base, 0.08, 1.1, 0.12 + (sd > 0 ? 0.02 : 0), cream, 0, 2.2, Z0 + WT + 0.22, { rz: sd * 0.7 });
   // доска заданий на левой стене под галереей: пробковое поле, листки, карта
-  const [bx0, bz0] = SPOT.board, bxw = -HX + WT + 0.06;
+  const [bx0, bz0] = SPOT.board, bxw = -HX + WT + 0.2;
   B(base, 0.1, 1.5, 2.6, beam, bxw, 1.75, bz0); B(base, 0.06, 1.3, 2.4, 0xb98a5a, bxw + 0.05, 1.75, bz0);
   B(base, 0.08, 0.12, 2.0, gold, bxw + 0.07, 2.6, bz0, { glow: 0.3 });
   const notes = [[-0.85, 2.0, 0.32, 0.42, 0.06], [-0.4, 1.55, 0.3, 0.36, -0.05], [0.1, 2.0, 0.34, 0.3, 0.03], [0.55, 1.6, 0.28, 0.38, -0.08], [0.9, 2.05, 0.24, 0.3, 0.1], [-0.9, 1.4, 0.26, 0.3, 0.02]];
   for (const [dz, y, w, h, r] of notes) B(base, 0.02, h, w, paper, bxw + 0.09, y, bz0 + dz, { rz: r });
   B(base, 0.02, 0.6, 0.85, 0xd8c79a, bxw + 0.09, 1.55, bz0 + 0.15);
   // ковёр с мечами посреди зала
-  B(base, 6.2, 0.03, 4.2, red, 0, 0.015, -4.4); B(base, 5.7, 0.035, 3.7, redD, 0, 0.018, -4.4); B(base, 5.3, 0.04, 3.3, red, 0, 0.02, -4.4);
-  for (const sd of [-1, 1]) B(base, 0.16, 0.045, 3.0, cream, 0, 0.023, -4.4, { ry: sd * 0.75 });
+  B(base, 6.2, 0.03, 4.2, red, 0, 0.015, -4.4); B(base, 5.7, 0.05, 3.7, redD, 0, 0.025, -4.4); B(base, 5.3, 0.07, 3.3, red, 0, 0.035, -4.4);
+  for (const sd of [-1, 1]) B(base, 0.16, 0.1 + (sd > 0 ? 0.02 : 0), 3.0, cream, 0, 0.05, -4.4, { ry: sd * 0.75 });
   // столы и лавки справа от входа
   const table = (x, z) => {
     B(base, 2.6, 0.1, 0.95, plank, x, 0.8, z);
@@ -239,10 +239,10 @@ export function buildGuild() {
     const fw = (dx, dy, ww, hh, c, dd, o = {}) => B(arr, ww, hh, dd, c, x + Math.cos(ry) * dx, y + dy, z - Math.sin(ry) * dx, { ry, ...o });
     fw(0, 0, w, h, red, d); fw(0, h / 2 + 0.06, w + 0.2, 0.1, beamD, d + 0.08);
     fw(0, 0, w - 0.12, 0.05, gold, d + 0.02, {}); fw(0, -h / 2 + 0.12, w - 0.12, 0.05, gold, d + 0.02);
-    for (const sd of [-1, 1]) arr.push(part(box(0.09 * w, h * 0.55, d + 0.03), cream, { m: T(x, y + h * 0.04, z, 1, 1, 1, ry, sd * 0.66) }));
+    for (const sd of [-1, 1]) arr.push(part(box(0.09 * w, h * 0.55, d + (sd > 0 ? 0.06 : 0.09)), cream, { m: T(x, y + h * 0.04, z, 1, 1, 1, ry, sd * 0.66) }));
     arr.push(part(new THREE.ConeGeometry(w / 2, 0.45, 3).rotateX(Math.PI).scale(1, 1, 0.15), red, { m: T(x, y - h / 2 - 0.2, z, 1, 1, 1, ry) }));
   };
-  banner(base, 0, 5.4, Z0 + WT + 0.08, 1.9, 2.6);
+  banner(base, 0, 5.4, Z0 + WT + 0.22, 1.9, 2.6);
   for (const z of [-3.0, -6.0]) banner(base, GX + 0.12, BY - 0.9, z, 0.9, 1.4, Math.PI / 2, 0.04);
   banner(base, -1.7, BY - 0.85, GZ + 0.12, 0.9, 1.3); banner(base, 1.7, BY - 0.85, GZ + 0.12, 0.9, 1.3);
   // люстра: железное кольцо, свечи, цепи до балки
@@ -317,11 +317,11 @@ export function buildGuild() {
     S(x0, x1, PZ - 0.2, PZ, 1.05);
   }
   // знамя на фронтоне и фонари у входа
-  banner(top, 0, WH + 1.3, PZ + 0.25, 1.4, 2.3);
+  banner(top, 0, WH + 1.3, PZ + 0.36, 1.4, 2.3);
   for (const x of [-OW - 0.2, OW + 0.2]) sconce(top, x, 3.0, PZ + 0.11, 0, 1);
   sconce(top, -HX, 3.0, PZ + 0.11, 0, 1); sconce(top, HX, 3.0, PZ + 0.11, 0, 1);
   // дымоход
-  B(top, 1.0, 3.0, 1.0, stone, -4.2, WH + RISE * 0.5 + 0.6, -8.0, { stone: 1 }); B(top, 1.2, 0.2, 1.2, stoneD, -4.2, WH + RISE * 0.5 + 2.15, -8.0, { stone: 1 });
+  B(top, 1.0, 3.0, 1.0, stone, -4.2, WH + RISE * 0.5 + 1.7, -8.0, { stone: 1 }); B(top, 1.2, 0.2, 1.2, stoneD, -4.2, WH + RISE * 0.5 + 3.25, -8.0, { stone: 1 });
 
   // ================= боковые навесы =================
   for (const sd of [-1, 1]) {

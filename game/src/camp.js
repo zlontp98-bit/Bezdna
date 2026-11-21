@@ -35,19 +35,6 @@ export function buildCamp(scene, spawn) {
   }
   // палатка — отдельной моделью: когда построят дом, она исчезнет
   const tentParts = parts.splice(before);
-  // костёр: камни кругом, поленья, пламя
-  {
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2;
-      put(new THREE.IcosahedronGeometry(0.2, 0), stone, Math.cos(a) * 0.62, Math.sin(a) * 0.62, 0.06, {}, 1, 0.75, 1.15, a);
-    }
-    for (let i = 0; i < 3; i++) put(cyl(0.07, 0.08, 0.95, 6), woodD, 0, 0, 0.2, {}, 1, 1, 1, i * 2.1, 1.15);
-    const fl = { glow: 1, sway: 9 };
-    put(new THREE.ConeGeometry(0.3, 0.9, 6), 0xff8a2a, 0, 0, 0.5, fl);
-    put(new THREE.ConeGeometry(0.19, 0.62, 6), 0xffd257, 0.03, 0.02, 0.42, fl);
-    put(new THREE.ConeGeometry(0.1, 0.36, 5), 0xfff3c4, -0.02, 0.01, 0.36, fl);
-    colliders.push({ x: cx, z: cz, r: 0.6 });
-  }
   // бревно-скамья
   put(cyl(0.24, 0.27, 2.3, 8), wood, -1.5, 1.3, 0.2, {}, 1, 1, 1, 0.7, Math.PI / 2);
   colliders.push({ x: cx - 1.5, z: cz + 1.3, r: 0.75 });
