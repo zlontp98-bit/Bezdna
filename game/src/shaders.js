@@ -186,6 +186,35 @@ vec3 waterTex(vec2 xz, float speed){
   vec3 b = texture2D(uWater, q * vec2(-0.53, 0.53) + vec2(0.31, -uTime * speed * 0.55)).rgb; // второй слой чуть другим масштабом и медленнее
   return a * 0.62 + b * 0.38;
 }
+// Воздух шахт: тёплая тёмная дымка в ходах; в Красной пропасти (центр 205, −40, полуоси 66 × 58 — как в
+// mines.js CHASM) — красный свет снизу и лежащий красный туман у дна (−322 м): плотность по высоте —
+// экспонента, её интеграл вдоль луча считается точно, без шагов.
+vec3 mineFog(vec3 c, vec3 w, float d){
+  vec2 C = vec2(205.0, -40.0), R = vec2(66.0, 58.0);
+  float ce = length((w.xz - C) / R);
+  float inCh = 1.0 - smoothstep(0.92, 1.3, ce);
+  // свет снизу: чем ближе к туману, тем краснее и ярче (стены подсвечены как от лавы)
+  float red = inCh * (0.12 * smoothstep(-170.0, -240.0, w.y) + 0.9 * smoothstep(-240.0, -318.0, w.y));
+  c += (c*1.6 + 0.04) * vec3(1.0, 0.22, 0.07) * red * 1.3;
+  // в пропасти воздух — светящаяся красная мгла: дальнее тонет в красном, ближнее — тёмный силуэт
+  float den = mix(0.042, 0.0085, inCh);
+  vec3 fc = mix(vec3(0.04, 0.03, 0.034), mix(vec3(0.30, 0.06, 0.04), vec3(0.85, 0.18, 0.06), smoothstep(-200.0, -312.0, w.y)), inCh);
+  c = mix(c, fc, 1.0 - exp(-d * den));
+  if (inCh > 0.0) {
+    float y0 = -322.0, H = 8.0;
+    float ya = cameraPosition.y - y0, yb = w.y - y0;
+    if (min(ya, yb) < 40.0) {
+      float dy = yb - ya;
+      float ea = exp(-max(ya, -6.0)/H), eb = exp(-max(yb, -6.0)/H);
+      float I = abs(dy) > 0.05 ? (ea - eb) * H / dy : 0.5*(ea + eb);
+      float m = 1.0 - exp(-0.08 * I * min(d, 220.0));
+      float sw = vnoise(w.xz * 0.045 + vec2(uTime * 0.06, -uTime * 0.04)) * 0.6 + vnoise(w.xz * 0.13 - uTime * 0.09) * 0.4;
+      vec3 rc = mix(vec3(0.75, 0.10, 0.04), vec3(1.0, 0.38, 0.12), sw);
+      c = mix(c, rc, clamp(m * inCh, 0.0, 0.97));
+    }
+  }
+  return c;
+}
 // Дымка: вдали — цвет неба, в глубине провала — бирюзовый и фиолетовый туман
 vec3 applyFog(vec3 c, vec3 w){
   float d = distance(w, cameraPosition);
@@ -204,6 +233,10 @@ vec3 applyFog(vec3 c, vec3 w){
 #endif
   // чем глубже, тем темнее: свет сверху туда почти не доходит
   c *= mix(1.0, 0.86, smoothstep(-12.0, -60.0, w.y));
+  // Шахты под озером (mines.js): камера ниже −190 м и не в колодце шахты — там совсем темно,
+  // светят только фонари, кристаллы, фонарик героя и красный туман пропасти
+  float mineK = smoothstep(-185.0, -193.0, cameraPosition.y) * smoothstep(52.0, 64.0, length(cameraPosition.xz));
+  c *= 1.0 - 0.55 * mineK;
   float deep = smoothstep(-18.0, -70.0, w.y);
   // Тёплый свет фонарика: освещает всё вокруг героя метров на семь, но не слепит.
   //  — вплотную к лампочке (сам герой, его голова) свет втрое слабее — герой виден, но не горит;
@@ -227,6 +260,7 @@ vec3 applyFog(vec3 c, vec3 w){
   // потолок только для добавленного света: то, что было светлым и без фонарика, не темнеет
   vec3 over = max(lit - max(c, vec3(0.72)), 0.0);
   c = lit - over + over / (1.0 + over*2.5);
+  vec3 cMine = c;
   // высоко над лугом воздух прозрачнее — горы не тонут в дымке
   float den = uFogDen * (1.0 - 0.6*smoothstep(10.0, 70.0, w.y));
   // дно шахты (озеро): туман мягче, цвет — голубой, и немного собственного света
@@ -268,6 +302,7 @@ vec3 applyFog(vec3 c, vec3 w){
       c = mix(c, mc, clamp(m * lk, 0.0, 0.75));
     }
   }
+  if (mineK > 0.0) c = mix(c, mineFog(cMine, w, d), mineK);
   return grade(c);
 }
 // Цвет травы: наверху сочная зелень, глубже — бирюза, ещё глубже — сиреневый мох

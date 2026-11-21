@@ -94,10 +94,12 @@ function tube(T, rnd, scene) {
   const R0 = ring[0], sk = [];
   for (let k = KA; k <= n; k++) { const v = R0[k % n]; sk.push(pos.length / 3); pos.push(pos[v * 3], pos[v * 3 + 1] - 1.5, pos[v * 3 + 2]); }
   for (let k = KA, j = 0; k < n; k++, j++) { const a = R0[k], b = R0[(k + 1) % n]; idx.push(a, sk[j], b, b, sk[j], sk[j + 1]); }
-  // торец: глухая скала в конце хода (перед ней — завал из глыб)
-  const L = ring[NT - 1], [cx, cz] = atU(T, T.L + 1.5, 0), ci = pos.length / 3;
-  pos.push(cx, tunFloor(T, T.L, tunC(T, T.L)) + T.H * 0.45, cz);
-  for (let k = 0; k < n; k++) idx.push(ci, L[k], L[(k + 1) % n]);
+  // торец: глухая скала в конце хода (перед ней — завал из глыб). Открытый ход (T.open) продолжается в шахты (mines.js)
+  if (!T.open) {
+    const L = ring[NT - 1], [cx, cz] = atU(T, T.L + 1.5, 0), ci = pos.length / 3;
+    pos.push(cx, tunFloor(T, T.L, tunC(T, T.L)) + T.H * 0.45, cz);
+    for (let k = 0; k < n; k++) idx.push(ci, L[k], L[(k + 1) % n]);
+  }
   return meshFrom(pos, idx, scene);
 }
 
@@ -234,7 +236,7 @@ function boulders(T, rnd, scene) {
     put(t, u, 0.2 + rnd() * 0.25, 0.35 + rnd() * 0.35);
   }
   // завал в конце: дальше ход откроем, когда будем расширять мир
-  for (let k = 0; k < 4; k++) put(T.L - 2.5 + rnd() * 2, (rnd() - 0.5) * 2 * (tunHW(T, T.L) - 1.5), 2 + rnd() * 5, 2.0 + rnd() * 0.8);
+  for (let k = 0; k < 4; k++) { const t = T.L - 2.5 + rnd() * 2, u = (rnd() - 0.5) * 2 * (tunHW(T, T.L) - 1.5), h = 2 + rnd() * 5, R = 2.0 + rnd() * 0.8; if (!T.open) put(t, u, h, R); else for (let q = 0; q < 15; q++) rnd(); }   // rnd тратим как раньше: остальное в ходах не сдвигается
   const b = bakeStones(specs, (x, y, z) => { if (heightAt(x, z) <= y + 0.05) return false; const [t, w] = tunLocal(T, x, z); return Math.abs(w - tunC(T, t)) > tunHW(T, t) + 0.5; });
   return b.meshes(scene);
 }

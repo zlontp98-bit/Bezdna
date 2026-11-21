@@ -24,6 +24,7 @@ import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
+import { buildMines, MINE_LIGHTS, inDeadlyFog } from './mines.js';
 import { buildVines } from './vines.js';
 import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
@@ -150,6 +151,8 @@ async function build() {
   // спуск в бездну: плиты вдоль стенки шахты; после руин (мостовые опоры) и столбов (острова)
   buildDescent(scene);
   buildTunnels(scene);         // два больших туннеля из шахты у дна: арка в стене, ход полого вниз, глыбы по стенам
+  await loadStep(44, 'Роем шахты…');
+  console.log('> шахты', JSON.stringify(buildMines(scene)));   // шахты под озером: ходы от концов туннелей, ямы, Красная пропасть
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
   planWater();
@@ -216,7 +219,7 @@ async function build() {
   chest = new Chests(scene, STACKS, flora.trees, player, inv, world, toast);
   mine = new Miner(scene, flora.boulders, flora.rockGeo, player, inv, world, toast);
   deep = new Deep(scene, deepPlan, player, inv, world, toast);
-  deep.extraLights = [...lanterns, ...TUN_LIGHTS];   // + фонари в туннелях
+  deep.extraLights = [...lanterns, ...TUN_LIGHTS, ...MINE_LIGHTS];   // + фонари в туннелях
   jelly = new Jellies(scene, player, inv, world, toast);
   renderCraft();
   setQuality(Q.mode);
@@ -572,6 +575,8 @@ function frame(now) {
   }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
   if ((player.pos.y < -400 || player.fell) && !falling) { falling = true; $('msg').textContent = player.fell ? 'Ты сорвался — возвращаемся на последний уступ' : 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
+  // Красная пропасть: упал в туман — смерть, просыпаемся на последнем уступе
+  if (!falling && !creative.on && inDeadlyFog(player.pos)) { falling = true; fade = Math.max(fade, 0.5); sfx('hurt'); $('msg').textContent = 'Красный туман поглотил тебя… Возвращаемся на последний уступ'; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }
