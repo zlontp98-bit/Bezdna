@@ -24,7 +24,7 @@ import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent } from './descent.js';
 import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
-import { buildMines, MINE_LIGHTS, inDeadlyFog } from './mines.js';
+import { buildMines, MINE_LIGHTS, inDeadlyFog, inLava } from './mines.js';
 import { buildVines } from './vines.js';
 import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
@@ -576,7 +576,7 @@ function frame(now) {
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
   if ((player.pos.y < -400 || player.fell) && !falling) { falling = true; $('msg').textContent = player.fell ? 'Ты сорвался — возвращаемся на последний уступ' : 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
   // Красная пропасть: упал в туман — смерть, просыпаемся на последнем уступе
-  if (!falling && !creative.on && inDeadlyFog(player.pos)) { falling = true; fade = Math.max(fade, 0.5); sfx('hurt'); $('msg').textContent = 'Красный туман поглотил тебя… Возвращаемся на последний уступ'; $('msg').classList.add('show'); }
+  if (!falling && !creative.on && inDeadlyFog(player.pos)) { falling = true; fade = Math.max(fade, 0.5); sfx('hurt'); $('msg').textContent = inLava(player.pos) ? 'Ты упал в лаву… Возвращаемся на последний уступ' : 'Красный туман поглотил тебя… Возвращаемся на последний уступ'; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }
