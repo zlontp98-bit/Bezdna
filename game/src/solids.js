@@ -143,7 +143,9 @@ function fieldAt(s, x, z) {
   return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
 }
 export function addBox(x, z, hx, hz, rot, top, bottom = -1e9) {
-  insert({ x, z, hx, hz, c: Math.cos(rot), s: Math.sin(rot), top, bottom, box: true }, Math.hypot(hx, hz));
+  const s = { x, z, hx, hz, c: Math.cos(rot), s: Math.sin(rot), top, bottom, box: true };
+  insert(s, Math.hypot(hx, hz));
+  return s;
 }
 
 // Высота опоры под точкой для героя, чьи ноги на высоте y

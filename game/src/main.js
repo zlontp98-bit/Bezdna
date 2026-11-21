@@ -656,15 +656,15 @@ function hasProgress() { return inv.count('log') > 0 || inv.count('stone') > 0 |
 // Сводка на главном экране: ресурсы сверху и карточка с ближайшей целью
 function showSave() {
   const logs = inv.count('log'), st = town.state;
-  const chips = [`🪵 ${logs}`, `🪨 ${inv.count('stone')}`, `⚙️ ${inv.count('gear')}`, town.hall === 'built' ? '🏛️ Мастерская' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка'];
+  const chips = [`🪵 ${logs}`, `🪨 ${inv.count('stone')}`, `⚙️ ${inv.count('gear')}`, town.hall === 'built' ? '🏛️ Гильдия' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка'];
   $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
   const cost = RULES.build.house.cost.log, H = RULES.build.hall.cost, P = town.project || {};
   let ico, t, p, k;
   if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
   else if (st === 'building') { ico = '🏗️'; t = 'Дом строится'; p = `Осталось ${town.left()} с — заходи посмотреть.`; k = 1 - town.left() / (RULES.build.house.ms / 1000); }
-  else if (town.hall === 'none') { ico = '🏛️'; t = 'Задание: мастерская'; p = `На доске в доме: ${H.log} 🪵, ${H.stone} 🪨 и ${H.gear} ⚙️ (из ящика на островке). Внесено: ${P.log || 0}/${H.log} · ${P.stone || 0}/${H.stone} · ${P.gear || 0}/${H.gear}.`; k = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / 3; }
-  else if (town.hall === 'building') { ico = '🏗️'; t = 'Мастерская строится'; p = `Осталось ${town.hallLeft()} с.`; k = 1 - town.hallLeft() / (RULES.build.hall.ms / 1000); }
-  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Мастерская готова. Ищи старые ящики на островках над бездной.'; k = 1; }
+  else if (town.hall === 'none') { ico = '🏛️'; t = 'Задание: зал гильдии'; p = `На доске в доме: ${H.log} 🪵, ${H.stone} 🪨 и ${H.gear} ⚙️ (из ящика на островке). Внесено: ${P.log || 0}/${H.log} · ${P.stone || 0}/${H.stone} · ${P.gear || 0}/${H.gear}.`; k = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / 3; }
+  else if (town.hall === 'building') { ico = '🏗️'; t = 'Зал гильдии строится'; p = `Осталось ${town.hallLeft()} с.`; k = 1 - town.hallLeft() / (RULES.build.hall.ms / 1000); }
+  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Зал гильдии готов. Ищи старые ящики на островках над бездной.'; k = 1; }
   $('goalIco').textContent = ico; $('goalT').textContent = t; $('goalP').textContent = p;
   $('goalBar').style.width = Math.round(k * 100) + '%';
   $('playSub').textContent = hasProgress() ? 'С последнего сохранения' : 'Новое приключение';

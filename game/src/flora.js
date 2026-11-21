@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.min.js';
+import { LOT } from './guild.js';
 import { mulberry32, SEED, fbm } from './noise.js';
 import { U, mat } from './shaders.js';
 import { W, SRC, SOURCES, heightAt, normalAt, streamAt, waterAt, pathAt, POOLS } from './terrain.js';
@@ -255,6 +256,13 @@ export function updateFloraDist(cx, cz, dist) {
   for (const c of FLORA_CELLS) c.im.visible = Math.hypot(c.x - cx, c.z - cz) - c.r < dist;
 }
 
+// Площадка зала гильдии (guild.js LOT) в мире: дом стоит на месте палатки лагеря (camp.js), входом к костру
+function inGuildLot(spawn, x, z, pad) {
+  const a = -2.2, sx = spawn.x + 8.7 - Math.sin(a) * 1.3, sz = spawn.z - 3.5 - Math.cos(a) * 1.3;
+  const ex = x - sx, ez = z - sz, lx = ex * Math.cos(a) - ez * Math.sin(a), lz = ex * Math.sin(a) + ez * Math.cos(a);
+  return lx > LOT.x0 - pad && lx < LOT.x1 + pad && lz > LOT.z0 - pad && lz < LOT.z1 + pad;
+}
+
 export function buildFlora(scene) {
   const rnd = mulberry32(SEED + 7);
   const material = propMaterial();
@@ -288,6 +296,7 @@ export function buildFlora(scene) {
       if (r < 72 && PILLARS.some((p) => Math.hypot(x - p.x, z - p.z) < p.w + 1.8)) continue; // не под столбами паркура
       if (Math.hypot(x - spawn.x, z - spawn.z) < 9) continue;
       if (Math.hypot(x - spawn.x - 9.5, z - spawn.z + 3) < 8) continue; // место под дом в лагере
+      if (inGuildLot(spawn, x, z, 1.2)) continue; // и под зал гильдии
       if (fn(x, y, z, n.y, r)) placed++;
     }
   }
