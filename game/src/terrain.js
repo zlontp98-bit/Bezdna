@@ -1030,7 +1030,7 @@ const terrainMat = () => mat({
       float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr) * (1.0 - clamp(lowK, 0.0, 1.0) * (1.0 - smoothstep(18.0, 34.0, vW.y)))); // «горность»: форма, трава, снег
       float deepK = smoothstep(8.0, 50.0, -vW.y);
       // шахты под озером (и концы туннелей): ниже −190 м и вне шахты — только голый камень, без гор, травы и снега
-      float mineW = smoothstep(-186.0, -194.0, vW.y) * smoothstep(58.0, 66.0, rr);
+      float mineW = smoothstep(-182.0, -188.0, vW.y) * smoothstep(58.0, 66.0, rr);
       rr = mix(rr, 120.0, mineW); mtnK *= 1.0 - mineW;
       // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
