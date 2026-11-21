@@ -84,7 +84,7 @@ const PATH_S = 0.968, PATH_W = 3.2, RISE = 0.45;
 
 export const MINE_LIGHTS = [];
 export const MINE_NODES = N;   // для проверок
-export const MINE_ROUTES = [], MINE_PATHS = [];
+export const MINE_ROUTES = [], MINE_PATHS = [], MINE_FIELDS = [];
 const EL = [];          // все пустоты
 let GRID = null;        // сетка 16 м → пустоты (для физики и поля)
 const GC = 16;
@@ -529,6 +529,7 @@ export function buildMines(scene) {
     return e;
   });
   MINE_ROUTES.length = 0; for (const e of lavas) MINE_ROUTES.push(e.route);
+  MINE_FIELDS.length = 0; MINE_FIELDS.push(...lavas);
   MINE_PATHS.length = 0; MINE_PATHS.push(...paths);
   const segs = [];
   // ход от зала начинаем у края зала (пол зала ровный, без канавы от уклона хода), если уклон не выйдет круче

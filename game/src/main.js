@@ -708,6 +708,8 @@ $('tomenu').addEventListener('click', () => {
   if (document.exitPointerLock) document.exitPointerLock();
 });
 $('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
+// пока открыто меню, кнопки управления прячем — они ложились поверх нижних пунктов меню
+new MutationObserver(() => document.body.classList.toggle('panelOpen', $('panel').classList.contains('show'))).observe($('panel'), { attributes: true, attributeFilter: ['class'] });
 $('view').addEventListener('click', () => {
   firstPerson = !firstPerson;
   $('view').textContent = firstPerson ? 'Вид: от первого лица' : 'Вид: от третьего лица';
