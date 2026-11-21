@@ -128,8 +128,8 @@ export function buildGuild() {
   gal(-HX + WT, HX - WT, Z0 + WT, GZ);           // вдоль задней стены
   gal(-HX + WT, GX, GZ, -1.0);                   // вдоль левой стены
   // балки под галереей
-  for (let x = -HX + 1.5; x < HX; x += 1.6) B(base, 0.16, 0.22, GZ - Z0 - WT, beamD, x, BY - 0.37, (Z0 + WT + GZ) / 2);
-  for (let z = GZ + 1.2; z < -1; z += 1.6) B(base, GX + HX - WT, 0.22, 0.16, beamD, (-HX + WT + GX) / 2, BY - 0.37, z);
+  for (let x = -HX + 1.5; x < HX; x += 1.6) B(base, 0.16, 0.22, GZ - Z0 - WT, beamD, x, BY - 0.38, (Z0 + WT + GZ) / 2);
+  for (let z = GZ + 1.2; z < -1; z += 1.6) B(base, GX + HX - WT, 0.22, 0.16, beamD, (-HX + WT + GX) / 2, BY - 0.38, z);
   // столбы-опоры галереи с подкосами
   const post = (x, z) => {
     B(base, 0.34, BY, 0.34, beam, x, BY / 2 - 0.1, z);
@@ -154,7 +154,7 @@ export function buildGuild() {
   for (let i = 1; i <= STEPS; i++) {
     const y = BY * i / STEPS, z = SZ0 - (i - 0.5) * run;
     B(base, SX1 - SX0, y, run + 0.02, wood, (SX0 + SX1) / 2, y / 2, z);
-    B(base, SX1 - SX0 + 0.06, 0.08, run + 0.04, plank, (SX0 + SX1) / 2, y - 0.04, z);
+    B(base, SX1 - SX0 + 0.06, 0.08, run + 0.04, plank, (SX0 + SX1) / 2, y - 0.02, z);
     S(SX0, SX1, z - run / 2, z + run / 2, y);
     // перила с открытой стороны: столбик на каждой второй ступени и твёрдая преграда
     if (i % 2) B(base, 0.08, 1.0, 0.08, beamD, SX0 - 0.04, y + 0.5, z);
@@ -225,15 +225,15 @@ export function buildGuild() {
   table(3.9, -2.6); table(3.9, -5.6);
   // бочки и ящики
   const barrel = (arr, x, z, y = 0) => { arr.push(part(new THREE.CylinderGeometry(0.42, 0.38, 1.0, 10), 0x7b5a3c, { m: T(x, y + 0.5, z) }), part(new THREE.CylinderGeometry(0.44, 0.44, 0.07, 10), iron, { m: T(x, y + 0.75, z) }), part(new THREE.CylinderGeometry(0.42, 0.42, 0.07, 10), iron, { m: T(x, y + 0.25, z) })); };
-  const crate = (arr, x, z, s, y = 0, ry = 0) => { B(arr, s, s, s, 0xa06c44, x, y + s / 2, z, { ry }); B(arr, s + 0.03, 0.08, s + 0.03, beamD, x, y + s - 0.04, z, { ry }); };
-  barrel(base, -6.9, -1.0); barrel(base, -6.0, -0.9); crate(base, -7.1, -8.6, 0.8, 0, 0.2); crate(base, -6.9, -8.4, 0.55, 0.8, 0.6);
+  const crate = (arr, x, z, s, y = 0, ry = 0) => { B(arr, s, s, s, 0xa06c44, x, y + s / 2, z, { ry }); B(arr, s + 0.04, 0.08, s + 0.04, beamD, x, y + s - 0.02, z, { ry }); };
+  barrel(base, -6.9, -1.0); barrel(base, -6.0, -0.9); crate(base, -7.1, -8.6, 0.8, 0, 0.2); crate(base, -6.9, -8.4, 0.55, 0.83, 0.6);
   barrel(base, 4.2, Z0 + 1.0); crate(base, 5.2, Z0 + 0.9, 0.7, 0, 0.3);
   S(-7.4, -5.6, -1.45, -0.45, 1.0); S(-7.6, -6.5, -9.1, -8.0, 1.35); S(3.7, 5.7, Z0 + 0.4, Z0 + 1.5, 1.0);
   // на галерее: пара столов, ящики, бочка
   B(base, 2.0, 0.1, 0.8, plank, -3.0, BY + 0.8, Z0 + 1.2); B(base, 2.0, 0.1, 0.8, plank, 1.8, BY + 0.8, Z0 + 1.2);
   for (const x of [-3.9, -2.1, 0.9, 2.7]) B(base, 0.1, 0.78, 0.6, beamD, x, BY + 0.4, Z0 + 1.2);
   S(-4.0, -2.0, Z0 + 0.8, Z0 + 1.6, BY + 0.85); S(0.8, 2.8, Z0 + 0.8, Z0 + 1.6, BY + 0.85);
-  crate(base, -6.8, -3.0, 0.8, BY); barrel(base, -6.8, -6.0, BY); S(-7.25, -6.35, -3.45, -2.55, BY + 0.8); S(-7.25, -6.35, -6.45, -5.55, BY + 1.0);
+  crate(base, -6.8, -3.0, 0.8, BY + 0.01); barrel(base, -6.8, -6.0, BY + 0.01); S(-7.25, -6.35, -3.45, -2.55, BY + 0.8); S(-7.25, -6.35, -6.45, -5.55, BY + 1.0);
   // знамёна: большое на задней стене над галереей, малые — на перилах галереи
   const banner = (arr, x, y, z, w, h, ry = 0, d = 0.05) => {
     const fw = (dx, dy, ww, hh, c, dd, o = {}) => B(arr, ww, hh, dd, c, x + Math.cos(ry) * dx, y + dy, z - Math.sin(ry) * dx, { ry, ...o });
@@ -333,7 +333,7 @@ export function buildGuild() {
     top.push(part(box(len, 0.2, lz), roofC, { m: T(mx, my, (z0 + z1) / 2, 1, 1, 1, 0, -sd * an) }));
     for (let k = 0; k < 5; k++) { const u = (k - 2) * len / 5.5; top.push(part(box(0.14, 0.08, lz + 0.02), roofD, { m: T(mx + sd * u * Math.cos(an), my + 0.13 - u * Math.sin(an), (z0 + z1) / 2, 1, 1, 1, 0, -sd * an) })); }
     // под навесом: бочки, ящики, у левого — стойка с оружием
-    barrel(top, x1 - sd * 0.8, z0 - 1.0, -0.6 * 0); crate(top, x1 - sd * 1.1, z1 + 1.0, 0.8, 0, 0.3); crate(top, x1 - sd * 0.9, z1 + 1.1, 0.5, 0.8, 0.8);
+    barrel(top, x1 - sd * 0.8, z0 - 1.0, -0.6 * 0); crate(top, x1 - sd * 1.1, z1 + 1.0, 0.8, 0, 0.3); crate(top, x1 - sd * 0.9, z1 + 1.1, 0.5, 0.83, 0.8);
     S(Math.min(x1 - sd * 1.25, x1 - sd * 0.35), Math.max(x1 - sd * 1.25, x1 - sd * 0.35), z0 - 1.45, z0 - 0.55, 1.0);
     S(Math.min(x1 - sd * 1.55, x1 - sd * 0.65), Math.max(x1 - sd * 1.55, x1 - sd * 0.65), z1 + 0.55, z1 + 1.45, 1.3);
     if (sd < 0) {
