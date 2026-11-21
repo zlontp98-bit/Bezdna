@@ -1,7 +1,8 @@
 import * as THREE from '../vendor/three.min.js';
 import { part, merge, T, propMaterial } from './flora.js';
 import { heightAt, clearGrass } from './terrain.js';
-import { addBox } from './solids.js';
+import { addBox, removeSolid } from './solids.js';
+import { buildGuild, SPOT, LOT } from './guild.js';
 import { buildModel, SKIN_COLORS } from './player.js';
 import { RULES } from './world.js';
 
@@ -42,7 +43,8 @@ export class Settlement {
     this.m.root.rotation.y = this.npc.facing;
     this.m.armL.rotation.z = -0.3; this.m.armR.rotation.z = 0.3;
     scene.add(this.m.root);
-    player.addCollider({ x: nx, z: nz, r: 0.42, y0: this.npc.y - 0.5, y1: this.npc.y + 1.9 });
+    this.npcCol = { x: nx, z: nz, r: 0.42, y0: this.npc.y - 0.5, y1: this.npc.y + 1.9 };
+    player.addCollider(this.npcCol);
 
     // ---- состояние из мира ----
     const snap = world.snapshot();
@@ -138,118 +140,40 @@ export class Settlement {
     this.scaffold = mk(sc, false);
   }
 
-  // ---- уровень 2: мастерская ----
-  // Дом остаётся ядром, вокруг вырастает большое здание: каменное крыло с красной крышей справа,
-  // сторожевая башня, навес с оружейной стойкой слева, красные флаги, мишень, забор, фонари.
-  // Всё — три простые модели (основание, верх, леса): три вызова отрисовки.
+  // ---- уровень 2: зал гильдии (guild.js) ----
+  // Дом уступает место большому залу в два этажа на том же месте. Три модели: зал (растёт во время
+  // стройки), крыша с улицей (появляется готовой), леса.
   buildHall(scene) {
-    const M = propMaterial(), box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-    const stone = 0x8f8c88, stoneD = 0x77746f, logC = 0x9a6a44, dark = 0x5a3b26, plaster = 0xe4d6b4, roofC = 0x9a4a3c, red = 0xa9322c, cream = 0xe8d9b8, wood = 0x7a5034;
-    const WX = HW + 3.8;                 // правая стена крыла
-    const mk = (parts, visible) => {
+    const M = propMaterial();
+    // пол зала — по самому высокому месту под ним, ниже уходит каменный цоколь
+    let top = -1e9;
+    for (let lx = -8; lx <= 8; lx += 2) for (let lz = -12; lz <= 2.6; lz += 2) top = Math.max(top, heightAt(...this.W(lx, lz)));
+    this.gf = Math.min(top, this.floorY + 0.6) + 0.12;
+    const g = buildGuild();
+    const mk = (parts) => {
       const mesh = new THREE.Mesh(merge(parts), M);
-      mesh.position.set(this.hx, this.floorY, this.hz);
-      mesh.rotation.y = this.a; mesh.visible = visible; mesh.frustumCulled = false;
+      mesh.position.set(this.hx, this.gf, this.hz);
+      mesh.rotation.y = this.a; mesh.visible = false; mesh.frustumCulled = false;
       scene.add(mesh); return mesh;
     };
-    const base = [], top = [], scaf = [];
-    // --- правое крыло: каменный цоколь, фахверк (светлая штукатурка с тёмными балками), окна ---
-    const wx0 = HW, wx1 = WX, wcx = (wx0 + wx1) / 2, ww = wx1 - wx0, wd = 2 * HD - 0.4, wz = -0.2, WH = 3.0;
-    base.push(
-      part(box(ww, 1.0, wd + 0.2), stone, { stone: 1, m: T(wcx, 0.5 - 0.0, wz) }),
-      part(box(ww - 0.1, WH - 1.0, wd), plaster, { m: T(wcx, 1.0 + (WH - 1.0) / 2, wz) }),
-    );
-    for (const lz of [-wd / 2, wd / 2]) for (let i = 0; i <= 4; i++) base.push(part(box(0.16, WH - 1.0, 0.16), dark, { m: T(wx0 + 0.1 + i * (ww - 0.2) / 4, 1.0 + (WH - 1.0) / 2, wz + lz) }));
-    base.push(part(box(ww, 0.16, wd + 0.2), dark, { m: T(wcx, 1.0, wz) }), part(box(ww, 0.16, wd + 0.2), dark, { m: T(wcx, WH, wz) }));
-    // диагональные связи на лицевой стене
-    for (const sd of [-1, 1]) base.push(part(box(0.12, 1.9, 0.12), dark, { m: T(wcx + sd * 1.3, 2.0, wz + wd / 2 + 0.04, 1, 1, 1, 0, sd * 0.55) }));
-    // окна (светятся)
-    for (const o of [wx0 + 1.1, wx1 - 1.1]) base.push(part(box(0.8, 0.8, 0.14), 0xffe9a0, { glow: 0.8, m: T(o, 2.0, wz + wd / 2 + 0.08) }), part(box(0.95, 0.95, 0.1), dark, { m: T(o, 2.0, wz + wd / 2 + 0.03) }));
-    base.push(part(box(0.14, 0.8, 0.8), 0xffe9a0, { glow: 0.8, m: T(wx1 + 0.02, 2.0, wz) }));
-    // --- башня справа от крыла ---
-    const tx = wx1 + 1.25, tz = wz - 0.4, TW = 2.2, TH2 = 7.6;
-    base.push(
-      part(box(TW + 0.3, 1.4, TW + 0.3), stone, { stone: 1, m: T(tx, 0.7, tz) }),
-      part(box(TW, TH2 - 1.4, TW), logC, { m: T(tx, 1.4 + (TH2 - 1.4) / 2, tz) }),
-    );
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) base.push(part(box(0.22, TH2, 0.22), dark, { m: T(tx + sx * (TW / 2), TH2 / 2, tz + sz * (TW / 2)) }));
-    for (let k = 0; k < 3; k++) base.push(part(box(TW + 0.1, 0.12, TW + 0.1), dark, { m: T(tx, 2.4 + k * 1.9, tz) }));
-    // смотровая площадка с перилами
-    base.push(part(box(TW + 1.1, 0.2, TW + 1.1), wood, { m: T(tx, TH2 - 0.3, tz) }));
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) base.push(part(box(0.12, 1.0, 0.12), dark, { m: T(tx + sx * (TW / 2 + 0.5), TH2 + 0.3, tz + sz * (TW / 2 + 0.5)) }));
-    for (const sd of [-1, 1]) {
-      base.push(part(box(TW + 1.1, 0.1, 0.1), wood, { m: T(tx, TH2 + 0.7, tz + sd * (TW / 2 + 0.5)) }), part(box(0.1, 0.1, TW + 1.1), wood, { m: T(tx + sd * (TW / 2 + 0.5), TH2 + 0.7, tz) }));
-    }
-    // --- верх: крыша крыла, крыша башни, дымоход, флаги, навес, мишень, забор, фонари ---
-    const tri = (w, h) => { const sh = new THREE.Shape(); sh.moveTo(-w, 0); sh.lineTo(w, 0); sh.lineTo(0, h); sh.closePath(); return sh; };
-    // крыша крыла — вдоль x (двускатная, конёк по x): экструзия профиля по глубине, повёрнута
-    top.push(part(new THREE.ExtrudeGeometry(tri(wd / 2 + 0.5, 1.6), { depth: ww + 0.8, bevelEnabled: false }).rotateY(Math.PI / 2).translate(wx0 - 0.4, WH, wz), roofC));
-    top.push(part(box(0.7, 1.7, 0.7), stone, { stone: 1, m: T(wcx - 0.8, WH + 1.5, wz - 0.7) }), part(box(0.9, 0.16, 0.9), stoneD, { stone: 1, m: T(wcx - 0.8, WH + 2.4, wz - 0.7) }));
-    // шатровая крыша башни
-    top.push(part(new THREE.ConeGeometry(TW * 0.95, 2.3, 4).rotateY(Math.PI / 4), roofC, { m: T(tx, TH2 + 2.55, tz) }), part(box(0.1, 0.9, 0.1), dark, { m: T(tx, TH2 + 4.2, tz) }));
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) top.push(part(box(0.14, 1.9, 0.14), dark, { m: T(tx + sx * (TW / 2 + 0.5), TH2 + 1.6, tz + sz * (TW / 2 + 0.5)) }));
-    // красные флаги со скрещёнными мечами: над входом, на башне, на столбе у навеса
-    const flag = (x, y, z, ry, w, h) => {
-      top.push(part(box(w, h, 0.05), red, { m: T(x, y, z, 1, 1, 1, ry) }), part(box(w + 0.1, 0.1, 0.1), dark, { m: T(x, y + h / 2 + 0.05, z, 1, 1, 1, ry) }));
-      for (const sd of [-1, 1]) top.push(part(box(0.09, h * 0.62, 0.02), 0xf1ece0, { m: T(x, y + h * 0.05, z + 0.035, 1, 1, 1, ry, sd * 0.62) }));
-      // «хвост» флага
-      top.push(part(new THREE.ConeGeometry(w / 2, 0.35, 3).rotateX(Math.PI), red, { m: T(x, y - h / 2 - 0.12, z, 1, 1, 1, ry) }));
-    };
-    flag(0, 3.1, HD + 0.07, 0, 0.9, 1.6);                 // над дверью
-    flag(tx, TH2 - 2.4, tz + TW / 2 + 0.08, 0, 0.7, 1.4);  // на башне
-    flag(wcx, 2.2, wz + wd / 2 + 0.2, 0, 0.7, 0.0001);     // (под окнами крыла — только перекладина)
-    // навес слева: четыре столба, полосатое полотно с наклоном, оружейная стойка под ним
-    const ax0 = -HW - 4.4, ax1 = -HW - 0.3, az0 = -0.2, az1 = 3.6;
-    for (const [x, z] of [[ax0, az0], [ax0, az1], [ax1, az1]]) top.push(part(box(0.16, 2.9, 0.16), dark, { m: T(x, 1.45, z) }));
-    const stripes = 8;
-    for (let i = 0; i < stripes; i++) top.push(part(box((ax1 - ax0) / stripes + 0.01, 0.07, az1 - az0 + 0.4), i % 2 ? cream : red, { m: T(ax0 + (i + 0.5) * (ax1 - ax0) / stripes, 3.0 - 0.0, (az0 + az1) / 2 + 0.1, 1, 1, 1, 0, 0) }));
-    // подпорки и «волны» полотна по краю
-    for (let i = 0; i < stripes; i++) top.push(part(new THREE.ConeGeometry(0.28, 0.3, 3).rotateX(Math.PI), i % 2 ? cream : red, { m: T(ax0 + (i + 0.5) * (ax1 - ax0) / stripes, 2.8, az1 + 0.28, 1, 1, 1, 0) }));
-    // оружейная стойка: рама и копья с мечами
-    top.push(part(box(2.6, 0.12, 0.12), dark, { m: T((ax0 + ax1) / 2, 1.5, az0 + 0.5) }), part(box(2.6, 0.12, 0.12), dark, { m: T((ax0 + ax1) / 2, 0.5, az0 + 0.5) }));
-    for (let i = 0; i < 7; i++) top.push(part(box(0.06, 1.7, 0.06), i % 3 ? wood : 0xb9c2cb, { m: T(ax0 + 0.6 + i * 0.4, 1.0, az0 + 0.5, 1, 1, 1, 0, (i - 3) * 0.03) }));
-    // столы и ящики под навесом
-    top.push(part(box(1.5, 0.12, 0.7), wood, { m: T(ax0 + 1.5, 0.85, az1 - 0.8) }), part(box(0.9, 0.9, 0.9), 0xa06c44, { m: T(ax1 - 0.9, 0.45, az1 - 1.0) }), part(box(0.7, 0.7, 0.7), 0xa06c44, { m: T(ax1 - 1.3, 0.35, az1 - 0.3, 1, 1, 1, 0.5) }));
-    // красный флаг на высоком столбе слева от навеса
-    top.push(part(box(0.18, 5.4, 0.18), dark, { m: T(ax0 - 0.9, 2.7, az1 + 0.3) }));
-    flag(ax0 - 0.9 + 0.0, 4.5, az1 + 0.3 + 0.12, 0, 0.9, 1.7);
-    // мишень на подставке
-    top.push(part(box(0.1, 1.3, 0.1), dark, { m: T(-HW - 2.6, 0.65, HD + 3.2) }), part(new THREE.CylinderGeometry(0.62, 0.62, 0.12, 14).rotateX(Math.PI / 2), 0xf1ece0, { m: T(-HW - 2.6, 1.5, HD + 3.2) }),
-      part(new THREE.CylinderGeometry(0.44, 0.44, 0.13, 14).rotateX(Math.PI / 2), red, { m: T(-HW - 2.6, 1.5, HD + 3.2) }), part(new THREE.CylinderGeometry(0.22, 0.22, 0.14, 12).rotateX(Math.PI / 2), 0xf1ece0, { m: T(-HW - 2.6, 1.5, HD + 3.2) }));
-    // забор спереди слева и справа от входа (вход свободен)
-    for (const [x0, x1] of [[-HW - 5.0, -2.2], [2.2, WX + 0.6]]) {
-      const n = Math.round(Math.abs(x1 - x0) / 0.9);
-      for (let i = 0; i <= n; i++) top.push(part(box(0.14, 1.0, 0.14), wood, { m: T(x0 + i * (x1 - x0) / n, 0.5, HD + 4.4) }));
-      top.push(part(box(Math.abs(x1 - x0), 0.1, 0.08), wood, { m: T((x0 + x1) / 2, 0.8, HD + 4.4) }), part(box(Math.abs(x1 - x0), 0.1, 0.08), wood, { m: T((x0 + x1) / 2, 0.45, HD + 4.4) }));
-    }
-    // фонари: у входа, у крыла и на навесе
-    for (const [x, z] of [[-1.5, HD + 0.5], [1.5, HD + 0.5], [wx0 + ww / 2, wz + wd / 2 + 0.6], [ax1, az1]]) {
-      top.push(part(box(0.1, 1.5, 0.1), dark, { m: T(x, 1.0, z) }), part(box(0.28, 0.34, 0.28), 0xffe9a0, { glow: 1, m: T(x, 1.9, z) }), part(box(0.34, 0.06, 0.34), dark, { m: T(x, 2.1, z) }));
-    }
-    // ящики и бочки у стены крыла, жаровня у входа
-    top.push(part(box(0.9, 0.9, 0.9), 0xa06c44, { m: T(WX - 0.8, 0.45, wz + wd / 2 + 0.9) }), part(box(0.7, 0.7, 0.7), 0x8a5a3a, { m: T(WX - 1.9, 0.35, wz + wd / 2 + 0.8, 1, 1, 1, 0.4) }),
-      part(new THREE.CylinderGeometry(0.38, 0.34, 1.0, 9), 0x7b5a3c, { m: T(WX - 2.9, 0.5, wz + wd / 2 + 0.8) }));
-    top.push(part(new THREE.CylinderGeometry(0.5, 0.35, 0.4, 8), 0x3a3a40, { m: T(3.8, 0.55, HD + 2.0) }), part(new THREE.ConeGeometry(0.3, 0.8, 6), 0xff8a2a, { glow: 1, sway: 9, m: T(3.8, 1.15, HD + 2.0) }), part(new THREE.ConeGeometry(0.17, 0.5, 5), 0xffd257, { glow: 1, sway: 9, m: T(3.8, 1.1, HD + 2.0) }));
-    for (const sx of [-1, 1]) top.push(part(box(0.1, 0.5, 0.1), 0x3a3a40, { m: T(3.8 + sx * 0.4, 0.25, HD + 2.0 + 0.2) }));
-    // леса вокруг крыла и башни на время стройки
-    for (const [x, z, h] of [[wx0 - 0.5, wz - wd / 2 - 0.5, 3.6], [wx0 - 0.5, wz + wd / 2 + 0.5, 3.6], [wx1 + 0.5, wz + wd / 2 + 0.5, 3.6], [tx - TW / 2 - 0.6, tz + TW / 2 + 0.6, 8.2], [tx + TW / 2 + 0.6, tz + TW / 2 + 0.6, 8.2], [tx + TW / 2 + 0.6, tz - TW / 2 - 0.6, 8.2]])
-      scaf.push(part(box(0.12, h, 0.12), dark, { m: T(x, h / 2, z) }));
-    for (const y of [1.8, 3.4, 5.0, 6.6]) scaf.push(part(box(ww + TW + 2.4, 0.1, 0.1), dark, { m: T((wx0 + tx + TW / 2) / 2, y, wz + wd / 2 + 0.55) }));
-    this.hallBase = mk(base, false); this.hallTop = mk(top, false); this.hallScaf = mk(scaf, false);
-    this.hallDims = { wx0, wx1, wd, wz, tx, tz, TW, ax0, ax1, az0, az1, WH, TH2 };
+    this.hallBase = mk(g.base); this.hallTop = mk(g.top); this.hallScaf = mk(g.scaf);
+    this.hallSolids = g.solids;
   }
 
   // улучшение началось в момент at
   beginHall(at) {
     if (this.hall !== 'none' || this.state === 'none') { if (this.state === 'none') this.pendingHall = at; return; }
     this.hall = 'building'; this.hallAt = at;
-    const { W, a, floorY } = this, d = this.hallDims;
-    const solid = (lx, lz, hx, hz, top, bottom) => { const [x, z] = W(lx, lz); addBox(x, z, hx, hz, a, floorY + top, bottom === undefined ? -1e9 : floorY + bottom); };
-    solid((d.wx0 + d.wx1) / 2, d.wz, (d.wx1 - d.wx0) / 2, d.wd / 2, d.WH + 1.0);   // крыло: сплошное
-    solid(d.tx, d.tz, d.TW / 2 + 0.15, d.TW / 2 + 0.15, d.TH2);                      // башня
-    solid((d.ax0 + d.ax1) / 2, d.az0 + 0.5, (d.ax1 - d.ax0) / 2 - 0.1, 0.12, 1.5);   // оружейная стойка
+    const { W, a, gf } = this;
+    // дом разбирают: его модели и стены уходят, на их месте растёт зал
+    this.state = 'built';
+    this.base.visible = this.walls.visible = this.roof.visible = this.inside.visible = this.scaffold.visible = false;
+    for (const s of this.houseSolids || []) removeSolid(s);
+    this.houseSolids = [];
+    for (const [lx, lz, hx, hz, top, bottom] of this.hallSolids) { const [x, z] = W(lx, lz); addBox(x, z, hx, hz, a, gf + top, bottom === undefined ? -1e9 : gf + bottom); }
     this.hallBase.visible = this.hallScaf.visible = true;
-    clearGrass(this.hx + (d.wx0 + d.tx) / 2 * Math.cos(a), this.hz - (d.wx0 + d.tx) / 2 * Math.sin(a), 8, 4, a);
+    const cx = (LOT.x0 + LOT.x1) / 2, cz = (LOT.z0 + LOT.z1) / 2, [wx, wz] = W(cx, cz);
+    clearGrass(wx, wz, (LOT.x1 - LOT.x0) / 2, (LOT.z1 - LOT.z0) / 2, a);
     this.refreshHall(true);
   }
   refreshHall(force) {
@@ -259,8 +183,17 @@ export class Settlement {
     if (k >= 1) {
       this.hall = 'built'; this.hallBase.scale.y = 1;
       this.hallScaf.visible = false; this.hallTop.visible = true;
-      if (!force) this.toast('🏛️ Мастерская готова!');
+      this.toCounter();
+      if (!force) this.toast('🏛️ Зал гильдии готов!');
     }
+  }
+  // Борода встаёт за стойку, лицом к входу
+  toCounter() {
+    const n = this.npc, [x, z] = this.W(...SPOT.npc);
+    n.x = x; n.z = z; n.y = this.gf + 0.3; n.facing = this.a;
+    this.m.root.position.set(x, n.y, z); this.m.root.rotation.y = n.facing;
+    Object.assign(this.npcCol, { x, z, y0: n.y - 0.5, y1: n.y + 1.9 });
+    this.player.moveCollider(this.npcCol);
   }
   hallLeft() { return Math.max(0, Math.ceil((RULES.build.hall.ms - (this.world.now() - this.hallAt)) / 1000)); }
 
@@ -273,7 +206,8 @@ export class Settlement {
     camp.tentCol.r = -10;
     clearGrass(this.hx + this.fx * 0.45, this.hz + this.fz * 0.45, HW + 0.2, HD + 0.65, a);
     // дом твёрдый сразу: пол, стены, притолока (под ней проходим), крыльцо, мебель
-    const solid = (lx, lz, hx, hz, top, bottom) => { const [x, z] = W(lx, lz); addBox(x, z, hx, hz, a, floorY + top, bottom === undefined ? -1e9 : floorY + bottom); };
+    this.houseSolids = [];
+    const solid = (lx, lz, hx, hz, top, bottom) => { const [x, z] = W(lx, lz); this.houseSolids.push(addBox(x, z, hx, hz, a, floorY + top, bottom === undefined ? -1e9 : floorY + bottom)); };
     const fw = HW - DOOR;
     solid(0, 0, HW, HD, 0);
     solid(0, HD + 0.45, 1.05, 0.45, -0.15);
@@ -292,7 +226,7 @@ export class Settlement {
 
   // привести вид дома к состоянию: стены по ходу стройки, в конце — крыша и обстановка
   refresh(force) {
-    if (this.state !== 'building') return;
+    if (this.state !== 'building' || this.hall !== 'none') return;
     const k = Math.min(1, (this.world.now() - this.at) / RULES.build.house.ms);
     this.walls.scale.y = 0.06 + 0.94 * k;
     if (k >= 1) {
@@ -315,22 +249,22 @@ export class Settlement {
       text = `Привет! Палатка — это не дом. Принеси ${cost} брёвен, и я за полминуты поставлю настоящий — с дверью и доской заданий.`;
       acts.push({ label: `Построить дом: ${cost} 🪵 (есть ${have})`, can: have >= cost, run: () => this.accept() });
     } else if (this.state === 'building') text = `Строю, не отвлекай! Осталось ${this.left()} с.`;
-    else if (this.hall === 'building') text = `Мастерскую строим! Осталось ${this.hallLeft()} с. Леса не трогай.`;
-    else if (this.hall === 'built') text = 'Мастерская готова — красота! Заходи в дом, на доске заданий скоро появится новая работа.';
-    else text = 'Дом готов. Хочешь большую мастерскую — с башней, навесом и стойкой для оружия? На доске заданий в доме написано, что нужно принести.';
+    else if (this.hall === 'building') text = `Зал гильдии строим! Осталось ${this.hallLeft()} с. Леса не трогай.`;
+    else if (this.hall === 'built') text = 'Добро пожаловать в зал гильдии! Доска заданий — у левой стены, наверх — по лестнице справа.';
+    else text = 'Дом готов. Хочешь настоящий зал гильдии — в два этажа, с башней и стойкой? На доске заданий в доме написано, что нужно принести.';
     return { name, text, acts };
   }
   // доска заданий в доме: улучшение до мастерской — принести брёвна, камень и шестерёнку
   boardDialog() {
     const H = RULES.build.hall.cost, P = this.project, name = 'Доска заданий';
-    if (this.hall !== 'none') return { name, text: this.hall === 'building' ? `Мастерская строится: осталось ${this.hallLeft()} с.` : 'Задание выполнено — мастерская построена. Новые задания появятся позже.', prog: 1, acts: [] };
+    if (this.hall !== 'none') return { name, text: this.hall === 'building' ? `Зал гильдии строится: осталось ${this.hallLeft()} с.` : 'Задание выполнено — зал гильдии построен. Новые задания появятся позже.', prog: 1, acts: [] };
     const icon = { log: '🪵', stone: '🪨', gear: '⚙️' };
     const lines = Object.keys(H).map((id) => `${icon[id]} ${P[id] || 0}/${H[id]}`).join('   ');
     const give = Object.keys(H).map((id) => [id, Math.min(this.inv.count(id), H[id] - (P[id] || 0))]).filter(([, n]) => n > 0);
     const total = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / Object.keys(H).length;
     return {
       name,
-      text: `Задание: улучшить дом до мастерской. Принести: ${lines}. Шестерёнку можно найти в старых ящиках на островках над бездной.`,
+      text: `Задание: перестроить дом в зал гильдии. Принести: ${lines}. Шестерёнку можно найти в старых ящиках на островках над бездной.`,
       prog: total,
       acts: [{ label: give.length ? 'Внести: ' + give.map(([id, n]) => `${n} ${icon[id]}`).join(' · ') : 'Внести — у тебя нет нужного', can: give.length > 0,
         run: () => { for (const [id, n] of give) this.world.send({ type: 'contribute', item: id, n }); } }],
@@ -354,8 +288,10 @@ export class Settlement {
     const ex = p.x - this.hx, ez = p.z - this.hz, ca = Math.cos(this.a), sa = Math.sin(this.a);
     const lx = ex * ca - ez * sa, lz = ex * sa + ez * ca;
     const indoors = this.state !== 'none' && Math.abs(lx) < HW && Math.abs(lz) < HD && Math.abs(p.y - this.floorY) < 2.4;
-    this.nearBoard = this.state === 'built' && indoors && Math.abs(lx) < 1.6 && lz < -HD + 2.3;
-    if (this.state === 'built') this.roof.visible = !indoors;
+    if (this.hall === 'none') {
+      this.nearBoard = this.state === 'built' && indoors && Math.abs(lx) < 1.6 && lz < -HD + 2.3;
+      if (this.state === 'built') this.roof.visible = !indoors;
+    } else this.nearBoard = this.hall === 'built' && Math.hypot(lx - SPOT.board[0], lz - SPOT.board[1]) < 2.2 && Math.abs(p.y - this.gf) < 1.2;
     if (d > 45) return; // далеко — житель стоит как стоял
     n.t += dt;
     const work = this.state === 'building' || this.hall === 'building';
