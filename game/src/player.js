@@ -1,6 +1,9 @@
 import * as THREE from '../vendor/three.min.js';
 import { heightAt, terrainAt, normalAt, shadowAtCPU, waterAt } from './terrain.js';
-import { groundAt, hitSolid, ceiling, solidNormal, solidSloped, lastSolid, rockAt, rockFace, rockNormal, fieldTop } from './solids.js';
+import { groundAt, hitSolid, ceiling, solidNormal, solidSloped, lastSolid, climbRockAt as rockAt, climbTop as fieldTop, rockFace as rockFace0, rockNormal as rockNormal0 } from './solids.js';
+// лазание: и по глыбам, и по стенам шахт
+const rockFace = (x, z, y, dx, dz, out) => rockFace0(x, z, y, dx, dz, out, rockAt, fieldTop);
+const rockNormal = (x, z, y, out, rad = 0.55) => rockNormal0(x, z, y, out, rad, rockAt);
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
 import { fallPush } from './waterfall.js';
@@ -635,7 +638,8 @@ export class Player {
     p.y = ny;
     // руки достали до верха — вылезаем наверх
     if (inp.my > 0.2 && p.y + 1.25 >= topIn) {
-      const tx = b[0] - f.nx * 0.75, tz = b[1] - f.nz * 0.75, ty = this.G(tx, tz);
+      // у стены шахты верх грани — пол следующей пустоты: пол ищем на его высоте, а не на уровне ног
+      const tx = b[0] - f.nx * 0.75, tz = b[1] - f.nz * 0.75, ty = s.mine ? groundAt(tx, tz, topIn + 0.1) : this.G(tx, tz);
       if (ty > p.y - 0.5 && ty < p.y + 2.6) {
         this.mantle = { sx: p.x, sy: p.y, sz: p.z, tx, ty, tz, t: 0, dur: 0.55 };
         this.mantleCd = 0.5; this.climbCd = 0.5; this.face = null; this.climbing = false; this.speed = 0;

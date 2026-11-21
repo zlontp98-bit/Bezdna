@@ -198,12 +198,28 @@ export function rockAt(x, z, y) {
   }
   return null;
 }
+// Стены шахт (ниже −186 м): это не глыбы, а сама порода (terrainAt). Для лазания считаем её «скалой»:
+// камень там, где пол ближайшей пустоты выше точки. Верх грани — пол следующей пустоты над точкой.
+export const MINE_ROCK = { mine: true, climb: true, bottom: -1e9, y: 0 };
+const mineRockIn = (x, z, y) => y < -186 && x * x + z * z > 4900 && terrainAt(x, z, y) > y + 0.6;
+// то же, что rockAt, но со стенами шахт — только для лазания
+export function climbRockAt(x, z, y) {
+  const s = rockAt(x, z, y);
+  if (s) return s;
+  if (mineRockIn(x, z, y)) { MINE_ROCK.y = y; return MINE_ROCK; }
+  return null;
+}
+export function climbTop(s, x, z) {
+  if (!s.mine) return fieldTop(s, x, z);
+  for (let yy = s.y; yy < s.y + 40; yy += 0.25) { const t = terrainAt(x, z, yy); if (t <= yy + 0.6) return t; }
+  return 1e9;   // стена до самого свода — вылезти наверх некуда
+}
 // Нормаль грани скалы (наружу) в точке на высоте y: по тому, с каких сторон вокруг есть камень
-export function rockNormal(x, z, y, out, rad = 0.55) {
+export function rockNormal(x, z, y, out, rad = 0.55, at = rockAt) {
   let sx = 0, sz = 0;
   for (let k = 0; k < 16; k++) {
     const a = (k / 16) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
-    if (rockAt(x + c * rad, z + sn * rad, y)) { sx -= c; sz -= sn; }
+    if (at(x + c * rad, z + sn * rad, y)) { sx -= c; sz -= sn; }
   }
   const l = Math.hypot(sx, sz);
   if (l < 0.2) return false;
@@ -212,14 +228,14 @@ export function rockNormal(x, z, y, out, rad = 0.55) {
 }
 // Грань скалы впереди по направлению (dx, dz): ближайшая точка камня на высоте y в пределах 1.1 м
 const _rn = { x: 0, z: 0 };
-export function rockFace(x, z, y, dx, dz, out) {
+export function rockFace(x, z, y, dx, dz, out, at = rockAt, top = fieldTop) {
   for (let d = 0; d <= 1.1; d += 0.1) {
-    const s = rockAt(x + dx * d, z + dz * d, y);
+    const s = at(x + dx * d, z + dz * d, y);
     if (!s) continue;
     const bd = Math.max(0, d - 0.08), bx = x + dx * bd, bz = z + dz * bd;
-    if (!rockNormal(bx, bz, y, _rn)) { _rn.x = -dx; _rn.z = -dz; }
+    if (!rockNormal(bx, bz, y, _rn, 0.55, at)) { _rn.x = -dx; _rn.z = -dz; }
     out.s = s; out.bx = bx; out.bz = bz; out.nx = _rn.x; out.nz = _rn.z;
-    out.top = Math.max(fieldTop(s, bx - _rn.x * 0.4, bz - _rn.z * 0.4), fieldTop(s, bx + dx * 0.4, bz + dz * 0.4));
+    out.top = Math.max(top(s, bx - _rn.x * 0.4, bz - _rn.z * 0.4), top(s, bx + dx * 0.4, bz + dz * 0.4));
     return true;
   }
   return false;
