@@ -603,6 +603,7 @@ const GRASS_VS = /* glsl */ `
   uniform sampler2D uHmap; uniform vec3 uCenter, uPlayer; uniform float uS;
   attribute vec4 aOff;
   varying vec3 vW; varying vec3 vC; varying float vSh;
+  const float GRASS_H = 1.35;
   void main(){
     vec2 base = aOff.xy + uS * floor((uCenter.xz - aOff.xy)/uS + 0.5);
     float dist = distance(base, uCenter.xz);
@@ -621,9 +622,13 @@ const GRASS_VS = /* glsl */ `
       vW = vec3(0.0); vC = vec3(0.0); vSh = 0.0;
       return;
     }
-    // у самой камеры (вид от первого лица, камера у земли) травинка во весь рост — огромный зелёный шип
-    // на пол-экрана: такие пригибаем к земле
-    k *= mix(0.2, 1.0, smoothstep(0.6, 3.5, distance(base, cameraPosition.xz)) + step(2.5, abs(cameraPosition.y - hm.r)));
+    // У самой камеры травинка во весь рост — огромный зелёный шип на пол-экрана: такие пригибаем,
+    // плавно, по настоящему расстоянию до камеры (в 3D).
+    // Раньше здесь был скачок: когда камера выше 2.5 м над землёй (смотрим вниз), к множителю
+    // прибавлялась единица и вся трава с цветами становилась почти вдвое выше (до ×1.8), а стоило
+    // посмотреть вверх (камера опускается) — снова обычная. Теперь высота одна при любом наклоне;
+    // GRASS_H — общая высота травы и цветов (между прежними «низкой» ×1 и «высокой» ×1.8).
+    k *= GRASS_H * mix(0.2, 1.0, smoothstep(0.6, 3.5, distance(vec3(base.x, hm.r + 0.3, base.y), cameraPosition)));
     float a = aOff.z * 6.2831;
     vec2 dir = vec2(cos(a), sin(a));
     float y = position.y;
