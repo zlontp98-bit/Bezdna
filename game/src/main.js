@@ -7,7 +7,7 @@ import { buildFlora, buildGrass, updateFloraDist, propMaterial } from './flora.j
 import { buildSky, buildClouds, buildMist, buildMotes, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
 import { buildStacks, STACKS } from './stacks.js';
-import { buildWater, planWater } from './waterfall.js';
+import { buildWater, planWater, prepareWallWaterfall } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { buildHands } from './fphands.js';
 import { Input } from './input.js';
@@ -22,7 +22,7 @@ import { Miner } from './mine.js';
 import { Chests } from './chest.js';
 import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
-import { buildDescent, waterDebris, clearShaftDebris } from './descent.js';
+import { buildDescent, waterDebris, clearShaftDebris, clearWallStones } from './descent.js';
 import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
 import { buildMines, MINE_LIGHTS, inDeadlyFog, inLava, hotRock } from './mines.js';
 import { buildVines } from './vines.js';
@@ -149,7 +149,7 @@ async function build() {
   camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.2, 1400);
 
   await loadStep(6, 'Поднимаем горы…');
-  buildTerrain(scene);
+  buildTerrain(scene, prepareWallWaterfall);
   await loadStep(42, 'Ставим островки над бездной…');
   buildStacks(scene);
   // руины раньше растений: тогда кусты и деревья обходят их плиты и столбы
@@ -163,7 +163,7 @@ async function build() {
   const underObjs = scene.children.slice(underFrom);
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
-  planWater({ waterDebris, clearShaftDebris });
+  planWater({ waterDebris, clearShaftDebris, clearWallStones });
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   // глубина: кристаллы, грибы и руда на глыбах ниже −75 м (по глыбам загруженной карты)

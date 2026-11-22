@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { mulberry32, SEED } from './noise.js';
 import { mat, U } from './shaders.js';
-import { W, SRC, SOURCES, POOLS, LAKE, poolDist, heightAt, waterAt } from './terrain.js';
+import { W, SRC, SOURCES, POOLS, LAKE, poolDist, heightAt, waterAt, setWaterfallWall } from './terrain.js';
 // озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
 const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
 import { smoothstep } from './noise.js';
@@ -84,9 +84,91 @@ const COLS = 9;    // точек поперёк ленты
 export const STREAMS = [];
 
 // Путь всех ручьёв считается до расстановки растений: деревья и грибы не ставим туда, где течёт вода.
+let wallWaterfall;
+
+// Сечения скалы заданы одним профилем. Между уступами поверхность крутая,
+// на полках она пологая. Русло и меш получают одну и ту же высоту породы.
+export function prepareWallWaterfall() {
+  const stream = planStream(SOURCES[0].tw, null, true);
+  const lip = stream.falls.at(-1);
+  if (!lip || lip.src) return;
+  const { th, lipR, y0, off } = lip;
+  const cx=Math.cos(th), cz=Math.sin(th), px=-cz, pz=cx;
+  const bottom=LAKE.level-.42, endR=LAKE.r-2.7, width=Math.max(4.15,lip.half);
+  const profile = [
+    [lipR,y0], [lipR-1.4,y0-1.0], [lipR-4.7,-14.8],
+    [lipR-6.0,-15.5], [lipR-10.0,-16.1], [lipR-11.4,-17.0],
+    [lipR-15.8,-45.8], [lipR-17.0,-47.5], [lipR-21.0,-48.3],
+    [lipR-22.3,-49.7], [lipR-28.8,-107.0],
+    [endR+2.7,-170.0],[endR,bottom]
+  ];
+  const segment = r => {
+    let i=0;
+    while(i<profile.length-2&&r<profile[i+1][0])i++;
+    return i;
+  };
+  const at = (r,i=segment(r)) => {
+    const [a,h]=profile[i], [b,k]=profile[i+1];
+    return h+(k-h)*Math.min(1,Math.max(0,(a-r)/(a-b)));
+  };
+  const shelf = i => i===3||i===7;
+  // Плавные боковые откосы соединяют профиль с существующей скалой.
+  const bed = (h,x,z) => {
+    const r=x*cx+z*cz, w=Math.abs(x*px+z*pz-off);
+    if(r>lipR+.8||r<endR-4||w>width+7.4)return h;
+    const i=segment(r), y=at(r,i);
+    const clearance=shelf(i)?.22:1.4;
+    const banks=1-smoothstep(width+2.6,width+7.4,w);
+    const connect=smoothstep(lipR+.8,lipR-.9,r)*smoothstep(endR-4,endR-1.5,r);
+    return h+(y-clearance-h)*banks*connect;
+  };
+  setWaterfallWall({th,rMin:endR-5,rMax:lipR+2,half:width+9,bed});
+  const first = stream.rows.length;
+  const lead = Math.min(first, 12);
+  for (let i=0;i<lead;i++) {
+    const r=stream.rows[first-lead+i];
+    r.half+=(width-r.half)*smoothstep(0,lead-1,i);
+  }
+  const impacts=[];
+  let settling=0;
+  let lastPhase, fallStart = y0;
+  for (let i=0;i<profile.length-1;i++) {
+    const [r0,h0]=profile[i], [r1,h1]=profile[i+1];
+    const n=Math.ceil(Math.hypot(r0-r1,h0-h1)/.74);
+    for(let k=i===0?0:1;k<=n;k++){
+      const t=k/n, r=r0+(r1-r0)*t;
+      const x=cx*r+px*off,z=cz*r+pz*off;
+      const surface = shelf(i)||(i===2||i===6)&&t>.65;
+      const kind = surface?'run':'fall';
+      const y = surface ? Math.max(at(r,i),heightAt(x,z)+.12) : at(r,i);
+      if(surface&&lastPhase==='fall') {
+        impacts.push([x,heightAt(x,z)+.09,z,width]);
+        settling=3.8;
+      }
+      if (!surface && lastPhase === 'run') fallStart = stream.rows.at(-1).c[1];
+      lastPhase=kind;
+      const foam = surface ? .88*smoothstep(0,3.8,settling) : 0;
+      settling=Math.max(0,settling-.74);
+      const row={kind,wallWaterfall:true,shaft:!surface,c:[x,y,z],sd:[px,pz],half:width*(1+.07*(lipR-r)/(lipR-endR)),drop:surface?0:Math.max(0,fallStart-y),hb:99,foam};
+      if(surface)row.transition=0;
+      if(i===profile.length-2)row.hb=y-LAKE.level;
+      stream.rows.push(row);
+    }
+  }
+  const [x,,z]=stream.rows.at(-1).c;
+  lip.open=true;lip.type='wallWaterfall';lip.i0=first;lip.i1=stream.rows.length-1;
+  lip.half=width;lip.y1=LAKE.level;lip.land=[x,LAKE.level,z];lip.impacts=impacts;
+  finishRows(stream.rows,cx,cz);
+  wallWaterfall=stream;
+}
+
 export function planWater(shaftOptions) {
   if (STREAMS.length) return STREAMS;
-  for (const s of SOURCES) STREAMS.push(planStream(s.tw, shaftOptions));
+  for (const s of SOURCES) STREAMS.push(wallWaterfall?.th === s.tw ? wallWaterfall : planStream(s.tw, shaftOptions));
+  if (wallWaterfall) {
+    const waterfall = wallWaterfall.falls.at(-1);
+    shaftOptions?.clearWallStones?.(wallWaterfall.rows.slice(waterfall.i0, waterfall.i1 + 1));
+  }
   // точки воды (падение и сток по дну) в сетке 4 м — для waterNear
   for (const st of STREAMS) for (const r of st.rows) {
     if (r.kind === 'flat') continue;
@@ -110,7 +192,7 @@ export function waterNear(x, y, z, rad, h) {
   return false;
 }
 
-function planStream(th, shaftOptions) {
+function planStream(th, shaftOptions, findMainLip = false) {
   const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
   const R = [];
   for (let r = W.SRC_R + SRC.GORGE; r > W.PIT - 6; r -= 0.5) R.push(r);
@@ -156,7 +238,7 @@ function planStream(th, shaftOptions) {
     segs.push([start, i]);
     const f = { th, lipR: R[i], y0: lvl[i], y1: open ? LAKE.level : lvl[j], open, half: 0, src: R[i] > W.SRC_R, i, j };
     falls.push(f);
-    if (open) break;
+    if (open || (findMainLip && !f.src)) { open = true; break; }
     for (let k = j; k < R.length; k++) foamAt[k] = Math.max(foamAt[k], smoothstep(12, 0, R[j] - R[k]) * (f.src ? 1 : 0.75));
     start = j; i = j;
   }
@@ -191,7 +273,8 @@ function planStream(th, shaftOptions) {
     const f = falls[si];
     if (!f) continue;
     f.i0 = rows.length; // первый ряд водопада
-    const fr = f.open ? shaftRows(f, cx, cz, px, pz, shaftOptions) : dropRows(f, cx, cz, px, pz);
+    if (findMainLip && !f.src) return { th, rows, falls };
+    const fr = f.open ? secondaryShaftRows(f, cx, cz, px, pz, shaftOptions) : dropRows(f, cx, cz, px, pz);
     for (const r of fr) rows.push(r);
     f.i1 = rows.length - 1;
   }
@@ -249,7 +332,7 @@ function dropRows(f, cx, cz, px, pz) {
 }
 
 // Завеса следует общему профилю стены, а у дна раскрывается в ручей.
-function shaftRows(f, cx, cz, px, pz, shaftOptions) {
+function secondaryShaftRows(f, cx, cz, px, pz, shaftOptions) {
   const H = f.y0 - LAKE.level, VH = 1.6, GAP = 0.7;
   const halfAt = (d) => f.half + Math.min(1.2, H * 0.02) * d;
   const at = (r, l) => [cx * r + px * (l + f.off), cz * r + pz * (l + f.off)];
@@ -631,13 +714,14 @@ export function buildWater(scene) {
       const { c, sd, n, half, fall, q } = r;
       let lip = 0;
       for (const lq of lipQ) lip = Math.max(lip, Math.exp(-(((q - lq - 0.6) / 1.3) ** 2)));
-      const bul = r.kind === 'flat' || r.kind === 'run' || r.slide ? 0 : (r.shaft ? 0.5 : Math.min(0.5, half * 0.12)) * fall;
+      const bul = r.wallWaterfall ? 0 : r.kind === 'flat' || r.kind === 'run' || r.slide ? 0 : (r.shaft ? 0.5 : Math.min(0.5, half * 0.12)) * fall;
       for (let j = 0; j < COLS; j++) {
         const u = -1 + (2 * j) / (COLS - 1), oo = (1 - u * u) * bul;
         const x = c[0] + sd[0] * u * half + n[0] * oo, z = c[2] + sd[1] * u * half + n[2] * oo;
         let y = c[1] + n[1] * oo;
         // ручеёк по дну: бугорки и плоские камни под краями ленты вода покрывает, а не обтекает дырой
-        if (r.kind === 'run' || r.slide) { const h = heightAt(x, z), g = groundAt(x, z, h + 0.7); const top = g - h < 0.7 ? g : h; if (top + 0.06 > y && top < y + 0.8) y = top + 0.06; }
+        if (r.wallWaterfall && r.kind === 'run') y = Math.max(y,heightAt(x,z)+.12);
+        else if (r.kind === 'run' || r.slide) { const h = heightAt(x, z), g = groundAt(x, z, h + 0.7); const top = g - h < 0.7 ? g : h; if (top + 0.06 > y && top < y + 0.8) y = top + 0.06; }
         pos.push(x, y, z);
         // глубина (цвет глади) и пруды: в чаше ленты нет, там своя гладь — плавная смена у берега
         let depth = 1, fade = 1;
@@ -683,6 +767,7 @@ export function buildWater(scene) {
     mesh.frustumCulled = false;
     mesh.renderOrder = 4;
     mesh.userData.water = st;
+    if(st.falls.some(f=>f.type==='wallWaterfall'))mesh.userData.waterfallType='wallWaterfall';
     scene.add(mesh);
 
     // брызги там, где завеса бьёт о верх камня
@@ -694,6 +779,12 @@ export function buildWater(scene) {
       // куда бьёт струя: чаша под ней рисует кипящую пену и расходящиеся круги
       for (const p of [...POOLS, lakePool]) if (poolDist(p, f.land[0], f.land[2]) < 1) (p.splashes ||= []).push({ x: f.land[0], z: f.land[2], rad: hw * 0.6 + Math.min(1.5, H * 0.025) });
       if (f.lake) (lakePool.splashes ||= []).push({ x: f.lake[0], z: f.lake[1], rad: f.lake[2] * 0.7 });
+      if(f.type==='wallWaterfall') wetDisc(f.land[0],f.land[2],hw+2,f.land[1]-2,f.land[1]+2);
+      for(const [x,y,z,w] of f.impacts||[]){
+        spl(x,y,z,w,12,.62);
+        fog(x,y+.45,z,2.4,.12,0,0);
+        wetDisc(x,z,w+1.8,y-1.7,y+1.2);
+      }
       // ---- водяная пыль у подножия: чем выше водопад, тем её больше ----
       const big = Math.min(1, H / 45), N = Math.round(10 + 22 * big);
       const eo = Math.hypot(end.n[0], end.n[2]) || 1, ex2 = end.n[0] / eo, ez2 = end.n[2] / eo;
@@ -703,7 +794,7 @@ export function buildWater(scene) {
           (2 + rnd() * 3) * (0.6 + 1.4 * big), 0.1 + rnd() * 0.14, ex2 * 0.8 - ez2 * sp, ez2 * 0.8 + ex2 * sp);
       }
       // лёгкая дымка вдоль струи: редкие большие клубы, почти прозрачные
-      for (let i = 4; i < fr.length - 2; i += 7) {
+      for (let i = 4; i < fr.length - 2; i += f.type === 'wallWaterfall' ? 16 : 7) {
         const r = fr[i], l = (rnd() - 0.5) * 2 * r.half;
         fog(r.c[0] + r.sd[0] * l + r.n[0] * 1.2, r.c[1] - 1, r.c[2] + r.sd[1] * l + r.n[2] * 1.2, 3 + rnd() * 3, 0.05 + rnd() * 0.04, r.n[0] * 0.3, r.n[2] * 0.3);
       }

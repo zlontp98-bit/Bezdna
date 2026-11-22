@@ -460,6 +460,15 @@ export const setOuterHeight = (f) => { outerHeight = f; };
 // высота кольца у самого края: с ней сшивается большой мир
 export const ringEdge = (th) => sampleGrid(HG, Math.cos(th) * (W.OUTER - 0.01), Math.sin(th) * (W.OUTER - 0.01));
 
+// Местный профиль мокрой стенки, заданный до построения меша и карты высот.
+let wallPatch;
+export function setWaterfallWall({ th, rMin, rMax, half, bed }) {
+  const center = th * COLS / TAU, span = Math.ceil(Math.atan2(half, rMin) * COLS / TAU) + 2;
+  const firstRow = Math.max(0, radii.findIndex(r => r >= rMin) - 1);
+  const lastRow = radii.findIndex(r => r >= rMax) + 1;
+  wallPatch = { th, bed, firstRow, lastRow, firstCol: Math.floor(center) - span, lastCol: Math.ceil(center) + span };
+}
+
 // Высота земли в любой точке. Очень дёшево: читает готовую сетку.
 // Этим же пользуется физика, поэтому ноги всегда совпадают с картинкой.
 export function heightAt(x, z) {
@@ -468,7 +477,8 @@ export function heightAt(x, z) {
     const v = patchAt(x, z);
     if (v !== null) return v;
   }
-  return applyChannel(sampleGrid(HG, x, z), x, z);
+  const h = applyChannel(sampleGrid(HG, x, z), x, z);
+  return wallPatch ? wallPatch.bed(h, x, z) : h;
 }
 // Возле истоков рельеф хранится подробно (сетка 0.7 м) — иначе отвесную скалу и пруд не нарисовать
 const PATCHES = [];
@@ -971,7 +981,10 @@ function buildChannelStrips(scene, material) {
     let row = 0, prevOk = false;
     for (let k = 0; k < SN; k++) {
       const r = SR0 - k * SDR;
-      if (!STRIP_ON[th][k]) { prevOk = false; continue; }
+      if (!STRIP_ON[th][k] || (wallPatch?.th === th && r >= radii[wallPatch.firstRow] && r <= radii[wallPatch.lastRow])) {
+        prevOk = false;
+        continue;
+      }
       for (let k = 0; k < K; k++) {
         const o = offs[k], x = cx * r + px * o, z = cz * r + pz * o;
         pos.push(x, heightAt(x, z) + (Math.abs(o) > 7 ? 0.02 : 0), z);
@@ -1251,7 +1264,7 @@ function inTunnelBand(ri, c) {
   return false;
 }
 
-export function buildTerrain(scene) {
+export function buildTerrain(scene, prepareWater) {
   // место чаш: идём вдоль ручья от края внутрь до подножия стены
   for (const th of W.STREAMS) {
     const cx = Math.cos(th), cz = Math.sin(th);
@@ -1291,6 +1304,7 @@ export function buildTerrain(scene) {
 
   buildPatches();
   setupTunnels();
+  prepareWater?.();
 
   const material = rockMat = terrainMat();
   // Обратная сторона скал — отдельным проходом после всех лицевых. Там, где поверхность скалы делает
@@ -1324,7 +1338,9 @@ export function buildTerrain(scene) {
     for (let ri = 0; ri < ROWS - 1; ri++) {
       for (let ci = 0; ci < per; ci++) {
         const a = ri * (per + 1) + ci, b = a + 1, c = a + per + 1, d = c + 1;
-        if (inTunnelBand(ri, s * per + ci)) continue;   // стену у входа в туннель рисует tunnels.js (с аркой)
+        const col = s * per + ci;
+        if (wallPatch && ri >= wallPatch.firstRow && ri < wallPatch.lastRow && col >= wallPatch.firstCol && col < wallPatch.lastCol) continue;
+        if (inTunnelBand(ri, col)) continue;   // стену у входа в туннель рисует tunnels.js (с аркой)
         idx.push(a, b, c, b, d, c);
       }
     }
@@ -1337,10 +1353,47 @@ export function buildTerrain(scene) {
     mesh.matrixAutoUpdate = false;
     scene.add(mesh);
   }
+  if (wallPatch) buildWaterfallWall(scene, material);
   buildChannelStrips(scene, material);
   buildCragPatch(scene, material);
   for (const P of PATCHES) buildPatchMesh(scene, material, P);
   bakeHeightTexture();
+}
+
+function buildWaterfallWall(scene, material) {
+  const { firstRow, lastRow, firstCol, lastCol, bed } = wallPatch;
+  const radialDetail = LITE ? 3 : 4, crossDetail = LITE ? 2 : 4;
+  const columns = (lastCol-firstCol)*crossDetail+1, rows = (lastRow-firstRow)*radialDetail+1;
+  const positions = [], indices = [], normals = [], normal = new THREE.Vector3();
+  // Интерполируем координаты исходных рёбер. Граница плотной полосы совпадает с крупным мешем.
+  for (let j=0;j<rows;j++) for (let i=0;i<columns;i++) {
+    const ri=Math.min(lastRow-1,firstRow+Math.floor(j/radialDetail));
+    const ci=Math.min(lastCol-1,firstCol+Math.floor(i/crossDetail));
+    const dr=j/radialDetail+firstRow-ri, dc=i/crossDetail+firstCol-ci;
+    const r=radii[ri]+(radii[ri+1]-radii[ri])*dr;
+    const x=r*(COSC[ci]+(COSC[ci+1]-COSC[ci])*dc), z=r*(SINC[ci]+(SINC[ci+1]-SINC[ci])*dc);
+    const edge=i===0||i===columns-1||j===0||j===rows-1;
+    const base = sampleGrid(MG,x,z);
+    const y = edge || bed(base,x,z) === base ? base : heightAt(x,z);
+    positions.push(x,y,z);
+    normalAt(x,z,normal,.24);
+    normals.push(normal.x,normal.y,normal.z);
+    if(i<columns-1&&j<rows-1) {
+      const a=j*columns+i, b=a+1, c=a+columns;
+      indices.push(a,b,c,b,c+1,c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  g.setAttribute('normal',new THREE.Float32BufferAttribute(normals,3));
+  g.setAttribute('aB',new THREE.Float32BufferAttribute(new Float32Array(positions.length/3*2),2));
+  g.setIndex(indices);
+  const wallMat = material.clone();
+  wallMat.uniforms = material.uniforms;
+  wallMat.side = THREE.DoubleSide;
+  const mesh = new THREE.Mesh(g, wallMat);
+  mesh.userData.waterfallWall = true;
+  scene.add(mesh);
 }
 
 // Убрать траву под постройкой: прямоугольник (hx×hz, повёрнут на rot) в текстуре высот

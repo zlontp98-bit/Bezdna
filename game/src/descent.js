@@ -752,17 +752,22 @@ export function waterDebris(solid) {
   return s.kind === 'rubble' || (s.kind === 'built' && Math.max(s.A, s.B) <= 4.8 && s.col === false);
 }
 
-export function clearShaftDebris(rows) {
+export function clearShaftDebris(rows, accept = waterDebris) {
   for (const { c, sd, half } of rows) {
     const [x, y, z] = c;
     const width = half + 0.8;
     for (let u = -1; u <= 1.01; u += 0.125) {
       const sx = x + sd[0] * u * width, sz = z + sd[1] * u * width;
       let rock;
-      while ((rock = solidObjectAt(sx, y, sz, 0.5, false, waterDebris))) dropStone(rock.sid);
+      while ((rock = solidObjectAt(sx, y, sz, 0.5, false, accept))) dropStone(rock.sid);
     }
   }
   flushStones();
+}
+
+// Освобождаем проём от отдельных глыб поля, попавших в объём завесы.
+export function clearWallStones(rows) {
+  clearShaftDebris(rows, solid => STONES.has(solid.sid));
 }
 
 // Для редактора
