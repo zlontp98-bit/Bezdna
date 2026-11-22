@@ -153,7 +153,9 @@ async function build() {
   buildDescent(scene);
   buildTunnels(scene);         // два больших туннеля из шахты у дна: арка в стене, ход полого вниз, глыбы по стенам
   await loadStep(44, 'Роем шахты…');
+  const underFrom = scene.children.length;
   console.log('> шахты', JSON.stringify(buildMines(scene)));   // шахты под озером: ходы от концов туннелей, ямы, Красная пропасть
+  const underObjs = scene.children.slice(underFrom);
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
   planWater();
@@ -183,6 +185,7 @@ async function build() {
   spores.uniforms.uPx.value = renderer.getPixelRatio() * innerHeight / 700;
   extras.push(buildMoths(scene, deepPlan), spores.userData.pts);   // светящиеся мотыльки — только у больших грибов на дне
   for (const o of extras) o.visible = Q.mode !== 'low';
+  setupZones(underObjs);
   await loadStep(97, 'Будим героя…');
 
   input = new Input(canvas, { stickEl: $('stick'), knobEl: $('knob'), jumpEl: $('jump'), runEl: $('run'), grabEl: $('grab'), chopEl: $('chop') });
@@ -539,7 +542,47 @@ function menuFrame(dt, t) {
   camera.lookAt(target);
   U.uCenter.value.copy(p); U.uPlayer.value.copy(p);
   clouds.rotation.y += dt * 0.003;
+  updateZones();
   renderer.render(scene, camera);
+}
+
+// ---- зоны видимости ----
+// Без них видеокарта рисовала всё сразу: с поверхности — шахты под озером (глядя вниз на луг это
+// +100…300 вызовов и +100…300 тыс. треугольников), а из шахт — луг, лес и траву на 200 м выше.
+// Сквозь камень их всё равно не видно. Раскладываем объекты по слоям камеры:
+// 1 — шахты (mines.js). Видны, когда камера над провалом (внутри первого кольца) или ниже −30 м:
+//     из ствола большой шахты сквозь устья туннелей видно далеко вглубь, до ям шахт.
+//     Сами туннели (tunnels.js) не прячем: их устья видно с любого края провала.
+// 2 — поверхность (всё, что целиком выше −40 м). Не видна, когда камера в шахтах, вне ствола большой шахты.
+// Игровые объекты, добавленные позже (герой, NPC, зал гильдии), остаются в слое 0 и видны всегда.
+// Границы проверены сравнением кадров «с зонами / без зон» с края провала, из ствола, из туннелей и шахт.
+const L_UNDER = 1, L_SURF = 2, UNDER_Y = -30, RIM_R = W.HOLE, MINE_Y = -185, SHAFT_R = 64;
+function setupZones(underObjs) {
+  const under = new Set(underObjs);
+  const box = new THREE.Box3();
+  // что из шахт заходит в ствол большой шахты — видно сверху, это не прячем
+  let kept = 0;
+  for (const o of underObjs) {
+    box.setFromObject(o);
+    const dx = Math.max(box.min.x, Math.min(0, box.max.x)), dz = Math.max(box.min.z, Math.min(0, box.max.z));
+    if (!box.isEmpty() && Math.hypot(dx, dz) < SHAFT_R + 6) { kept++; continue; }
+    o.traverse((c) => c.layers.set(L_UNDER));
+  }
+  let n = 0;
+  for (const o of scene.children) {
+    if (under.has(o)) continue;
+    box.setFromObject(o);
+    if (box.isEmpty() || box.min.y < -40) continue;
+    o.traverse((c) => c.layers.set(L_SURF)); n++;
+  }
+  console.log('> зоны: под землёй', underObjs.length - kept, '(у ствола оставлено', kept + ')', 'поверхность', n);
+}
+function updateZones() {
+  const c = camera.position;
+  const r = Math.hypot(c.x, c.z), inMines = c.y < MINE_Y && r > SHAFT_R;
+  // над провалом (внутри первого кольца) или ниже −30 м — подземелье может быть видно сквозь устья туннелей
+  const under = c.y < UNDER_Y || r < RIM_R;
+  camera.layers.mask = 1 | (under ? 1 << L_UNDER : 0) | (inMines ? 0 : 1 << L_SURF);
 }
 
 let ready = false; // мир построен
@@ -609,6 +652,7 @@ function frame(now) {
   U.uPlayer.value.copy(player.pos);
   clouds.rotation.y += dt * 0.003;
 
+  updateZones();
   renderer.render(scene, camera);
   hands.render(renderer, camera);
   updateSound(dt, player, camera, !falling && !creative.on); // руки от первого лица — поверх всего
@@ -639,6 +683,8 @@ async function start() {
   try {
     updateCamera(1 / 60, { lookX: 0, lookY: 0 });
     hands.hide();
+    // при входе собираем шейдеры и отправляем в видеокарту всё, включая шахты, — без лагов на спуске
+    camera.layers.enableAll();
     if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
     else renderer.compile(scene, camera);
     await loadStep(55, 'Входим в мир…');
