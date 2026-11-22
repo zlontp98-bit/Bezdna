@@ -265,62 +265,106 @@ function shaftRows(f, cx, cz, px, pz) {
     }
     return rw;
   };
-  const DY = 0.5, Y = [], RR = [], HW = [];
-  let land = null;
-  for (let y = f.y0 - DY; y > LAKE.level - 0.3; y -= DY) {
-    const d = (f.y0 - y) / H, hw = halfAt(d);
-    // завеса идёт по самой скале (с зазором GAP), а не по баллистике: дуга полёта отрывала воду от стены
-    let r = wallR(y, hw) - GAP;
-    // у дна «стеной» становится сам пол: не даём завесе прыгать к центру
-    if (RR.length && f.y0 - y > 4) r = Math.max(r, RR[RR.length - 1] - 0.4);
-    const [gx, gz] = at(r, 0);
-    if (heightAt(gx, gz) > y - 0.15 || Math.hypot(gx, gz) < LAKE.r - 1) { land = y; break; }
-    Y.push(y); RR.push(r); HW.push(hw);
-  }
-  // стена неровная: слегка сглаживаем (2 прохода), но рельеф скалы не выпрямляем —
-  // точку, ушедшую от расчётной стены дальше 0.35 м (в любую сторону), возвращаем к стене
-  const RW = RR.slice();
-  for (let pass = 0; pass < 2; pass++) {
-    const t = RR.slice();
-    for (let i = 1; i < RR.length - 1; i++) RR[i] = Math.min(t[i], (t[i - 1] + 2 * t[i] + t[i + 1]) / 4);
-  }
-  for (let i = 0; i < RR.length; i++) if (Math.abs(RR[i] - RW[i]) > 0.35) RR[i] = RW[i];
-  // Глыбу у стены (до 10 м от неё) вода обтекает спереди: завеса перекатывается через верх камня,
-  // идёт перед ним и ниже плавно прижимается к стене — так её видно. Глыба побольше стоит перед водой.
-  const MAXP = 10, free = (r, y, hw) => {
-    for (let u = -1; u <= 1.001; u += 0.25) { const [x, z] = at(r, u * hw); if (solidAt(x, y, z, 0.35) || solidAt(x, y - 0.5, z, 0.35)) return false; }
-    return true;
+  // Камень игрока (глыба, плита) в точке — без самой стены шахты: её даёт wallR
+  const rock = (x, y, z) => y >= heightAt(x, z) && solidAt(x, y, z, 0, true);
+  const US = Array.from({ length: 17 }, (_, i) => -1 + i / 8); // вся ширина ленты, а не только середина
+  // верх камня под точкой: настоящая поверхность по solidAt (поиск делением отрезка [lo, hi])
+  const topIn = (x, z, lo, hi) => { for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (rock(x, m, z)) lo = m; else hi = m; } return lo; };
+  // высота опоры под лентой на радиусе r: самый высокий верх камня по ширине в полосе [y - down, y + up];
+  // −1e9 — опоры нет ни под одной точкой ширины
+  const support = (r, y, hw, down, up) => {
+    let best = -1e9;
+    for (const u of US) {
+      const [x, z] = at(r, u * hw);
+      if (rock(x, y, z)) { best = Math.max(best, rock(x, y + up, z) ? y + up : topIn(x, z, y, y + up)); continue; }
+      for (let d = 0.1; d <= down + 1e-6; d += 0.1) if (rock(x, y - d, z)) { best = Math.max(best, topIn(x, z, y - d, y - d + 0.1)); break; }
+    }
+    return best;
   };
-  const OQ = RR.map((r, i) => {
-    if (free(r, Y[i], HW[i])) return 0;
-    for (let o = 0.4; o <= MAXP; o += 0.4) if (free(r - o, Y[i], HW[i])) return o;
-    return 0;
-  });
-  const OS = new Float32Array(RR.length);
-  for (let j = 0; j < OQ.length; j++) {
-    if (!OQ[j]) continue;
-    // над глыбой вода выгибается быстро (перекатывается через верх), под ней — долго и плавно прижимается обратно
-    const Ru = 2 + OQ[j] * 0.9, Rd = 2 + OQ[j] * 0.6; // под камнем вода быстро возвращается к скале, а не висит в воздухе
-    for (let i = Math.max(0, j - 80); i < Math.min(OQ.length, j + 80); i++) {
-      const dy = Y[i] - Y[j], x = dy > 0 ? dy / Ru : -dy / Rd;
-      if (x < 1) OS[i] = Math.max(OS[i], OQ[j] * (1 - x * x) * (1 - x * x));
+  const LIFT = 0.12; // вода лежит на камне тонким слоем
+  // Путь воды: падение вдоль стены → удар о верх камня → стекание по нему → срыв с края → новое падение ...
+  // P — точки пути: { r, y, hw, k: 'fall' | 'slide', seg (номер участка падения), att (прижата к стене) }
+  const P = [], hits = [];
+  let r = wallR(f.y0 - 0.5, f.half) - GAP, y = f.y0, seg = 0, att = true, edgeY = f.y0, edgeR = r, vOut = 0;
+  let guard = 0;
+  while (y > LAKE.level - 0.3 && guard++ < 2000) {
+    const yn = y - 0.5, d = Math.min(1, (f.y0 - yn) / H), hw = halfAt(d);
+    // свободное падение: по вертикали; с края камня — с небольшой скоростью вперёд (короткая дуга, не больше 1.2 м)
+    const tt = Math.sqrt((2 * Math.max(0, edgeY - yn)) / G);
+    let rn = att ? wallR(yn, hw) - GAP : Math.min(edgeR - Math.min(1.2, vOut * tt), wallR(yn, hw) - GAP);
+    if (!att && rn >= wallR(yn, hw) - GAP - 0.05) att = true; // стена догнала воду — дальше снова по скале
+    // у дна «стеной» становится сам пол: не даём завесе прыгать к центру
+    if (att && P.length && f.y0 - yn > 4) rn = Math.max(rn, P[P.length - 1].r - 0.4);
+    // стена уходит назад, а за водой — бок камня: вода не входит в него, а падает дальше на его верх
+    if (rn > r && support(rn, y, hw, 0, 0) > -1e8) rn = r;
+    const [gx, gz] = at(rn, 0);
+    if (heightAt(gx, gz) > yn - 0.15 || Math.hypot(gx, gz) < LAKE.r - 1) break;
+    // удар о камень: хоть одна точка ширины ленты на шаге вниз упирается в камень
+    const top = support(rn, y, hw, 0.5, 0);
+    if (top > -1e8 && top >= yn) {
+      // конец падения — на верху камня
+      const yl = top + LIFT;
+      let i0 = P.length;
+      P.push({ r: rn, y: yl, hw, k: 'fall', seg, att });
+      hits.push([rn, top, hw]);
+      // стекание по верху камня: шаг 0.4 м от стены, высота — по настоящей поверхности под всей шириной
+      let ys = yl, rs = rn, n = 0;
+      for (; n < 40; n++) {
+        let r2 = rs - 0.4, t2 = support(r2, ys - LIFT, hw, 0.8, 1.2);
+        // щель между двумя камнями (до 0.8 м) — не край: вода её перескакивает и течёт дальше
+        for (let g = 1; g <= 2 && t2 < -1e8; g++) { r2 -= 0.4; t2 = support(r2, ys - LIFT, hw, 0.8, 1.2); }
+        if (t2 < -1e8) break; // дальше опоры нет: край камня
+        rs = r2;
+        // вода в гору не течёт: если верх камня впереди выше, она набирается ровной гладью до этого уровня
+        // и переливается дальше — уже пройденные точки на камне поднимаем до той же высоты
+        if (t2 + LIFT > ys) {
+          ys = t2 + LIFT;
+          while (i0 > 0 && P[i0 - 1].seg === seg && P[i0 - 1].y <= ys + 0.25) P.splice(--i0, 1); // падение кончается на глади
+          for (let k = i0; k < P.length; k++) P[k].y = ys;
+          hits[hits.length - 1][1] = ys - LIFT;
+        } else ys = t2 + LIFT;
+        P.push({ r: rs, y: ys, hw, k: 'slide', seg, att: false });
+      }
+      // срыв с края: новое падение чуть впереди края, начальная скорость вперёд небольшая
+      seg++; att = false; edgeY = ys; edgeR = rs - 0.25; vOut = 0.8; y = ys; r = edgeR;
+      continue;
+    }
+    r = rn; y = yn;
+    P.push({ r, y, hw, k: 'fall', seg, att });
+  }
+  // стена неровная: слегка сглаживаем (2 прохода) только участки, прижатые к стене; рельеф скалы не
+  // выпрямляем — точку, ушедшую от расчётной стены дальше 0.35 м (в любую сторону), возвращаем к стене
+  const RW = P.map((p) => p.r);
+  for (let pass = 0; pass < 2; pass++) {
+    const t = P.map((p) => p.r);
+    for (let i = 1; i < P.length - 1; i++) {
+      const a = P[i - 1], b = P[i], c = P[i + 1];
+      if (b.k !== 'fall' || !b.att || !a.att || !c.att || a.k !== 'fall' || c.k !== 'fall' || a.seg !== b.seg || c.seg !== b.seg) continue;
+      b.r = Math.min(t[i], (t[i - 1] + 2 * t[i] + t[i + 1]) / 4);
     }
   }
-  for (let i = 0; i < RR.length; i++) RR[i] -= Math.max(OS[i], OQ[i]);
-  // после выгиба завеса могла уйти в пол раньше — обрываем её на полу
-  let n = Y.length;
-  for (let i = 1; i < n; i++) { const [x, z] = at(RR[i], 0); if (heightAt(x, z) > Y[i] - 0.1) { n = i + 1; break; } }
+  for (let i = 0; i < P.length; i++) if (Math.abs(P[i].r - RW[i]) > 0.35) P[i].r = RW[i];
+  // ряды: в падении — через метр (у ударов и краёв — каждые 0.5 м), по камню — все
+  // hb — высота над местом удара своего участка: у каждого камня своя пена, как у дна
   const rows = [];
-  for (let i = 1; i < n; i++) {
-    if (i % 2 && i !== n - 1) continue; // ряд через метр
-    const [x, z] = at(RR[i], 0);
-    rows.push({ kind: 'fall', c: [x, Y[i], z], sd: [px, pz], half: HW[i], hb: 99, shaft: 1, drop: f.y0 - Y[i] });
+  let segTop = f.y0, kk = 0, ks = 0;
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], nx = P[i + 1], pv = P[i - 1];
+    if (pv && pv.seg !== p.seg) { segTop = pv.y; kk = 0; }
+    const ends = !nx || nx.seg !== p.seg || nx.k !== p.k || (pv && pv.k !== p.k);
+    if (p.k === 'fall' && kk++ % 2 && !ends) continue;
+    const [x, z] = at(p.r, 0);
+    const lastSeg = p.seg === P[P.length - 1].seg && !hits[p.seg];
+    const row = { kind: 'fall', c: [x, p.y, z], sd: [px, pz], half: p.hw, shaft: 1, drop: segTop - p.y, hb: lastSeg ? null : p.y - hits[p.seg][1] };
+    if (p.k === 'slide') { row.slide = 1; row.drop = 0; row.hb = 0.1 + 0.25 * ks++; } else ks = 0; // пена у удара и тает вперёд по камню
+    rows.push(row);
   }
+  f.hits = hits.map(([hr, ht, hw]) => { const [x, z] = at(hr, 0); return [x, ht, z, hw]; });
   if (!rows.length) return rows;
   // ---- по дну: вода растекается и бежит к озеру, огибая камни ----
   const last = rows[rows.length - 1];
   const x0 = last.c[0], z0 = last.c[2], y0 = heightAt(x0, z0);
-  for (const r of rows) r.hb = r.c[1] - y0;
+  for (const r of rows) if (r.hb == null) r.hb = r.c[1] - y0; // последний участок — над дном
   f.land = [x0, y0, z0];
   const hw0 = last.half;
   const pts = floorPath(x0, z0);
@@ -660,6 +704,11 @@ export function buildWater(scene) {
 
     // брызги там, где завеса бьёт о верх камня
     for (const h of hitsAt) { spl(h[0], h[1], h[2], 1.5, 4, 0.5); if (rnd() < 0.3) fog(h[0], h[1] + 0.5, h[2], 2 + rnd() * 2, 0.06, 0, 0); }
+    // удары о верх глыб в шахте: брызги и немного водяной пыли в каждой точке удара
+    for (const f of st.falls) for (const h of f.hits || []) {
+      spl(h[0], h[1] + 0.1, h[2], h[3] * 1.6, 12, 0.8);
+      for (let i = 0; i < 3; i++) fog(h[0] + (rnd() - 0.5) * h[3], h[1] + 0.4 + rnd(), h[2] + (rnd() - 0.5) * h[3], 2 + rnd() * 2, 0.07, 0, 0);
+    }
     for (const f of st.falls) {
       const fr = rows.slice(f.i0, f.i1 + 1).filter((r) => r.kind === 'fall');
       if (!fr.length || !f.land) continue;
