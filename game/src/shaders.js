@@ -222,6 +222,12 @@ vec3 mineFog(vec3 c, vec3 w, float d){
   if (inLv > 0.0) {
     float hot = smoothstep(ly + 55.0, ly + 1.0, w.y);
     c += (c * 0.9 + 0.03) * vec3(1.0, 0.45, 0.12) * inLv * (0.3 + 0.8 * hot * hot);
+    // нижние 2 м камня у лавы раскалены: светятся красным сквозь трещины, чуть «дышат»
+    float hr = smoothstep(ly + 2.3, ly + 0.3, w.y) * step(ly - 0.5, w.y) * inLv;
+    if (hr > 0.0) {
+      float cr = vnoise(w.xz * 1.7 + vec2(w.y * 2.1, 0.0)) * 0.6 + vnoise(w.zx * 4.3 - w.y * 3.0) * 0.4;
+      c += vec3(1.0, 0.22, 0.04) * hr * (0.45 + 0.9 * smoothstep(0.42, 0.72, cr)) * (0.85 + 0.15 * sin(uTime * 2.2 + w.x * 0.3));
+    }
     den = mix(den, 0.0095, inLv);
     fc = mix(fc, mix(vec3(0.12, 0.05, 0.03), vec3(0.62, 0.24, 0.07), smoothstep(ly + 45.0, ly + 2.0, w.y)), inLv);
   }
