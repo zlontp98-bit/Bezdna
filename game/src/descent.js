@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { W, LAKE, heightAt, pitR, rockMat } from './terrain.js';
 import { fbm, smoothstep } from './noise.js';
-import { addMeshTop, removeSolid, solidsNear, groundAt, lastSolid, rockAt } from './solids.js';
+import { addMeshTop, removeSolid, solidsNear, groundAt, lastSolid, rockAt, solidObjectAt } from './solids.js';
 import { STACKS, PILLARS, CHAINS, colAt, isHanging } from './stacks.js';
 import { mulberry32, SEED } from './noise.js';
 import { chunkMesh } from './chunks.js';
@@ -745,6 +745,26 @@ function flushStones() {
   }
   SDIRTY.clear();
 }
+// Мелкие глыбы в русле можно убрать. Несущие столбы, полки и мосты остаются на месте.
+export function waterDebris(solid) {
+  const s = STONES.get(solid.sid)?.spec;
+  if (!s) return false;
+  return s.kind === 'rubble' || (s.kind === 'built' && Math.max(s.A, s.B) <= 4.8 && s.col === false);
+}
+
+export function clearShaftDebris(rows) {
+  for (const { c, sd, half } of rows) {
+    const [x, y, z] = c;
+    const width = half + 0.8;
+    for (let u = -1; u <= 1.01; u += 0.125) {
+      const sx = x + sd[0] * u * width, sz = z + sd[1] * u * width;
+      let rock;
+      while ((rock = solidObjectAt(sx, y, sz, 0.5, false, waterDebris))) dropStone(rock.sid);
+    }
+  }
+  flushStones();
+}
+
 // Для редактора
 export const STONEAPI = {
   get count() { return STONES.size; },

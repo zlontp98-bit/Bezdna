@@ -22,7 +22,7 @@ import { Miner } from './mine.js';
 import { Chests } from './chest.js';
 import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
-import { buildDescent } from './descent.js';
+import { buildDescent, waterDebris, clearShaftDebris } from './descent.js';
 import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
 import { buildMines, MINE_LIGHTS, inDeadlyFog, inLava, hotRock } from './mines.js';
 import { buildVines } from './vines.js';
@@ -163,7 +163,7 @@ async function build() {
   const underObjs = scene.children.slice(underFrom);
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
-  planWater();
+  planWater({ waterDebris, clearShaftDebris });
   await loadStep(48, 'Сажаем лес…');
   const flora = buildFlora(scene);
   // глубина: кристаллы, грибы и руда на глыбах ниже −75 м (по глыбам загруженной карты)

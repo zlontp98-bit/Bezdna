@@ -5,7 +5,7 @@ import { W, SRC, SOURCES, POOLS, LAKE, poolDist, heightAt, waterAt } from './ter
 // озеро на дне шахты рисуется той же гладью, что и чаши под водопадами
 const lakePool = { x: LAKE.x, z: LAKE.z, level: LAKE.level, rad: LAKE.r + 1.2, src: false };
 import { smoothstep } from './noise.js';
-import { groundAt, solidAt } from './solids.js';
+import { groundAt, solidAt, solidObjectAt } from './solids.js';
 
 // Вода ручьёв: гладь, водопады и сток по дну шахты — одна лента на ручей; у подножия — брызги и водяная пыль.
 const G = 9.8;
@@ -84,9 +84,9 @@ const COLS = 9;    // точек поперёк ленты
 export const STREAMS = [];
 
 // Путь всех ручьёв считается до расстановки растений: деревья и грибы не ставим туда, где течёт вода.
-export function planWater() {
+export function planWater(shaftOptions) {
   if (STREAMS.length) return STREAMS;
-  for (const s of SOURCES) STREAMS.push(planStream(s.tw));
+  for (const s of SOURCES) STREAMS.push(planStream(s.tw, shaftOptions));
   // точки воды (падение и сток по дну) в сетке 4 м — для waterNear
   for (const st of STREAMS) for (const r of st.rows) {
     if (r.kind === 'flat') continue;
@@ -110,7 +110,7 @@ export function waterNear(x, y, z, rad, h) {
   return false;
 }
 
-function planStream(th) {
+function planStream(th, shaftOptions) {
   const cx = Math.cos(th), cz = Math.sin(th), px = -cz, pz = cx;
   const R = [];
   for (let r = W.SRC_R + SRC.GORGE; r > W.PIT - 6; r -= 0.5) R.push(r);
@@ -191,7 +191,7 @@ function planStream(th) {
     const f = falls[si];
     if (!f) continue;
     f.i0 = rows.length; // первый ряд водопада
-    const fr = f.open ? shaftRows(f, cx, cz, px, pz) : dropRows(f, cx, cz, px, pz);
+    const fr = f.open ? shaftRows(f, cx, cz, px, pz, shaftOptions) : dropRows(f, cx, cz, px, pz);
     for (const r of fr) rows.push(r);
     f.i1 = rows.length - 1;
   }
@@ -248,11 +248,9 @@ function dropRows(f, cx, cz, px, pz) {
   return rows;
 }
 
-// Водопад в шахту. Вода переливается через кромку и одной ровной завесой стекает вдоль отвесной стены
-// до самого дна — без изгибов. Глыбы игрока у стены стоят перед водой: где завеса уходит за камень, она мягко
-// тает, а на верху камня — пена и брызги (см. buildWater). На дне вода ручейком бежит к озеру, огибая камни.
-function shaftRows(f, cx, cz, px, pz) {
-  const H = f.y0 - LAKE.level, GAP = 0.7;
+// Завеса следует общему профилю стены, а у дна раскрывается в ручей.
+function shaftRows(f, cx, cz, px, pz, shaftOptions) {
+  const H = f.y0 - LAKE.level, VH = 1.6, GAP = 0.7;
   const halfAt = (d) => f.half + Math.min(1.2, H * 0.02) * d;
   const at = (r, l) => [cx * r + px * (l + f.off), cz * r + pz * (l + f.off)];
   // радиус стены на высоте y (ближайший к центру по всей ширине завесы)
@@ -265,125 +263,107 @@ function shaftRows(f, cx, cz, px, pz) {
     }
     return rw;
   };
-  // Камень игрока (глыба, плита) в точке — без самой стены шахты: её даёт wallR
-  const rock = (x, y, z) => y >= heightAt(x, z) && solidAt(x, y, z, 0, true);
-  const US = Array.from({ length: 17 }, (_, i) => -1 + i / 8); // вся ширина ленты, а не только середина
-  // верх камня под точкой: настоящая поверхность по solidAt (поиск делением отрезка [lo, hi])
-  const topIn = (x, z, lo, hi) => { for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (rock(x, m, z)) lo = m; else hi = m; } return lo; };
-  // высота опоры под лентой на радиусе r: самый высокий верх камня по ширине в полосе [y - down, y + up];
-  // −1e9 — опоры нет ни под одной точкой ширины
-  const support = (r, y, hw, down, up) => {
-    let best = -1e9;
-    for (const u of US) {
-      const [x, z] = at(r, u * hw);
-      if (rock(x, y, z)) { best = Math.max(best, rock(x, y + up, z) ? y + up : topIn(x, z, y, y + up)); continue; }
-      for (let d = 0.1; d <= down + 1e-6; d += 0.1) if (rock(x, y - d, z)) { best = Math.max(best, topIn(x, z, y - d, y - d + 0.1)); break; }
+  const DY = 0.5, Y = [], RR = [], HW = [];
+  for (let y = f.y0 - DY; y > LAKE.level - 0.3; y -= DY) {
+    const d = (f.y0 - y) / H, hw = halfAt(d);
+    const tt = Math.sqrt((2 * (f.y0 - y)) / G);
+    const r = Math.min(f.lipR - VH * tt, wallR(Math.max(y, LAKE.level + 4), hw) - GAP);
+    Y.push(y); RR.push(r); HW.push(hw);
+  }
+  const { waterDebris, clearShaftDebris } = shaftOptions || {};
+  const support = waterDebris ? (solid) => !waterDebris(solid) : null;
+  const blocked = (r, y, hw) => {
+    for (let u = -1; u <= 1.01; u += 0.125) {
+      const [x, z] = at(r, u * (hw + 0.5));
+      if (solidObjectAt(x, y, z, 0.5, false, support)) return true;
     }
-    return best;
+    return false;
   };
-  const LIFT = 0.12; // вода лежит на камне тонким слоем
-  // Путь воды: падение вдоль стены → удар о верх камня → стекание по нему → срыв с края → новое падение ...
-  // P — точки пути: { r, y, hw, k: 'fall' | 'slide', seg (номер участка падения), att (прижата к стене) }
-  const P = [], hits = [];
-  let r = wallR(f.y0 - 0.5, f.half) - GAP, y = f.y0, seg = 0, att = true, edgeY = f.y0, edgeR = r, vOut = 0;
-  let guard = 0;
-  while (y > LAKE.level - 0.3 && guard++ < 2000) {
-    const yn = y - 0.5, d = Math.min(1, (f.y0 - yn) / H), hw = halfAt(d);
-    // свободное падение: по вертикали; с края камня — с небольшой скоростью вперёд (короткая дуга, не больше 1.2 м)
-    const tt = Math.sqrt((2 * Math.max(0, edgeY - yn)) / G);
-    let rn = att ? wallR(yn, hw) - GAP : Math.min(edgeR - Math.min(1.2, vOut * tt), wallR(yn, hw) - GAP);
-    if (!att && rn >= wallR(yn, hw) - GAP - 0.05) att = true; // стена догнала воду — дальше снова по скале
-    // у дна «стеной» становится сам пол: не даём завесе прыгать к центру
-    if (att && P.length && f.y0 - yn > 4) rn = Math.max(rn, P[P.length - 1].r - 0.4);
-    // стена уходит назад, а за водой — бок камня: вода не входит в него, а падает дальше на его верх
-    if (rn > r && support(rn, y, hw, 0, 0) > -1e8) rn = r;
-    const [gx, gz] = at(rn, 0);
-    if (heightAt(gx, gz) > yn - 0.15 || Math.hypot(gx, gz) < LAKE.r - 1) break;
-    // удар о камень: хоть одна точка ширины ленты на шаге вниз упирается в камень
-    const top = support(rn, y, hw, 0.5, 0);
-    if (top > -1e8 && top >= yn) {
-      // конец падения — на верху камня
-      const yl = top + LIFT;
-      let i0 = P.length;
-      P.push({ r: rn, y: yl, hw, k: 'fall', seg, att });
-      hits.push([rn, top, hw]);
-      // стекание по верху камня: шаг 0.4 м от стены, высота — по настоящей поверхности под всей шириной
-      let ys = yl, rs = rn, n = 0;
-      for (; n < 40; n++) {
-        let r2 = rs - 0.4, t2 = support(r2, ys - LIFT, hw, 0.8, 1.2);
-        // щель между двумя камнями (до 0.8 м) — не край: вода её перескакивает и течёт дальше
-        for (let g = 1; g <= 2 && t2 < -1e8; g++) { r2 -= 0.4; t2 = support(r2, ys - LIFT, hw, 0.8, 1.2); }
-        if (t2 < -1e8) break; // дальше опоры нет: край камня
-        rs = r2;
-        // вода в гору не течёт: если верх камня впереди выше, она набирается ровной гладью до этого уровня
-        // и переливается дальше — уже пройденные точки на камне поднимаем до той же высоты
-        if (t2 + LIFT > ys) {
-          ys = t2 + LIFT;
-          while (i0 > 0 && P[i0 - 1].seg === seg && P[i0 - 1].y <= ys + 0.25) P.splice(--i0, 1); // падение кончается на глади
-          for (let k = i0; k < P.length; k++) P[k].y = ys;
-          hits[hits.length - 1][1] = ys - LIFT;
-        } else ys = t2 + LIFT;
-        P.push({ r: rs, y: ys, hw, k: 'slide', seg, att: false });
+  // Один плавный обход крупных опор. Мелочь не влияет на форму завесы.
+  const limit = RR.slice();
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (let i = 1; i < limit.length; i++) {
+      const r = Math.min(limit[i], limit[i - 1]);
+      limit[i] = r;
+      if (f.y0 - Y[i] < 2 || !blocked(r, Y[i], HW[i])) continue;
+      for (let shift = 0.5; shift <= 15 && r - shift >= LAKE.r - 7; shift += 0.5) {
+        if (blocked(r - shift, Y[i], HW[i])) continue;
+        limit[i] = r - shift - 0.35;
+        changed = true;
+        break;
       }
-      // срыв с края: новое падение чуть впереди края, начальная скорость вперёд небольшая
-      seg++; att = false; edgeY = ys; edgeR = rs - 0.25; vOut = 0.8; y = ys; r = edgeR;
-      continue;
     }
-    r = rn; y = yn;
-    P.push({ r, y, hw, k: 'fall', seg, att });
-  }
-  // стена неровная: слегка сглаживаем (2 прохода) только участки, прижатые к стене; рельеф скалы не
-  // выпрямляем — точку, ушедшую от расчётной стены дальше 0.35 м (в любую сторону), возвращаем к стене
-  const RW = P.map((p) => p.r);
-  for (let pass = 0; pass < 2; pass++) {
-    const t = P.map((p) => p.r);
-    for (let i = 1; i < P.length - 1; i++) {
-      const a = P[i - 1], b = P[i], c = P[i + 1];
-      if (b.k !== 'fall' || !b.att || !a.att || !c.att || a.k !== 'fall' || c.k !== 'fall' || a.seg !== b.seg || c.seg !== b.seg) continue;
-      b.r = Math.min(t[i], (t[i - 1] + 2 * t[i] + t[i + 1]) / 4);
+    for (let i = limit.length - 2; i >= 0; i--) limit[i] = Math.min(limit[i], limit[i + 1] + 0.30);
+    for (let smooth = 0; smooth < 8; smooth++) {
+      const radii = limit.slice();
+      for (let i = 1; i < limit.length - 1; i++) limit[i] = (radii[i - 1] + 2 * radii[i] + radii[i + 1]) / 4;
     }
+    if (!changed) break;
   }
-  for (let i = 0; i < P.length; i++) if (Math.abs(P[i].r - RW[i]) > 0.35) P[i].r = RW[i];
-  // ряды: в падении — через метр (у ударов и краёв — каждые 0.5 м), по камню — все
-  // hb — высота над местом удара своего участка: у каждого камня своя пена, как у дна
+  // Сохраняем стык с верхним руслом и учитываем уровень озера под завесой.
+  let n = Y.length;
+  for (let i = 0; i < n; i++) {
+    const blend = smoothstep(0, 7, f.y0 - Y[i]);
+    RR[i] += (limit[i] - RR[i]) * blend;
+    const [x, z] = at(RR[i], 0);
+    if (Y[i] <= Math.max(LAKE.level, heightAt(x, z)) + 0.12) { n = i + 1; break; }
+  }
   const rows = [];
-  let segTop = f.y0, kk = 0, ks = 0;
-  for (let i = 0; i < P.length; i++) {
-    const p = P[i], nx = P[i + 1], pv = P[i - 1];
-    if (pv && pv.seg !== p.seg) { segTop = pv.y; kk = 0; }
-    const ends = !nx || nx.seg !== p.seg || nx.k !== p.k || (pv && pv.k !== p.k);
-    if (p.k === 'fall' && kk++ % 2 && !ends) continue;
-    const [x, z] = at(p.r, 0);
-    const lastSeg = p.seg === P[P.length - 1].seg && !hits[p.seg];
-    const row = { kind: 'fall', c: [x, p.y, z], sd: [px, pz], half: p.hw, shaft: 1, drop: segTop - p.y, hb: lastSeg ? null : p.y - hits[p.seg][1] };
-    if (p.k === 'slide') { row.slide = 1; row.drop = 0; row.hb = 0.1 + 0.25 * ks++; } else ks = 0; // пена у удара и тает вперёд по камню
-    rows.push(row);
+  for (let i = 1; i < n; i++) {
+    if (i % 2 && i !== n - 1) continue; // ряд через метр
+    const [x, z] = at(RR[i], 0);
+    rows.push({ kind: 'fall', c: [x, Y[i], z], sd: [px, pz], half: HW[i], hb: 99, shaft: 1, drop: f.y0 - Y[i] });
   }
-  f.hits = hits.map(([hr, ht, hw]) => { const [x, z] = at(hr, 0); return [x, ht, z, hw]; });
   if (!rows.length) return rows;
+  clearShaftDebris?.(rows);
   // ---- по дну: вода растекается и бежит к озеру, огибая камни ----
   const last = rows[rows.length - 1];
-  const x0 = last.c[0], z0 = last.c[2], y0 = heightAt(x0, z0);
-  for (const r of rows) if (r.hb == null) r.hb = r.c[1] - y0; // последний участок — над дном
-  f.land = [x0, y0, z0];
+  const [x0, , z0] = last.c;
   const hw0 = last.half;
+  if (Math.hypot(x0 - LAKE.x, z0 - LAKE.z) <= LAKE.r - 1.4) {
+    f.land = [x0, LAKE.level, z0];
+    for (const r of rows) r.hb = r.c[1] - LAKE.level;
+    last.c[1] = LAKE.level - 0.32;
+    last.hb = -0.32;
+    return rows;
+  }
   const pts = floorPath(x0, z0);
   for (const p of pts) {
     const k = smoothstep(0, 4, p[3]);
-    rows.push({ kind: 'run', c: [p[0], p[1] + 0.1, p[2]], half: hw0 * (1 - 0.3 * k), hb: 99, foam: 0.9 * smoothstep(16, 2, p[3]) });
+    rows.push({ kind: 'run', c: [p[0], p[1] + 0.1, p[2]], half: hw0 * (1 - 0.3 * k), hb: 99, foam: 0.9 * smoothstep(13, 1, p[3]),
+      fade: smoothstep(LAKE.r - 1.4, LAKE.r + 1.2, Math.hypot(p[0] - LAKE.x, p[2] - LAKE.z)) });
   }
   // Вода не течёт в гору: если завеса упала в яму на дне, ручей раньше «вылезал» из неё отвесной
   // ступенькой (а сама яма выглядела дырой). Теперь вода заполняет яму до края, через который
   // переливается дальше: уровень рядов по пути к озеру только опускается.
   const r0 = rows.length - pts.length;
   for (let i = rows.length - 2; i >= r0; i--) rows[i].c[1] = Math.max(rows[i].c[1], rows[i + 1].c[1]);
-  // завеса, упавшая в такую заводь, уходит под её гладь
-  const pondY = pts.length ? rows[r0].c[1] : -1e9;
-  for (let i = 0; i < r0; i++) if (rows[i].c[1] < pondY - 0.4) { rows.splice(i, r0 - i); break; }
-  // в озеро: последний ряд под гладью
+  const pondY = rows[r0].c[1];
+  f.land = [x0, pondY, z0];
+  for (let i = 0; i < r0; i++) rows[i].hb = rows[i].c[1] - pondY;
+  // Скругляем переход со струи на дно в пределах первых метров ручья.
+  const start = rows.findIndex((r, i) => i < r0 && r.c[1] <= pondY + 3);
+  const finish = pts.findIndex((p) => p[3] >= 2.5);
+  if (start > 0 && finish > 0) {
+    const a = rows[start], b = rows[r0 + finish], join = [];
+    for (let j = 1; j < 6; j++) {
+      const t = j / 6, u = 1 - t;
+      const c = a.c.map((v, i) => u * u * v + 2 * u * t * f.land[i] + t * t * b.c[i]);
+      c[1] = Math.max(c[1], heightAt(c[0], c[2]) + 0.07);
+      const fall = 1 - smoothstep(0.12, 0.9, t);
+      join.push({ kind: 'run', c, half: hw0 * (1 + 0.1 * Math.sin(Math.PI * t)), hb: 99, foam: 0.85, transition: fall });
+    }
+    rows.splice(start + 1, r0 + finish - start - 1, ...join);
+  } else if (start >= 0) {
+    const under = rows.findIndex((r, i) => i < r0 && r.c[1] < pondY);
+    if (under >= 0) rows.splice(under, r0 - under);
+  }
+  // Рябь начинается у берега, пока сама лента постепенно исчезает под гладью.
   const e = rows[rows.length - 1];
-  rows.push({ ...e, kind: 'run', c: [e.c[0], LAKE.level - 0.3, e.c[2]], foam: e.foam });
-  f.lake = [e.c[0], e.c[2], e.half];
+  const mouth = rows.find((r) => r.kind === 'run' && r.fade < 0.8) || e;
+  rows.push({ ...e, c: [e.c[0], LAKE.level - 0.3, e.c[2]], fade: 0 });
+  f.lake = [mouth.c[0], mouth.c[2], mouth.half];
   return rows;
 }
 
@@ -428,7 +408,7 @@ function floorPath(x0, z0) {
   // сгладить и разложить через ~1 м
   let P = cells.map((k) => [minX + ((k % NX) + 0.5) * C, minZ + (((k / NX) | 0) + 0.5) * C]);
   P.unshift([x0, z0]);
-  for (let pass = 0; pass < 6; pass++) P = P.map((p, i) => (i === 0 || i === P.length - 1 ? p : [(P[i - 1][0] + 2 * p[0] + P[i + 1][0]) / 4, (P[i - 1][1] + 2 * p[1] + P[i + 1][1]) / 4]));
+  for (let pass = 0; pass < 12; pass++) P = P.map((p, i) => (i === 0 || i === P.length - 1 ? p : [(P[i - 1][0] + 2 * p[0] + P[i + 1][0]) / 4, (P[i - 1][1] + 2 * p[1] + P[i + 1][1]) / 4]));
   const out = [];
   let run = 0, lx = x0, lz = z0;
   for (const [x, z] of P) {
@@ -475,7 +455,7 @@ function finishRows(rows, cx, cz) {
     if (pn ? nx * pn[0] + ny * pn[1] + nz * pn[2] < 0 : ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
     r.n = [nx, ny, nz];
     r.fall = Math.max(r.steep || 0, smoothstep(0.35, 0.8, -ty), smoothstep(1.0, 3.0, r.drop || 0));
-    if (r.kind === 'run') r.fall = Math.min(r.fall, 0.25);
+    if (r.kind === 'run') r.fall = r.transition ?? Math.min(r.fall, 0.25);
   }
   // ширину тоже: на стыке водопада и глади нет ступеньки
   for (let pass = 0; pass < 6; pass++) {
@@ -666,7 +646,10 @@ export function buildWater(scene) {
           let dn = 9;
           for (const p of POOLS) dn = Math.min(dn, poolDist(p, x, z));
           fade = smoothstep(0.8, 1.0, dn);
-        } else if (r.kind === 'run') depth = 0.7;
+        } else if (r.kind === 'run') {
+          depth = 0.7;
+          fade = r.fade ?? 1;
+        }
         // завеса за глыбой игрока: внутри камня тает, на верху камня — пена (вода бьёт о камень), под ним — светлее
         let fv = r.foam || 0;
         if (r.shaft) {
@@ -704,11 +687,6 @@ export function buildWater(scene) {
 
     // брызги там, где завеса бьёт о верх камня
     for (const h of hitsAt) { spl(h[0], h[1], h[2], 1.5, 4, 0.5); if (rnd() < 0.3) fog(h[0], h[1] + 0.5, h[2], 2 + rnd() * 2, 0.06, 0, 0); }
-    // удары о верх глыб в шахте: брызги и немного водяной пыли в каждой точке удара
-    for (const f of st.falls) for (const h of f.hits || []) {
-      spl(h[0], h[1] + 0.1, h[2], h[3] * 1.6, 12, 0.8);
-      for (let i = 0; i < 3; i++) fog(h[0] + (rnd() - 0.5) * h[3], h[1] + 0.4 + rnd(), h[2] + (rnd() - 0.5) * h[3], 2 + rnd() * 2, 0.07, 0, 0);
-    }
     for (const f of st.falls) {
       const fr = rows.slice(f.i0, f.i1 + 1).filter((r) => r.kind === 'fall');
       if (!fr.length || !f.land) continue;

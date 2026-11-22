@@ -277,13 +277,17 @@ export function solidsNear(x, z, rad) {
 // soft = true — считать и мелкие камни (для камеры: иначе валун у камеры закрывал героя)
 export function solidAt(x, y, z, pad = 0, soft = false) {
   if (y < terrainAt(x, z, y) + pad) return true;
+  return !!solidObjectAt(x, y, z, pad, soft);
+}
+
+// Как solidAt, но возвращает сам объект. Рельеф проверяется отдельно.
+export function solidObjectAt(x, y, z, pad = 0, soft = false, accept = null) {
   const list = grid.get(Math.floor(x / CELL) + ',' + Math.floor(z / CELL));
-  if (!list) return false;
+  if (!list) return null;
   for (const s of list) {
-    if (s.off || (s.soft && !s.col && !soft)) continue; // мелочь не в счёт (если не просят), а столбы-ступени — да
+    if (s.off || (s.soft && !s.col && !soft) || (accept && !accept(s))) continue;
     if (s.col) {
-      if (y < s.bottom || y > s.bodyTop) continue;
-      if (colIn(s, x, z, y)) return true;
+      if (y >= s.bottom && y <= s.bodyTop && colIn(s, x, z, y)) return s;
       continue;
     }
     let top = s.top;
@@ -293,7 +297,7 @@ export function solidAt(x, y, z, pad = 0, soft = false) {
     else if (dx * dx + dz * dz > s.r * s.r) continue;
     if (y > top + pad) continue;
     const bot = s.bf ? bottomAt(s, x, z) : s.bottom;
-    if (y >= bot - pad) return true;
+    if (y >= bot - pad) return s;
   }
-  return false;
+  return null;
 }
