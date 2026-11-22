@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.min.js';
 import { U, setStyle, loadTerrainTextures, LITE, GLOW_N } from './shaders.js';
 setStyle('day');
 import { buildCamp } from './camp.js';
-import { W, SOURCES, buildTerrain, bakeShadows, heightAt, terrainAt, rockMat } from './terrain.js';
+import { W, SOURCES, buildTerrain, bakeShadows, heightAt, terrainAt, rockMat, TUNNELS, tunLocal } from './terrain.js';
 import { buildFlora, buildGrass, updateFloraDist, propMaterial } from './flora.js';
 import { buildSky, buildClouds, buildMist, buildMotes, buildShafts } from './atmosphere.js';
 import { buildRuins } from './ruins.js';
@@ -103,11 +103,16 @@ function adaptQuality(dtMs) {
   // качество — смена разрешения сама по себе даёт рывок
   const f = Q.fr.sort((a, b) => a - b), avg = f[f.length >> 1];
   Q.t = 0; Q.n = 0; Q.fr.length = 0;
-  if (Q.mode !== 'auto') return;
+  if (Q.mode === 'low') return;
+  // «Чёткая»: траву не трогаем, но если кадр стабильно не успевает — чуть снижаем разрешение,
+  // не ниже, чем у «Авто» (×0.75 от двойного = полуторное). Раньше «Чёткая» не подстраивалась вовсе,
+  // и в тяжёлых местах FPS падал до 30 и ниже.
+  const high = Q.mode === 'high';
   if (avg > 19) {
     // снижаем, только если тяжело две секунды подряд
     if (!Q.bad) { Q.bad = true; return; }
     Q.bad = false; Q.good = 0;
+    if (high) { if (Q.scale > 0.76) lower(0.75); return; }
     // сначала трава (её вершины — главная нагрузка на телефоне, и меньшее разрешение тут не спасает),
     // потом разрешение, и уже в конце — ещё немного травы
     const thin = (min, step) => { Q.dceil = Math.min(Q.dceil ?? 1, Q.density - 0.1); Q.density = Math.max(min, Q.density - step); grass.setDensity(Q.density); };
@@ -550,13 +555,14 @@ function menuFrame(dt, t) {
 // Без них видеокарта рисовала всё сразу: с поверхности — шахты под озером (глядя вниз на луг это
 // +100…300 вызовов и +100…300 тыс. треугольников), а из шахт — луг, лес и траву на 200 м выше.
 // Сквозь камень их всё равно не видно. Раскладываем объекты по слоям камеры:
-// 1 — шахты (mines.js). Видны, когда камера над провалом (внутри первого кольца) или ниже −30 м:
-//     из ствола большой шахты сквозь устья туннелей видно далеко вглубь, до ям шахт.
+// 1 — шахты (mines.js). Видны, когда камера ниже −80 м: из нижней части ствола большой шахты сквозь
+//     устья туннелей видно далеко вглубь, до ям шахт. Выше −80 м их не видно ни с одного ракурса
+//     (проверено: край провала, островки, ствол на −10…−78 м в сторону обоих устьев).
 //     Сами туннели (tunnels.js) не прячем: их устья видно с любого края провала.
 // 2 — поверхность (всё, что целиком выше −40 м). Не видна, когда камера в шахтах, вне ствола большой шахты.
 // Игровые объекты, добавленные позже (герой, NPC, зал гильдии), остаются в слое 0 и видны всегда.
 // Границы проверены сравнением кадров «с зонами / без зон» с края провала, из ствола, из туннелей и шахт.
-const L_UNDER = 1, L_SURF = 2, UNDER_Y = -30, RIM_R = W.HOLE, MINE_Y = -185, SHAFT_R = 64;
+const L_UNDER = 1, L_SURF = 2, UNDER_Y = -80, MINE_Y = -185, SHAFT_R = 64;
 function setupZones(underObjs) {
   const under = new Set(underObjs);
   const box = new THREE.Box3();
@@ -567,6 +573,9 @@ function setupZones(underObjs) {
     const dx = Math.max(box.min.x, Math.min(0, box.max.x)), dz = Math.max(box.min.z, Math.min(0, box.max.z));
     if (!box.isEmpty() && Math.hypot(dx, dz) < SHAFT_R + 6) { kept++; continue; }
     o.traverse((c) => c.layers.set(L_UNDER));
+    const sp = new THREE.Sphere(); box.getBoundingSphere(sp);
+    const kids = []; o.traverse((c) => kids.push(c));
+    mineObjs.push({ sp, kids, on: true });
   }
   let n = 0;
   for (const o of scene.children) {
@@ -577,12 +586,47 @@ function setupZones(underObjs) {
   }
   console.log('> зоны: под землёй', underObjs.length - kept, '(у ствола оставлено', kept + ')', 'поверхность', n);
 }
+// Из ствола большой шахты шахты видно только сквозь устья двух туннелей. Раньше, глядя с нижней части
+// ствола вниз на озеро, рисовались все шахты под ним (+370 вызовов, +300 тыс. треугольников) — отсюда
+// падение FPS сразу после спуска. Теперь из ствола рисуем только куски шахт, которые попадают в «окно»:
+// пирамиду от камеры через проём устья (с запасом: 6 м с боков, 4 м снизу, 8 м сверху — арка в наклонной стене шире самого хода).
+const mineObjs = [], L_HIDE = 3;
+const _pa = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], _pm = new THREE.Vector3();
+const portals = [], _pp = TUNNELS.map(() => [0, 1, 2, 3].map(() => new THREE.Plane()));
+function portalPlanes(T, c, out) {
+  const hw = T.hw + 6, y0 = T.F0 - 4, y1 = T.F0 + T.H + 8;
+  _pa[0].set(T.x - T.nx * hw, y0, T.z - T.nz * hw); _pa[1].set(T.x + T.nx * hw, y0, T.z + T.nz * hw);
+  _pa[2].set(T.x + T.nx * hw, y1, T.z + T.nz * hw); _pa[3].set(T.x - T.nx * hw, y1, T.z - T.nz * hw);
+  _pm.set(T.x + T.dx * 4, (y0 + y1) / 2, T.z + T.dz * 4);   // точка за проёмом — внутри «окна»
+  for (let i = 0; i < 4; i++) {
+    const pl = out[i].setFromCoplanarPoints(c, _pa[i], _pa[(i + 1) % 4]);
+    if (pl.distanceToPoint(_pm) < 0) pl.negate();
+  }
+  return out;
+}
 function updateZones() {
   const c = camera.position;
   const r = Math.hypot(c.x, c.z), inMines = c.y < MINE_Y && r > SHAFT_R;
-  // над провалом (внутри первого кольца) или ниже −30 м — подземелье может быть видно сквозь устья туннелей
-  const under = c.y < UNDER_Y || r < RIM_R;
+  const under = c.y < UNDER_Y;   // выше −80 м шахт не видно ни с одного ракурса
   camera.layers.mask = 1 | (under ? 1 << L_UNDER : 0) | (inMines ? 0 : 1 << L_SURF);
+  if (!under) return;
+  // камера в стволе: перед устьями обоих туннелей (не в туннеле и не в шахтах)
+  let inShaft = r < SHAFT_R + 4 && c.y > MINE_Y - 10;
+  if (inShaft) for (const T of TUNNELS) if (!T.ready || tunLocal(T, c.x, c.z)[0] > -0.5) inShaft = false;
+  portals.length = 0;
+  if (inShaft) TUNNELS.forEach((T, i) => portals.push(portalPlanes(T, c, _pp[i])));
+  for (const m of mineObjs) {
+    let on = true;
+    if (inShaft) {
+      on = false;
+      for (const P of portals) {
+        let inside = true;
+        for (const pl of P) if (pl.distanceToPoint(m.sp.center) < -m.sp.radius) { inside = false; break; }
+        if (inside) { on = true; break; }
+      }
+    }
+    if (on !== m.on) { m.on = on; for (const k of m.kids) k.layers.set(on ? L_UNDER : L_HIDE); }
+  }
 }
 
 let ready = false; // мир построен

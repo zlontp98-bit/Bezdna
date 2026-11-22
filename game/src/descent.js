@@ -712,7 +712,8 @@ export function bakeStones(specs, hidden = null, group = () => 0) {
     return m;
   }) };
 }
-const binKey = (sp) => Math.floor(sp.x / 24) + ',' + Math.floor(sp.z / 24) + ',' + Math.floor(sp.y / 50);
+// куски поля глыб по 48×48×100 м: мельче — слишком много вызовов отрисовки (их было ~100 на ствол шахты)
+const binKey = (sp) => Math.floor(sp.x / 48) + ',' + Math.floor(sp.z / 48) + ',' + Math.floor(sp.y / 100);
 function addStone(spec, id) {
   const b = buildStone(spec), s = { id: id ?? ++stoneSeq, spec, l: b.l, pos: b.pos, nrm: b.nrm, solid: b.l.solid, bin: binKey(spec) };
   stoneSeq = Math.max(stoneSeq, s.id);
