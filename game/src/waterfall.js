@@ -252,7 +252,7 @@ function dropRows(f, cx, cz, px, pz) {
 // до самого дна — без изгибов. Глыбы игрока у стены стоят перед водой: где завеса уходит за камень, она мягко
 // тает, а на верху камня — пена и брызги (см. buildWater). На дне вода ручейком бежит к озеру, огибая камни.
 function shaftRows(f, cx, cz, px, pz) {
-  const H = f.y0 - LAKE.level, VH = 1.6, GAP = 0.7;
+  const H = f.y0 - LAKE.level, GAP = 0.7;
   const halfAt = (d) => f.half + Math.min(1.2, H * 0.02) * d;
   const at = (r, l) => [cx * r + px * (l + f.off), cz * r + pz * (l + f.off)];
   // радиус стены на высоте y (ближайший к центру по всей ширине завесы)
@@ -269,19 +269,22 @@ function shaftRows(f, cx, cz, px, pz) {
   let land = null;
   for (let y = f.y0 - DY; y > LAKE.level - 0.3; y -= DY) {
     const d = (f.y0 - y) / H, hw = halfAt(d);
-    const tt = Math.sqrt((2 * (f.y0 - y)) / G);
-    let r = Math.min(f.lipR - VH * tt, wallR(y, hw) - GAP);
+    // завеса идёт по самой скале (с зазором GAP), а не по баллистике: дуга полёта отрывала воду от стены
+    let r = wallR(y, hw) - GAP;
     // у дна «стеной» становится сам пол: не даём завесе прыгать к центру
     if (RR.length && f.y0 - y > 4) r = Math.max(r, RR[RR.length - 1] - 0.4);
     const [gx, gz] = at(r, 0);
     if (heightAt(gx, gz) > y - 0.15 || Math.hypot(gx, gz) < LAKE.r - 1) { land = y; break; }
     Y.push(y); RR.push(r); HW.push(hw);
   }
-  // стена неровная: сглаживаем, чтобы завеса шла ровно
-  for (let pass = 0; pass < 4; pass++) {
+  // стена неровная: слегка сглаживаем (2 прохода), но рельеф скалы не выпрямляем —
+  // точку, ушедшую от расчётной стены дальше 0.35 м (в любую сторону), возвращаем к стене
+  const RW = RR.slice();
+  for (let pass = 0; pass < 2; pass++) {
     const t = RR.slice();
     for (let i = 1; i < RR.length - 1; i++) RR[i] = Math.min(t[i], (t[i - 1] + 2 * t[i] + t[i + 1]) / 4);
   }
+  for (let i = 0; i < RR.length; i++) if (Math.abs(RR[i] - RW[i]) > 0.35) RR[i] = RW[i];
   // Глыбу у стены (до 10 м от неё) вода обтекает спереди: завеса перекатывается через верх камня,
   // идёт перед ним и ниже плавно прижимается к стене — так её видно. Глыба побольше стоит перед водой.
   const MAXP = 10, free = (r, y, hw) => {
@@ -297,7 +300,7 @@ function shaftRows(f, cx, cz, px, pz) {
   for (let j = 0; j < OQ.length; j++) {
     if (!OQ[j]) continue;
     // над глыбой вода выгибается быстро (перекатывается через верх), под ней — долго и плавно прижимается обратно
-    const Ru = 2 + OQ[j] * 0.9, Rd = 5 + OQ[j] * 2.6; // пологие перегибы: без резкой складки на завесе
+    const Ru = 2 + OQ[j] * 0.9, Rd = 2 + OQ[j] * 0.6; // под камнем вода быстро возвращается к скале, а не висит в воздухе
     for (let i = Math.max(0, j - 80); i < Math.min(OQ.length, j + 80); i++) {
       const dy = Y[i] - Y[j], x = dy > 0 ? dy / Ru : -dy / Rd;
       if (x < 1) OS[i] = Math.max(OS[i], OQ[j] * (1 - x * x) * (1 - x * x));
