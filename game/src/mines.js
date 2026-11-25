@@ -110,7 +110,7 @@ const rockN = (x, y, z) => 0.62 * vn3(x * 0.19, y * 0.23, z * 0.19) + 0.38 * vn3
 
 // ---- пустоты ----
 // пол хода в точке t (0..1): ровный уклон; у «глыбовых» ходов — уступы, на которые надо запрыгивать
-function segFloor(e, t) {
+function segBaseFloor(e, t) {
   let f = e.fa + (e.fb - e.fa) * t;
   if (e.rough) {
     const s = t * e.len, env = smoothstep(4, 9, s) * smoothstep(4, 9, e.len - s);
@@ -124,6 +124,63 @@ function segFloor(e, t) {
   }
   return f;
 }
+// Эксперимент PEAK: только отдельные естественные ходы глыбового лабиринта.
+// Крупные сросшиеся массивы и малые ступени растут из пола/боковой стены;
+// свободная нижняя полоса остаётся с противоположной стороны каждого массива.
+const PEAK_MINE_EDGES = new Set(['c1:c2', 'cp1:c4', 'c4:c5']);
+function makePeakRelief(e) {
+  if (!e.rough || e.len < 26 || !PEAK_MINE_EDGES.has(e.from + ':' + e.to)) return null;
+  let h = 0;
+  for (const c of e.from + ':' + e.to) h = Math.imul(h, 31) + c.charCodeAt(0) | 0;
+  const rng = mulberry32((SEED + h + 19281) | 0);
+  const clusters = [], count = e.len >= 47 ? 3 : 2;
+  const span = (e.len - 12) / count;
+  let side = rng() < 0.5 ? -1 : 1;
+  for (let i = 0; i < count; i++, side *= -1) {
+    const s = 6 + (i + 0.5) * span + (rng() - 0.5) * Math.min(1.2, span * 0.15);
+    const high = 2.7 + rng() * 0.65;
+    const rs = Math.min(6.2, span * 0.46), w = side * (e.hw - 2.5);
+    clusters.push({ s, w, side, high, rs, rw: 3.3, skew: (rng() - 0.5) * 0.35,
+      // Меньшая глыба с внутренней стороны: первая ступень на высокий массив.
+      stepS: s - rs * 0.38, stepW: side * 0.85, stepH: 1.0 + rng() * 0.35,
+      stepR: Math.min(2.5, rs * 0.68), stepWidth: 1.65, arch: i === 0 });
+  }
+  return clusters;
+}
+function peakLobe(ds, dw, rs, rw, skew) {
+  const a = ds / rs, b = (dw - ds * skew) / rw;
+  if (Math.abs(a) >= 1 || Math.abs(b) >= 1) return 0;
+  // Четвёртая степень: широкая неровная площадка, а не гладкий конус.
+  const aa = a * a, bb = b * b, q = Math.sqrt(Math.sqrt(aa * aa + bb * bb));
+  return 1 - smoothstep(0.56, 1, q);
+}
+function peakRise(e, t, w) {
+  if (!e.peak) return 0;
+  const s = t * e.len;
+  let rise = 0;
+  for (const p of e.peak) {
+    if (Math.abs(s - p.s) > p.rs + 1) continue;
+    const big = p.high * peakLobe(s - p.s, w - p.w, p.rs, p.rw, p.skew);
+    const small = p.stepH * peakLobe(s - p.stepS, w - p.stepW, p.stepR, p.stepWidth, -p.skew);
+    rise = Math.max(rise, big, small);
+  }
+  return rise;
+}
+function segFloor(e, t, w = 0) { return segBaseFloor(e, t) + peakRise(e, t, w); }
+// Короткий верхний боковой лаз под нависанием, внутри существующего контура.
+// Не прорезаем новую шахту и не сдвигаем узлы/стыки. Высота свободного прохода
+// над поднятой полкой не меньше 3.3 м до учёта исходной оболочки.
+function peakRoof(e, t, w, base, floor) {
+  if (!e.peak) return Infinity;
+  const s = t * e.len;
+  let roof = Infinity;
+  for (const p of e.peak) {
+    if (!p.arch || Math.abs(s - p.s) >= p.rs) continue;
+    const q = peakLobe(s - p.s, w - p.w, p.rs, p.rw, p.skew);
+    if (q > 0) roof = Math.min(roof, Math.max(floor + 3.3, base + e.H - 5.6 * q));
+  }
+  return roof;
+}
 function addSeg(a, b, kind, extra = {}) {
   const K = KIND[kind] || kind;
   const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
@@ -136,6 +193,7 @@ function addSeg(a, b, kind, extra = {}) {
     const k = Math.min(1, Math.max(0, len - e.steps * 1.0) / (e.la + e.lb)); e.la *= k; e.lb *= k;
   }
   e.box = [Math.min(a[0], b[0]) - e.hw, Math.max(a[0], b[0]) + e.hw, Math.min(a[1], b[1]) - e.hw, Math.max(a[1], b[1]) + e.hw, Math.min(a[2], b[2]) - 2, Math.max(a[2], b[2]) + e.H + 2];
+  e.peak = makePeakRelief(e);
   EL.push(e);
   return e;
 }
@@ -152,13 +210,15 @@ const segT = (e, x, z) => { const t = ((x - e.ax) * e.dx + (z - e.az) * e.dz) / 
 function segD(e, x, y, z) {
   let t = ((x - e.ax) * e.dx + (z - e.az) * e.dz) / e.len;
   t = t < 0 ? 0 : t > 1 ? 1 : t;
-  const u = Math.hypot(x - (e.ax + e.dx * e.len * t), z - (e.az + e.dz * e.len * t));
-  const f = segFloor(e, t), v = y - f;
+  const dx = x - (e.ax + e.dx * e.len * t), dz = z - (e.az + e.dz * e.len * t);
+  const u = Math.hypot(dx, dz), w = -e.dz * dx + e.dx * dz;
+  const base = segBaseFloor(e, t), f = base + peakRise(e, t, w), v = y - f;
   if (v < 0 && u < e.hw) return v;
-  // у обвала свод идёт ровным уклоном (не ступенями, как пол): над стеной нет нависающей «перемычки»
-  const vr = e.scree ? y - Math.max(f, e.fa + (e.fb - e.fa) * t) : v;
+  // Свод остаётся на прежней высоте: массивы занимают воздух, а не поднимают весь тоннель.
+  const rb = e.scree ? Math.max(base, e.fa + (e.fb - e.fa) * t) : base;
+  const vr = y - rb;
   const q = Math.pow(u / e.hw, 4) + Math.pow(Math.max(0, vr) / e.H, 4);
-  return Math.min(v, (1 - Math.sqrt(Math.sqrt(q))) * Math.min(e.hw, e.H));
+  return Math.min(v, (1 - Math.sqrt(Math.sqrt(q))) * Math.min(e.hw, e.H), peakRoof(e, t, w, base, f) - y);
 }
 function hallD(e, x, y, z) {
   const r = Math.hypot(x - e.x, z - e.z), v = y - e.f;
@@ -251,8 +311,11 @@ function field(x, y, z, list) {
       d += Math.max(0, 2.0 + big) * (1 - calm * 0.85) + calm * 0.3;
     } else {
       if (n === null) n = rockN(x, y, z);
-      const v = e.type === 0 ? y - segFloor(e, segT(e, x, z)) : e.type === 1 ? y - e.f : 9;
-      d += n * e.amp * (e.type === 2 ? 1 : smoothstep(0.3, 1.6, d < 0 ? 9 : Math.min(v + 0.5, 9)));
+      const w = e.type === 0 ? -e.dz * (x - e.ax) + e.dx * (z - e.az) : 0;
+      const v = e.type === 0 ? y - segFloor(e, segT(e, x, z), w) : e.type === 1 ? y - e.f : 9;
+      // Для игрового рельефа ограничиваем визуальный шум: верх глыбы должен совпадать с коллизией.
+      const noiseScale = e.peak ? 0.18 : 1;
+      d += n * e.amp * noiseScale * (e.type === 2 ? 1 : smoothstep(0.3, 1.6, d < 0 ? 9 : Math.min(v + 0.5, 9)));
     }
     if (d > best) best = d;
   }
@@ -282,11 +345,14 @@ function mineSpace(x, z, y) {
     if (e.type === 0) {
       let t = ((x - e.ax) * e.dx + (z - e.az) * e.dz) / e.len;
       t = t < 0 ? 0 : t > 1 ? 1 : t;
-      const u = Math.hypot(x - (e.ax + e.dx * e.len * t), z - (e.az + e.dz * e.len * t));
+      const dx = x - (e.ax + e.dx * e.len * t), dz = z - (e.az + e.dz * e.len * t);
+      const u = Math.hypot(dx, dz), w = -e.dz * dx + e.dx * dz;
       const hw = e.hw - PAD * (e.hw < 2 ? 0.6 : 1);
       if (u > hw) continue;
-      const f = segFloor(e, t), rb = e.scree ? Math.max(f, e.fa + (e.fb - e.fa) * t) : f;
-      _iv.push(f, rb + e.H * Math.pow(Math.max(0, 1 - Math.pow(u / e.hw, 4)), 0.25) - 0.3);
+      const base = segBaseFloor(e, t), f = base + peakRise(e, t, w);
+      const rb = e.scree ? Math.max(base, e.fa + (e.fb - e.fa) * t) : base;
+      const roof = Math.min(rb + e.H * Math.pow(Math.max(0, 1 - Math.pow(u / e.hw, 4)), 0.25), peakRoof(e, t, w, base, f)) - 0.3;
+      if (roof > f) _iv.push(f, roof);
     } else if (e.type === 1) {
       const r = Math.hypot(x - e.x, z - e.z);
       if (r > e.R - PAD * 1.4) continue;
@@ -903,8 +969,9 @@ function buildProps(scene, rnd, ctx) {
     // кристаллы — на глубине и в глыбовых ходах
     if (!tier1 || e.kind === 'rough') for (let s = 5 + rnd() * 6; s < e.len - 3; s += 9 + rnd() * 10) {
       const sd = rnd() < 0.5 ? -1 : 1, w = e.hw - 0.7, x = e.ax + e.dx * s - e.dz * w * sd, z = e.az + e.dz * s + e.dx * w * sd;
-      if (chE(x, z) < 1.1 || !solidUnder(x, z, segFloor(e, s / e.len))) continue;
-      crystals(x, segFloor(e, s / e.len), z, 3 + Math.floor(rnd() * 3), e.fa < -270 ? 0.9 : 0.6);
+      const fy = segFloor(e, s / e.len, w * sd);
+      if (chE(x, z) < 1.1 || !solidUnder(x, z, fy)) continue;
+      crystals(x, fy, z, 3 + Math.floor(rnd() * 3), e.fa < -270 ? 0.9 : 0.6);
     }
   }
   // --- лагерь шахтёров ---
