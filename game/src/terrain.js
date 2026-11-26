@@ -63,6 +63,12 @@ const tunBase = (T, t, w) => {
   const u = w - tunC(T, t), k = tunK(t), hw = tunHW(T, t);
   let y = T.F0 - tunDrop(T, t) + fbm(t * 0.21 + T.th * 7, u * 0.21, 2) * 0.25 + Math.min(1, Math.abs(u) / hw) * 0.35;
   y += k * (fbm(t * 0.11 + T.seed * 9, u * 0.15 + 3, 3) * 0.55 + Math.max(0, fbm(t * 0.6 + T.seed, u * 0.6, 2)) * 0.18);   // кочки
+  // The first two metres at the opening and the junction at the far end
+  // share the original ground. Inside the mine, the path winds around a
+  // continuous raised rib with a traversable shelf along its other side.
+  const bank = 1 - Math.min(1, Math.abs(u/(.37*hw) - 1.20*Math.sin(t*.106+T.seed)));
+  const lip = Math.min(1, Math.abs(u)*1.4/hw);
+  y += k * (1 - smoothstep(T.L-12,T.L-2,t)) * (2.7*bank*bank + lip*.55);
   for (const [ts, hs] of T.steps) y -= hs * smoothstep(ts - 0.9, ts + 0.9, t);   // уступ вниз: пологий, пешком проходим и обратно вверх
   for (const [tp, up, rp] of T.pools) { const d = Math.hypot(t - tp, u - up); if (d < rp * 1.6) y -= 0.32 * (1 - smoothstep(rp * 0.5, rp * 1.6, d)); }
   return y;
@@ -1219,7 +1225,7 @@ const terrainMat = () => mat({
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
-      alb *= mix(vec3(1.0), vec3(0.74, 0.6, 0.5), mineW);   // в шахтах камень тёмный, тёплый (бурый)
+      alb *= mix(vec3(1.0), vec3(0.9, 0.82, 0.74), mineW);   // в шахтах камень тёмный, тёплый (бурый)
 
       // на дне шахты темно, но не чёрно: мягкое голубое свечение от воды, кристаллов и грибов
       float deepGlow = smoothstep(-150.0, -230.0, vW.y) * (1.0 - smoothstep(52.0, 84.0, rr));
@@ -1227,6 +1233,8 @@ const terrainMat = () => mat({
       float ao = 1.0 - mtnK*0.1*(1.0-facet2);
       vec3 c = shade(alb, nn, shadowAt3(vW)) * ao;
       c += alb * vec3(0.10, 0.20, 0.25) * deepGlow;
+      float warmFace = 0.5 + 0.5*dot(nn,vec3(-0.48,0.72,0.50));
+      c += mineW * (0.17 + 0.24*warmFace) * (alb + vec3(0.31,0.33,0.37));
       gl_FragColor = vec4(applyFog(c, vW), 1.0);
     }`,
 });

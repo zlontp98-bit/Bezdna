@@ -1,3 +1,4 @@
+import { caveRoutes } from './cave-routes.js';
 import { buildMineStrata } from './mine-strata.js';
 import * as THREE from '../vendor/three.min.js';
 import { TUNNELS, tunLocal, tunC, tunHW, tunH, tunFloor, rockMat, setMineSpace } from './terrain.js';
@@ -615,7 +616,30 @@ export function buildMines(scene, mineSeed = SEED) {
     if (ra + rb > 0 && ra + rb > room) { const f = Math.max(0, room) / (ra + rb); ra *= f; rb *= f; }
     return [[a[0] + dx / len * ra, a[1] + dz / len * ra, a[2]], [b[0] - dx / len * rb, b[1] - dz / len * rb, b[2]]];
   };
-  for (const [a, b, k] of E) { const [A, B] = k === 'scree' ? [N[a], N[b]] : trim(N[a], N[b], a, b, k); segs.push(addSeg(A, B, k, { from: a, to: b })); }
+  let anchoredRoutes = 0, floorLoops = 0;
+  const egressNames = new Set(['O1','O2','O2b','O3','O4','P3','s1','s2']);
+  const routeRng = mulberry32(mineSeed ^ 0x572dd);
+  for (const [a,b,k] of E) {
+    const [A,B] = k === 'scree' ? [N[a],N[b]] : trim(N[a],N[b],a,b,k);
+    // Leave the escape shaft, spider racking and the original pit entrances on
+    // their own centre lines: their architecture is built from those lines.
+    const fixed = (a === 'a2' && b === 's1') || (a === 'b6' && b === 'b7') ||
+      egressNames.has(b) || egressNames.has(a);
+    const shapes = caveRoutes(A,B,k,routeRng,fixed);
+    if (!shapes) {
+      segs.push(addSeg(A,B,k,{from:a,to:b}));
+      continue;
+    }
+    anchoredRoutes++;
+    if (shapes.some(leg => leg.tag === 'ledge')) floorLoops++;
+    for (const leg of shapes) {
+      segs.push(addSeg(leg.a,leg.b,leg.mode,{
+        from:leg.first?a:'', to:leg.last?b:'', branch:leg.tag,
+        hw:leg.hw, H:leg.H
+      }));
+    }
+  }
+
   for (const [n, end, tag] of fieldStubs) { N[tag] = end; const [A, B] = trim(N[n], end, n, tag, 'side'); segs.push(addSeg(A, B, 'side', { from: n, to: tag, field: true })); }
   for (const [n, R, H] of HALLS) addHall(N[n], R, H);
   // пересечение: паучий ход над нижним штреком — в полу дыра (можно спрыгнуть)
@@ -660,7 +684,7 @@ export function buildMines(scene, mineSeed = SEED) {
     return {x,z,y,r,exits};
   });
   const strata = buildMineStrata(scene, rockMat, segs, halls, openings, mineSeed);
-  buildMines.stats = { strata, mineSeed, ms: Math.round(performance.now() - t0), chunks: rock.meshes.length, tris: rock.tris, evals: rock.evals, props: props.tris, lights: MINE_LIGHTS.length };
+  buildMines.stats = { anchoredRoutes, floorLoops, strata, mineSeed, ms: Math.round(performance.now() - t0), chunks: rock.meshes.length, tris: rock.tris, evals: rock.evals, props: props.tris, lights: MINE_LIGHTS.length };
   return buildMines.stats;
 }
 function segX(a, b, c, d) {
@@ -880,6 +904,12 @@ function buildProps(scene, rnd, ctx) {
   const solidUnder = (x, z, y) => { const f = mineSpace(x, z, y + 0.4); return f !== null && Math.abs(f - y) < 0.6; };
   for (const e of ctx.segs) {
     const tier1 = e.fa > -226, big = e.hw > 6;
+    if (e.branch && ((e.kind === 'main' && !e.from) || (e.branch === 'ledge' && e.to))) {
+      const s = e.len * 0.52, w = e.kind === 'main' ? -e.hw*.55 : e.hw*.48;
+      const x = e.ax + e.dx*s - e.dz*w, z = e.az + e.dz*s + e.dx*w;
+      const floor = mineSpace(x,z,segFloor(e,s/e.len)+.4);
+      if (floor !== null && Math.abs(floor-segFloor(e,s/e.len)) < 1.2) lampPost(x,floor,z,2.9);
+    }
     // крепь: в штреках через 7 м, в боковых через 7 м, в лазах — изредка одна стойка
     if (e.kind === 'main' || e.kind === 'side' || e.kind === 'rough') {
       const step = e.kind === 'main' ? (big ? 8 : 5) : e.kind === 'side' ? 7 : 9;

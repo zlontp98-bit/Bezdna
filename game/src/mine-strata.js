@@ -44,18 +44,20 @@ export function buildMineStrata(scene, material, sections, halls, openings, seed
     return batches.get(key);
   }
   for (const e of sections) {
-    if (!e.from || e.field || !['main','rough','side'].includes(e.kind) || e.len<14) continue;
+    if ((!e.from && !e.branch) || e.field || !['main','rough','side'].includes(e.kind) || e.len<(e.branch ? 9 : 14)) continue;
     // Truncate before junctions and around cross-shaft openings.
     const rail=e.kind==='main';
     let side=rng()<.5?-1:1;
-    for (let s=7+rng()*3; s<e.len-5; s+=10+rng()*9) {
+    for (let s=e.branch ? Math.min(e.len*.53,8) : 7+rng()*3; s<e.len-3; s+=10+rng()*9) {
       if (rng()<.60) side=-side;
       const x=e.ax+e.dx*s, z=e.az+e.dz*s;
       if (openings.some(p=>Math.hypot(x-p[0],z-p[1])<10 && Math.abs(e.fa-p[2])<30)) continue;
       const target=group(e,s,0);
       // Keep a continuous rail lane on its original -2.6 m offset. On other
       // corridors leave space on the far side for walking around each cluster.
-      const root=side*(e.hw-.25), reach=rail && side<0 ? e.hw-4.35 : e.hw*.83;
+      const root=side*(e.hw-.25);
+      const lane=rail && e.hw>6 ? -2.6 : 0;
+      const reach=Math.min(e.hw*1.07,Math.abs(root-lane)-1.35);
       const span=Math.min(5.6, s-1, e.len-s-1)*( .70+rng()*.30);
       const type=Math.floor(rng()*4), sign=rng()<.5?-1:1;
       const slab=(ds,dw,l,b,y,h,pitch,lean=0)=>{

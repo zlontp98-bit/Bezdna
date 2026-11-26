@@ -215,8 +215,8 @@ vec3 mineFog(vec3 c, vec3 w, float d){
   float red = inCh * (0.12 * smoothstep(-170.0, -240.0, w.y) + 0.9 * smoothstep(-240.0, -318.0, w.y));
   c += (c*1.6 + 0.04) * vec3(1.0, 0.22, 0.07) * red * 1.3;
   // в пропасти воздух — светящаяся красная мгла: дальнее тонет в красном, ближнее — тёмный силуэт
-  float den = mix(0.042, 0.0085, inCh);
-  vec3 fc = mix(vec3(0.04, 0.03, 0.034), mix(vec3(0.30, 0.06, 0.04), vec3(0.85, 0.18, 0.06), smoothstep(-200.0, -312.0, w.y)), inCh);
+  float den = mix(0.016, 0.0085, inCh);
+  vec3 fc = mix(vec3(0.15, 0.18, 0.23), mix(vec3(0.30, 0.06, 0.04), vec3(0.85, 0.18, 0.06), smoothstep(-200.0, -312.0, w.y)), inCh);
   // лавовая пещера: стены подсвечены снизу оранжевым, воздух — горячая дымка, над лавой марево
   float ly, inLv = lavaIn(w, ly);
   if (inLv > 0.0) {
@@ -279,7 +279,8 @@ vec3 applyFog(vec3 c, vec3 w){
   // Шахты под озером (mines.js): камера ниже −190 м и не в колодце шахты — там совсем темно,
   // светят только фонари, кристаллы, фонарик героя и красный туман пропасти
   float mineK = smoothstep(-185.0, -193.0, cameraPosition.y) * smoothstep(52.0, 64.0, length(cameraPosition.xz));
-  c *= 1.0 - 0.55 * mineK;
+  // Warm lamps sit on a cooler local shadow floor, even in low-power mode.
+  c += mineK * (c*0.16 + vec3(0.06,0.075,0.10));
   float deep = smoothstep(-18.0, -70.0, w.y);
   // Тёплый свет фонарика: освещает всё вокруг героя метров на семь, но не слепит.
   //  — вплотную к лампочке (сам герой, его голова) свет втрое слабее — герой виден, но не горит;
