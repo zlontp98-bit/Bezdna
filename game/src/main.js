@@ -159,7 +159,14 @@ async function build() {
   buildTunnels(scene);         // два больших туннеля из шахты у дна: арка в стене, ход полого вниз, глыбы по стенам
   await loadStep(44, 'Роем шахты…');
   const underFrom = scene.children.length;
-  console.log('> шахты', JSON.stringify(buildMines(scene)));   // шахты под озером: ходы от концов туннелей, ямы, Красная пропасть
+  const mineSeedKey = 'bezdna.mineSeed';
+  let mineSeed = store.get(mineSeedKey, null);
+  if (mineSeed === null) {
+    mineSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+    store.set(mineSeedKey, String(mineSeed));
+    store.flush();
+  }
+  console.log('> шахты', JSON.stringify(buildMines(scene, Number(mineSeed))));   // шахты под озером: ходы от концов туннелей, ямы, Красная пропасть
   const underObjs = scene.children.slice(underFrom);
   initOuter(scene);
   // путь воды — до растений: над водопадом и на пути ручья по дну не растут деревья и грибы
@@ -793,7 +800,7 @@ $('newgame').addEventListener('click', () => $('confirm').classList.add('show'))
 $('wipeNo').addEventListener('click', () => $('confirm').classList.remove('show'));
 $('wipe').addEventListener('click', () => {
   store.flush();
-  for (const k of ['bezdna.inv', 'bezdna.world', 'bezdna.axe', 'bezdna.me']) store.del(k);
+  for (const k of ['bezdna.inv', 'bezdna.world', 'bezdna.axe', 'bezdna.me', 'bezdna.mineSeed']) store.del(k);
   location.reload();
 });
 $('tomenu').addEventListener('click', () => {
