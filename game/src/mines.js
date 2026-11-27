@@ -1,3 +1,4 @@
+import { buildPiles } from './talus.js';
 import { galleryPlan } from './gallery-plan.js';
 import { buildMineStrata, buildRibs } from './mine-strata.js';
 import * as THREE from '../vendor/three.min.js';
@@ -38,6 +39,7 @@ const rockN = (x, y, z) => 0.62 * vn3(x * 0.19, y * 0.23, z * 0.19) + 0.38 * vn3
 // ---- пустоты ----
 // пол хода в точке t (0..1): ровный уклон; у «глыбовых» ходов — уступы, на которые надо запрыгивать
 function segFloor(e, t) {
+  if(e.pile) return e.fa+(e.fb-e.fa)*t-3.3*Math.min(1,t*e.len/4,(1-t)*e.len/4);
   let f = e.fa + (e.fb - e.fa) * t;
   if (e.rough) {
     const s = t * e.len, env = smoothstep(4, 9, s) * smoothstep(4, 9, e.len - s);
@@ -51,7 +53,7 @@ function addSeg(a, b, kind, extra = {}) {
   const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
   const e = { type: 0, kind: extra.kind || K.kind || kind, ax: a[0], az: a[1], fa: a[2], bx: b[0], bz: b[1], fb: b[2], dx: dx / len, dz: dz / len, len,
     hw: K.hw, H: K.H, amp: K.amp, rough: kind === 'rough', scree: kind === 'scree', seed: EL.length * 1.7, ...extra };
-  e.box = [Math.min(a[0], b[0]) - e.hw, Math.max(a[0], b[0]) + e.hw, Math.min(a[1], b[1]) - e.hw, Math.max(a[1], b[1]) + e.hw, Math.min(a[2], b[2]) - 2, Math.max(a[2], b[2]) + e.H + 2];
+  e.box = [Math.min(a[0], b[0]) - e.hw, Math.max(a[0], b[0]) + e.hw, Math.min(a[1], b[1]) - e.hw, Math.max(a[1], b[1]) + e.hw, Math.min(a[2], b[2]) - (extra.pile ? 6 : 2), Math.max(a[2], b[2]) + e.H + 2];
   EL.push(e);
   return e;
 }
@@ -259,7 +261,11 @@ export function buildMines(scene, mineSeed = SEED) {
   const plan = galleryPlan(CHASM, ends.map(e=>e.end), mulberry32(mineSeed ^ 0x832acd));
   EL.length = 0;
   MINE_LIGHTS.length = 0;
-  const segs = plan.legs.map(({a,b,kind,hw,H}) => addSeg(a,b,kind,{hw,H,branch:'gallery'}));
+  const segs = plan.legs.map(({a,b,kind,hw,H},i) => {
+    const length=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    const pile=length>=17 && (kind==='main' || kind==='rough') && (i%3!==0 || a[2]>-211);
+    return addSeg(a,b,kind,{pile,hw:pile?Math.max(9,hw):hw,H:pile?Math.max(14,H):H,branch:'gallery'});
+  });
   for (const r of plan.rooms) addHall(r.p,r.r,r.h);
   EL.push({type:3,amp:0,box:[CHASM.x-CHASM.rx-8,CHASM.x+CHASM.rx+8,
     CHASM.z-CHASM.rz-8,CHASM.z+CHASM.rz+8,CHASM.floor-4,CHASM.roof+22]});
@@ -275,14 +281,23 @@ export function buildMines(scene, mineSeed = SEED) {
   };
   const rock = buildRock(scene, skip);
   const props = buildProps(scene,rnd,{plan,segs});
-  const strata = buildMineStrata(scene,rockMat,segs,[],plan.ribs.flatMap(r=>[r.a,r.b]),mineSeed);
+  const deposits=segs.filter(e=>e.pile);
+  hotSeams=buildPiles(scene,rockMat,deposits,mulberry32(mineSeed^0x775af));
+  const strata = buildMineStrata(scene,rockMat,segs.filter(e=>!e.pile),[],plan.ribs.flatMap(r=>[r.a,r.b]),mineSeed);
   buildRibs(scene,rockMat,plan.ribs);
-  buildMines.stats = {rooms:plan.rooms.length, passages:segs.length, bridges:plan.ribs.length,
+  buildMines.stats = {deposits:deposits.length, rooms:plan.rooms.length, passages:segs.length, bridges:plan.ribs.length,
     strata,mineSeed,ms:Math.round(performance.now()-t0),chunks:rock.meshes.length,tris:rock.tris,props:props.tris};
   return buildMines.stats;
 }
 // смерть в красном тумане (ноги ниже этой высоты над дном пропасти) или в лаве
+let hotSeams=[];
 export function inDeadlyFog(p) {
+  for(const {e,start,end,half} of hotSeams){
+    const dx=p.x-e.ax,dz=p.z-e.az,s=dx*e.dx+dz*e.dz;
+    if(s<start || s>end || Math.abs(dz*e.dx-dx*e.dz)>half)continue;
+    const lava=e.fa+(e.fb-e.fa)*s/e.len-2.1;
+    if(p.y<=lava+.12 && p.y>=lava-1.8)return true;
+  }
   return (p.y < CHASM.death && chE(p.x, p.z) < 1.1);
 }
 // раскалённый низ столбов и стен у лавы: 2 м над лавой
@@ -418,7 +433,7 @@ function buildProps(scene, rnd, ctx) {
 
   for (const e of ctx.segs) {
     const y=(e.fa+e.fb)/2, x=(e.ax+e.bx)/2, z=(e.az+e.bz)/2;
-    if(e.kind==='main'){
+    if(e.kind==='main' && !e.pile){
       rails([e.ax,e.az],[e.bx,e.bz],e.fa,e.fb,-1.8);
       frame(x,y,z,e.dx,e.dz,e.hw*.86,Math.min(5,e.H*.55),true);
     } else {
