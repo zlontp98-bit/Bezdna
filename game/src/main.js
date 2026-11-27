@@ -24,7 +24,7 @@ import { planDeep, Deep, deepRocks } from './deep.js';
 import { Jellies } from './jelly.js';
 import { buildDescent, waterDebris, clearShaftDebris, clearWallStones } from './descent.js';
 import { buildTunnels, TUN_LIGHTS } from './tunnels.js';
-import { buildMines, MINE_LIGHTS, inDeadlyFog, inLava, hotRock } from './mines.js';
+import { buildMines, MINE_LIGHTS, inDeadlyFog } from './mines.js';
 import { buildVines } from './vines.js';
 import { buildLanterns, buildBridges } from './scale.js';
 import { buildSpores, buildMoths } from './life.js';
@@ -58,7 +58,6 @@ const extras = []; // украшения, которые в режиме «Ни�
 let vines, lanterns, spores, deep, jelly, deepPlan, hands, renderer, scene, camera, player, input, grass, motes, clouds, inv, falls, wood, world, town, picks, berries, craft, mine, chest;
 let yaw = Math.PI / 2, pitch = 0.2, camDist = 6.5, camCur = 6.5, firstPerson = false;
 let running = false, fade = 0, falling = false, creative = null;
-let hotT = 0, hotMsgT = 0;   // сколько держимся за раскалённый камень
 const camPos = new THREE.Vector3(), target = new THREE.Vector3(), camSm = new THREE.Vector3(), _cs = new THREE.Vector3();
 let camSmDt = -1, camHold = 6.5, camHoldT = 0, camLift = 0, camLiftGoal = 0, camLiftT = 0;
 
@@ -569,7 +568,7 @@ function menuFrame(dt, t) {
 // 2 — поверхность (всё, что целиком выше −40 м). Не видна, когда камера в шахтах, вне ствола большой шахты.
 // Игровые объекты, добавленные позже (герой, NPC, зал гильдии), остаются в слое 0 и видны всегда.
 // Границы проверены сравнением кадров «с зонами / без зон» с края провала, из ствола, из туннелей и шахт.
-const L_UNDER = 1, L_SURF = 2, UNDER_Y = -80, MINE_Y = -185, SHAFT_R = 64;
+const L_UNDER = 1, L_SURF = 2, UNDER_Y = -80, MINE_Y = -156, SHAFT_R = 64;
 function setupZones(underObjs) {
   const under = new Set(underObjs);
   const box = new THREE.Box3();
@@ -670,17 +669,8 @@ function frame(now) {
   }
   // упал в колодец — следующий слой ещё не открыт, возвращаем на уступ
   if ((player.pos.y < -400 || player.fell) && !falling) { falling = true; $('msg').textContent = player.fell ? 'Ты сорвался — возвращаемся на последний уступ' : 'Ты провалился слишком глубоко — возвращаемся'; $('msg').classList.add('show'); }
-  // Раскалённый низ столбов у лавы: держаться дольше секунды нельзя — руки разжимаются
-  if (!falling && !creative.on && player.climbing && hotRock(player.pos)) {
-    hotT += dt;
-    if (hotT > 1) {
-      hotT = 0; player.face = null; player.climbing = false; player.climbCd = 0.8; player.airT = 1; player.vel.set(0, 0, 0);
-      sfx('hurt'); $('msg').textContent = 'Камень раскалён — руки не удержали!'; $('msg').classList.add('show');
-      clearTimeout(hotMsgT); hotMsgT = setTimeout(() => $('msg').classList.remove('show'), 1800);
-    }
-  } else hotT = Math.max(0, hotT - dt * 2);
   // Красная пропасть: упал в туман — смерть, просыпаемся на последнем уступе
-  if (!falling && !creative.on && inDeadlyFog(player.pos)) { falling = true; fade = Math.max(fade, 0.5); sfx('hurt'); $('msg').textContent = inLava(player.pos) ? 'Ты упал в лаву… Возвращаемся на последний уступ' : 'Красный туман поглотил тебя… Возвращаемся на последний уступ'; $('msg').classList.add('show'); }
+  if (!falling && !creative.on && inDeadlyFog(player.pos)) { falling = true; fade = Math.max(fade, 0.5); sfx('hurt'); $('msg').textContent = 'Красный туман поглотил тебя… Возвращаемся на последний уступ'; $('msg').classList.add('show'); }
   if (falling) {
     fade = Math.min(1, fade + dt * 1.6);
     if (fade >= 1) { player.respawn(); falling = false; setTimeout(() => $('msg').classList.remove('show'), 2600); }

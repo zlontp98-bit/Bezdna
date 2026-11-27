@@ -107,3 +107,41 @@ export function buildMineStrata(scene, material, sections, halls, openings, seed
   }
   return stones;
 }
+
+// Seven cross-sections taper each span into a bowed rock rib. Use the exact
+// triangles for walking on the crown, gripping the sides and passing underneath.
+export function buildRibs(scene,material,ribs) {
+  for (const {a,b,bend,rise,width,gap} of ribs) {
+    const len=Math.hypot(b[0]-a[0],b[1]-a[1]);
+    const nx=-(b[1]-a[1])/len, nz=(b[0]-a[0])/len;
+    const faces=[], rings=[];
+    const cuts=gap?[0,.125,.25,.375,.489,.502,.625,.75,.875,1]:[0,.125,.25,.375,.5,.625,.75,.875,1];
+    for(let j=0;j<cuts.length;j++){
+      const t=cuts[j], bow=Math.sin(t*Math.PI), shoulder=(1-bow)**2;
+      const w=width*(.86+1.16*shoulder+.12*Math.sin(j*2.1));
+      const thick=2.6+6*shoulder+rise*.3;
+      const x=a[0]+(b[0]-a[0])*t+nx*bend*bow,z=a[1]+(b[1]-a[1])*t+nz*bend*bow;
+      const y=a[2]+(b[2]-a[2])*t+rise*bow;
+      rings.push([[-.78,.0],[.74,0],[1,-.30],[.68,-.83],[-.18,-1],[-1,-.46]]
+        .map(([side,h])=>[x+side*w*nx,y+h*thick,z+side*w*nz]));
+    }
+    for(let j=1;j<rings.length;j++){
+      if(gap && j===5) continue;
+      const p=rings[j-1],q=rings[j];
+      for(let i=0;i<p.length;i++){
+        const k=(i+1)%p.length;
+        faces.push(...p[i],...q[k],...q[i],...p[i],...p[k],...q[k]);
+      }
+    }
+    for(const [index,invert] of [[0,false],[rings.length-1,true],...(gap?[[4,true],[5,false]]:[])]){
+      const ring=rings[index];
+      for(let i=1;i<ring.length-1;i++)faces.push(...ring[0],...ring[invert?i:i+1],...ring[invert?i+1:i]);
+    }
+    addMeshTop([], .38, {full:faces,slope:true,roof:true,climb:true});
+    const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(faces,3));
+    g.setAttribute('aB',new THREE.Float32BufferAttribute(new Float32Array(faces.length/3*2),2));
+    g.computeVertexNormals();
+    const mesh=chunkMesh(g,material);mesh.name='Rock span';mesh.userData.mine=true;scene.add(mesh);
+  }
+}

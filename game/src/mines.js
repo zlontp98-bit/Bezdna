@@ -1,93 +1,18 @@
-import { caveRoutes } from './cave-routes.js';
-import { buildMineStrata } from './mine-strata.js';
+import { galleryPlan } from './gallery-plan.js';
+import { buildMineStrata, buildRibs } from './mine-strata.js';
 import * as THREE from '../vendor/three.min.js';
 import { TUNNELS, tunLocal, tunC, tunHW, tunH, tunFloor, rockMat, setMineSpace } from './terrain.js';
 import { chunkMesh } from './chunks.js';
 import { mulberry32, SEED, smoothstep } from './noise.js';
 import { part, merge, T as M4, propMaterial } from './flora.js';
-import { LAVA_POOLS, mat } from './shaders.js';
-import { addBox } from './solids.js';
-import { WR, WoodBuf, woodBox, woodBarrel, woodBanner, woodMaterial } from './minewood.js';
-
-// Шахты под озером: старые выработки (−195…−215), глыбовый лабиринт (−228…−252), глубинные жилы (−256…−320)
-// и огромная Красная пропасть с красным туманом на дне (упал в туман — смерть, возврат на последний уступ).
-// План — /mnt/project-files/mines-plan (вариант 1). Ходы начинаются от концов двух туннелей (tunnels.js).
-//
-// Как устроено. Шахта — набор «пустот» в толще скалы: ходы (отрезки с полом и сводом), залы, узкие ямы
-// и пропасть. Для физики каждая пустота в точке (x, z) даёт отрезок высот [пол, свод]; их объединение —
-// воздух, всё остальное — скала (terrain.js terrainAt → mineSpace). Стены рисуем по той же форме:
-// поле «насколько точка в воздухе» (+ шум скалы) считается на сетке, поверхность строится методом
-// surface nets по кускам 30 м — куски вне кадра не рисуются.
+import { WR, WoodBuf, woodBox, woodMaterial } from './minewood.js';
 
 const TAU = Math.PI * 2;
-export const CHASM = { x: 150, z: -25, rx: 52, rz: 46, floor: -345, fog: -322, death: -316, roof: -204 };
+export const CHASM = { x: 150, z: -25, rx: 52, rz: 46, floor: -369, fog: -322, death: -316, roof: -187 };
 const chE = (x, z) => Math.hypot((x - CHASM.x) / CHASM.rx, (z - CHASM.z) / CHASM.rz);
-const chAt = (th, s = 1) => [CHASM.x + Math.cos(th) * CHASM.rx * s, CHASM.z + Math.sin(th) * CHASM.rz * s];
-
-// ---- план: узлы [x, z, пол] ----
-// Вариант 3 (после теста): карта первого варианта, ходы вдвое шире, Красная пропасть ближе к центру — на неё
-// смотрят со всех сторон; между ходами — лавовые поля с большими камнями (паркур из хода в ход),
-// обвалы-осыпи и лестницы по стене пропасти между ярусами. План: /mnt/project-files/mines-plan/5-variant3-lava.png
-const N = {
-  a2: [100, -130, -203], L: [120, -152, -206], a3: [148, -138, -209], O1: [150, -100, -211],
-  s1: [64, -184, -203], s2: [56, -204, -207], NEST: [50, -228, -209],
-  T1: [172, -186, -211], F1: [192, -170, -223], G1: [198, -146, -229],
-  K0: [-135.5, 22, -198], b2: [-135, -22, -202], JB: [-125, -70, -205], T2: [-178, -98, -206],
-  b3: [-95, -120, -209], b4: [-47.5, -144, -213], b5: [0, -168, -217], b6: [50, -165, -222], b7: [95, -157, -227],
-  ST: [-12, -208, -215],
-  H2: [113, -159, -231], c1: [156, -168, -234], c2: [178, -132, -238], O3: [192, -62, -240], c3: [150, -112, -237], cp1: [120, -108, -236], c4: [118, -72, -241], T3: [80, -62, -239], c5: [80, -34, -245],
-  O2: [96, -22, -248], O2b: [110, 12, -251],
-  d1: [140, 44, -255], P3: [136, 58, -257], d2: [136, 58, -281], H3: [96, 96, -286], T4: [52, 116, -288], d3: [150, 74, -296], O4: [158, 40, -303], d4: [118, 128, -306], EXIT: [105, 160, -312],
-};
-// ходы: [откуда, куда, вид]. main — штрек с рельсами и крепью, side — боковой, narrow — узкий лаз, entry — как туннель,
-// scree — обвал: площадки и отвесные стены по 4–6 м (вверх — лезть, вниз — прыгать)
-const E = [
-  ['A1', 'a2', 'entry'], ['a2', 'L', 'main'], ['L', 'a3', 'main'], ['a3', 'O1', 'main'],
-  ['a2', 's1', 'side'], ['s1', 's2', 'narrow'], ['s2', 'NEST', 'side'], ['a3', 'T1', 'narrow'],
-  ['B1', 'K0', 'entry'], ['K0', 'b2', 'main'], ['b2', 'JB', 'main'], ['JB', 'T2', 'side'], ['JB', 'b3', 'main'], ['b3', 'b4', 'main'], ['b4', 'b5', 'main'], ['b5', 'b6', 'main'], ['b6', 'b7', 'main'], ['b7', 'H2', 'main'],
-  ['b5', 'ST', 'side'],
-  ['H2', 'c1', 'rough'], ['c1', 'c2', 'rough'], ['c2', 'O3', 'rough'], ['c2', 'c3', 'narrow'], ['c3', 'cp1', 'narrow'], ['H2', 'cp1', 'rough'], ['cp1', 'c4', 'rough'], ['c4', 'T3', 'side'], ['c4', 'c5', 'rough'], ['c5', 'O2', 'side'],
-  ['O2b', 'd1', 'side'], ['d1', 'P3', 'side'], ['d2', 'H3', 'main'], ['H3', 'T4', 'side'], ['H3', 'd4', 'main'], ['d4', 'EXIT', 'main'], ['d2', 'd3', 'narrow'], ['d3', 'O4', 'narrow'],
-  // обвалы между ярусами
-  ['T1', 'F1', 'scree'], ['F1', 'G1', 'scree'], ['G1', 'c2', 'scree'], ['T3', 'c5', 'scree'], ['d4', 'T4', 'scree'],
-];
-const KIND = {
-  main: { hw: 8.0, H: 14, amp: 1.2 }, side: { hw: 4.5, H: 8, amp: 1.0 }, rough: { hw: 6.0, H: 12, amp: 1.2 }, narrow: { hw: 1.5, H: 3.4, amp: 0.4 },
-  entry: { hw: 6.5, H: 10, amp: 0.9, kind: 'main' }, scree: { hw: 5.0, H: 9, amp: 1.1 },
-};
-// залы и комнаты: [узел, радиус, высота свода]
-const HALLS = [['L', 22, 16], ['NEST', 20, 15], ['H2', 15, 13], ['H3', 24, 20], ['JB', 13, 12], ['b5', 12, 11], ['c2', 11, 12], ['a2', 10, 11],
-  ['K0', 12, 10], ['T1', 12, 10], ['F1', 7, 9], ['G1', 8, 10], ['T2', 11, 10], ['ST', 12, 10]];
-// узкие ямы вниз: [верх, низ, радиус]; низ стоит ровно под верхом
-const PITS = [['L', 'H2', 2.8], ['P3', 'd2', 2.6]];
-// выходы к пропасти: узел сдвигается от предыдущего узла хода до самого края пропасти
-const EDGE = [['O1', 'a3'], ['O3', 'c2'], ['O2', 'c5'], ['O4', 'd3']];
-// тупики-завалы: на конце хода груда камней
-const RUBBLE = ['EXIT'];
-
-// ---- лавовые поля ----
-// Низкая лава в гроте между ходами, из неё торчат большие глыбы разной формы — по ним прыгают из хода в ход.
-// Вход в поле: короткий ход от узла до края грота, в конце — «берег» (большая глыба на уровне пола хода).
-// Между берегами — цепочка глыб с щелями 1.2–2 м (прыжок) и ступенями не выше 0.9 м; вокруг — ещё глыбы.
-// entries: [узел, пол у края]
-const FIELDS = [
-  { ...LAVA_POOLS[0], roofE: -199, roofT: -193, entries: [['b5', -217.5], ['a2', -210]] },
-  { ...LAVA_POOLS[1], roofE: -223, roofT: -216, entries: [['H2', -234], ['c2', -236]] },
-  { ...LAVA_POOLS[2], roofE: -279, roofT: -272, entries: [['H3', -290], ['d3', -294]], via: [[0.35, 0.45]] },
-  { ...LAVA_POOLS[3], roofE: -194, roofT: -189, entries: [['b2', -204], ['T2', -206]] },
-];
-// лестницы по стене пропасти между ярусами: [от узла, до узла, обход по углу (рад), промежуточные точки [угол, высота]]
-// via — точка поворота: лестница уходит дальше по стене и возвращается ниже (зигзаг, не так круто)
-const WALLPATHS = [
-  { from: 'O2', to: 'O2b', via: [] },
-  { from: 'O1', to: 'O3', via: [[-0.35, -231]] },
-  { from: 'O2b', to: 'O4', via: [[0.75, -279]] },
-];
-const PATH_S = 0.968, PATH_W = 3.2, RISE = 0.45;
-
+const KIND = {side:{hw:5,H:8,amp:.7},main:{hw:7,H:12,amp:1},rough:{hw:7,H:12,amp:1.1}};
 export const MINE_LIGHTS = [];
-export const MINE_NODES = N;   // для проверок
-export const MINE_ROUTES = [], MINE_PATHS = [], MINE_FIELDS = [], MINE_BANNERS = [];
+
 const EL = [];          // все пустоты
 let GRID = null;        // сетка 16 м → пустоты (для физики и поля)
 const GC = 16;
@@ -118,11 +43,6 @@ function segFloor(e, t) {
     const s = t * e.len, env = smoothstep(4, 9, s) * smoothstep(4, 9, e.len - s);
     const q = Math.sin(s * 0.23 + e.seed) + 0.7 * Math.sin(s * 0.51 + e.seed * 2.3);
     f += Math.round(q * 1.3) * 0.55 * env;   // ступени по 0.55 м: запрыгнуть можно, перешагнуть — нет
-  } else if (e.scree) {
-    // обвал: ровные площадки, между ними 1–3 отвесные стены по 4–6 м — наверх только лезть, вниз — прыгать
-    // у концов — ровный заход (там стык с широким ходом: его пол не «съедает» стену)
-    const n = e.walls, u = Math.min(1, Math.max(0, (t * e.len - e.la) / (e.len - e.la - e.lb)));
-    f = e.fa + (e.fb - e.fa) * Math.min(n, Math.floor(u * n + 0.5)) / n;
   }
   return f;
 }
@@ -131,21 +51,12 @@ function addSeg(a, b, kind, extra = {}) {
   const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz) || 1;
   const e = { type: 0, kind: extra.kind || K.kind || kind, ax: a[0], az: a[1], fa: a[2], bx: b[0], bz: b[1], fb: b[2], dx: dx / len, dz: dz / len, len,
     hw: K.hw, H: K.H, amp: K.amp, rough: kind === 'rough', scree: kind === 'scree', seed: EL.length * 1.7, ...extra };
-  e.steps = Math.max(1, Math.ceil(Math.abs(b[2] - a[2]) / 0.8));
-  { const dh = Math.abs(b[2] - a[2]); e.walls = dh <= 6.5 ? 1 : dh <= 12.5 ? 2 : 3; }
-  if (e.scree) {
-    e.la = a[2] < b[2] ? 9 : 5; e.lb = b[2] < a[2] ? 9 : 5;
-    const k = Math.min(1, Math.max(0, len - e.steps * 1.0) / (e.la + e.lb)); e.la *= k; e.lb *= k;
-  }
   e.box = [Math.min(a[0], b[0]) - e.hw, Math.max(a[0], b[0]) + e.hw, Math.min(a[1], b[1]) - e.hw, Math.max(a[1], b[1]) + e.hw, Math.min(a[2], b[2]) - 2, Math.max(a[2], b[2]) + e.H + 2];
   EL.push(e);
   return e;
 }
 function addHall(c, R, H) {
   EL.push({ type: 1, x: c[0], z: c[1], f: c[2], R, H, amp: 1.0, box: [c[0] - R, c[0] + R, c[1] - R, c[1] + R, c[2] - 2, c[2] + H + 2] });
-}
-function addPit(top, bot, r, topH) {
-  EL.push({ type: 2, x: top[0], z: top[1], fb: bot[2], top: top[2] + topH, r, amp: 0.45, box: [top[0] - r, top[0] + r, top[1] - r, top[1] + r, bot[2] - 2, top[2] + topH + 2] });
 }
 function chasmRoof(e) { return CHASM.roof + 16 * Math.max(0, 1 - e * e); }
 
@@ -158,7 +69,7 @@ function segD(e, x, y, z) {
   const u = Math.hypot(dx, dz);
   const base = segFloor(e, t), f = base, v = y - f;
   if (v < 0 && u < e.hw) return v;
-  const rb = e.scree ? Math.max(base, e.fa + (e.fb - e.fa) * t) : base;
+  const rb = base;
   const vr = y - rb;
   const q = Math.pow(u / e.hw, 4) + Math.pow(Math.max(0, vr) / e.H, 4);
   return Math.min(v, (1 - Math.sqrt(Math.sqrt(q))) * Math.min(e.hw, e.H));
@@ -168,90 +79,24 @@ function hallD(e, x, y, z) {
   const q = Math.pow(r / e.R, 4) + Math.pow(Math.max(0, v) / e.H, 2);
   return Math.min(v, (1 - Math.sqrt(Math.sqrt(q))) * Math.min(e.R, e.H));
 }
-function pitD(e, x, y, z) {
-  return Math.min(e.r - Math.hypot(x - e.x, z - e.z), y - e.fb, e.top - y);
-}
 function chasmD(x, y, z) {
   const e = chE(x, z);
   return Math.min((1 - e) * Math.min(CHASM.rx, CHASM.rz), y - CHASM.floor, chasmRoof(e) - y);
 }
-// лавовая пещера: эллипс со сводом-куполом, дно под лавой; столбы и карниз — скала внутри неё
-const lvE = (e, x, z) => { const rx = x - e.x, rz = z - e.z; return Math.hypot((rx * e.ux + rz * e.uz) / e.a, (-rx * e.uz + rz * e.ux) / e.b); };
-const lvRoof = (e, k) => e.roofE + (e.roofT - e.roofE) * Math.max(0, 1 - k * k * k * k);
-function capT(c, x, z) { let t = ((x - c.ax) * c.dx + (z - c.az) * c.dz) / c.len; return t < 0 ? 0 : t > 1 ? 1 : t; }
-// глыба: эллипс (полуоси rx × rz, повёрнут), ровный верх top
-// столб: сечение — эллипс с угловатыми гранями (как базальтовые столбы), у наклонного центр смещается с высотой.
-// Одна и та же форма и для картинки, и для физики (пол, лазание) — невидимых выступов нет
-const bK = (p, x, z, y) => {
-  let dx = x - p.x, dz = z - p.z;
-  if (p.lean && y !== undefined) { const h = p.top - y; dx -= p.lx * h; dz -= p.lz * h; }
-  const a = (dx * p.cu + dz * p.su) / p.rx, b = (-dx * p.su + dz * p.cu) / p.rz, r = Math.hypot(a, b);
-  if (!p.f1 || r < 1e-4) return r;
-  const th = Math.atan2(b, a);
-  return r / (1 + 0.1 * Math.sin(3 * th + p.f1) + 0.06 * Math.sin(5 * th + p.f2) + 0.035 * Math.sin(8 * th + p.f1 * 1.7));
-};
-function lavaD(e, x, y, z, noisy) {
-  const k = lvE(e, x, z);
-  let d = Math.min((1 - k) * e.b, y - e.floor, lvRoof(e, k) - y);
-  if (noisy) {
-    const big = vn3(x * 0.05, y * 0.07, z * 0.05) * 3.2 + vn3(x * 0.12 + 3, y * 0.16, z * 0.12) * 1.4;
-    d += Math.max(0, 1.6 + big);
-  }
-  // столбы: ровный верх, бока отвесные (наклонный — со сдвигом по высоте); та же форма, что у физики
-  for (const p of e.pil) {
-    if (Math.abs(x - p.x) > p.R + 3 || Math.abs(z - p.z) > p.R + 3) continue;
-    d = Math.min(d, Math.max((bK(p, x, z, y) - 1) * p.m, y - p.top));
-  }
-  for (const c of e.caps) {
-    const t = capT(c, x, z), top = c.ta + (c.tb - c.ta) * t;
-    const r = Math.hypot(x - (c.ax + c.dx * c.len * t), z - (c.az + c.dz * c.len * t));
-    if (r > c.r + 12) continue;
-    d = Math.min(d, Math.max(r - c.r, y - top));
-  }
-  // сталактиты со свода (только вид)
-  if (noisy) for (const st of e.stal) {
-    const r = Math.hypot(x - st.x, z - st.z);
-    if (r > st.R) continue;
-    d = Math.min(d, (y - (st.y - st.L * (1 - r / st.R))) * -0.35);
-  }
-  return d;
-}
-const baseD = (e, x, y, z) => e.type === 0 ? segD(e, x, y, z) : e.type === 1 ? hallD(e, x, y, z) : e.type === 2 ? pitD(e, x, y, z) : e.type === 4 ? lavaD(e, x, y, z, false) : chasmD(x, y, z);
+const baseD = (e, x, y, z) => e.type === 0 ? segD(e, x, y, z) : e.type === 1 ? hallD(e, x, y, z) : chasmD(x, y, z);
 
-// тропы вдоль стены пропасти (карниз O2→O2b и лестницы между ярусами): там стена ровнее
-// CALM — участки [угол0, высота0, угол1, высота1]
-const CALM = [];
-const wrapA = (d) => { while (d > Math.PI) d -= TAU; while (d < -Math.PI) d += TAU; return d; };
-function ledgeCalm(x, y, z) {
-  if (!CALM.length) return 0;
-  const a = Math.atan2((z - CHASM.z) / CHASM.rz, (x - CHASM.x) / CHASM.rx);
-  let best = 0;
-  for (const c of CALM) {
-    const span = wrapA(c[2] - c[0]), d = wrapA(a - c[0]);
-    if (Math.abs(span) < 1e-4) continue;
-    let f = d / span;
-    const out = Math.max(0, -f, f - 1) * Math.abs(span);
-    if (out > 0.12) continue;
-    f = Math.min(1, Math.max(0, f));
-    const yy = c[1] + (c[3] - c[1]) * f;
-    const w = (1 - smoothstep(0.03, 0.1, out)) * smoothstep(yy - 4, yy - 1, y) * (1 - smoothstep(yy + 5, yy + 9, y));
-    if (w > best) best = w;
-  }
-  return best;
-}
 function field(x, y, z, list) {
   let best = -1e9, n = null;
   for (const e of list) {
     let d = baseD(e, x, y, z);
     if (d < (e.type >= 3 ? -11 : -4)) { if (d > best) best = d; continue; }
-    if (e.type === 4) d = lavaD(e, x, y, z, true);
-    else if (e.type === 3) {
+    if (e.type === 3) {
       // стены пропасти: крупные выступы, слои-карнизы и мелкий скол
-      const calm = ledgeCalm(x, y, z);
+
       // стена только отступает в скалу (не выпирает внутрь): край пустоты для физики — ровный эллипс, и
       // у выходов к пропасти под ногами никогда не оказывается «камень, которого нет»
       const big = vn3(x * 0.045, y * 0.06, z * 0.045) * 3.4 + vn3(x * 0.11 + 3, y * 0.14, z * 0.11) * 1.5 + Math.sin(y * 0.42 + vn3(x * 0.03, 0, z * 0.03) * 4) * 0.9;
-      d += Math.max(0, 2.0 + big) * (1 - calm * 0.85) + calm * 0.3;
+      d += Math.max(0, 2.0 + big);
     } else {
       if (n === null) n = rockN(x, y, z);
       const v = e.type === 0 ? y - segFloor(e, segT(e, x, z)) : e.type === 1 ? y - e.f : 9;
@@ -275,7 +120,7 @@ function indexAll() {
 
 // ---- физика: пол под ногами на высоте y (или null — скала / вне шахт) ----
 const PAD = 0.55;
-const _iv = [], _rk = [];
+const _iv = [];
 function mineSpace(x, z, y) {
   const list = GRID.get(Math.floor(x / GC) + ',' + Math.floor(z / GC));
   if (!list) return null;
@@ -290,40 +135,13 @@ function mineSpace(x, z, y) {
       const hw = e.hw - PAD * (e.hw < 2 ? 0.6 : 1);
       if (u > hw) continue;
       const base = segFloor(e, t), f = base;
-      const rb = e.scree ? Math.max(base, e.fa + (e.fb - e.fa) * t) : base;
+      const rb = base;
       const roof = (rb + e.H * Math.pow(Math.max(0, 1 - Math.pow(u / e.hw, 4)), 0.25)) - 0.3;
       if (roof > f) _iv.push(f, roof);
     } else if (e.type === 1) {
       const r = Math.hypot(x - e.x, z - e.z);
       if (r > e.R - PAD * 1.4) continue;
       _iv.push(e.f, e.f + e.H * Math.sqrt(Math.max(0, 1 - Math.pow(r / e.R, 4))) - 0.3);
-    } else if (e.type === 2) {
-      if (Math.hypot(x - e.x, z - e.z) > e.r - 0.3) continue;
-      _iv.push(e.fb, e.top);
-    } else if (e.type === 4) {
-      const k = lvE(e, x, z);
-      if (k > 1 - 0.45 / e.b) continue;
-      // скала в этом столбце (x, z): отрезки высот, занятые столбами; воздух — всё остальное до свода
-      _rk.length = 0;
-      for (const p of e.pil) {
-        if (Math.abs(x - p.x) > p.R || Math.abs(z - p.z) > p.R) continue;
-        const lim = 1 - 0.15 / p.m;
-        if (!p.lean) { if (bK(p, x, z) < lim) _rk.push(e.floor - 1, p.top); continue; }
-        // наклонный: ищем, на каких высотах столбец внутри (сверху вниз шагом 0.5, края уточняем)
-        let lo = null, hi = null;
-        for (let y2 = p.top; y2 >= e.floor; y2 -= 0.5) { if (bK(p, x, z, y2) < lim) { if (hi === null) hi = y2; lo = y2; } else if (hi !== null) break; }
-        if (hi === null) continue;
-        if (hi < p.top) { let a = hi, b = Math.min(p.top, hi + 0.5); for (let i = 0; i < 4; i++) { const m = (a + b) / 2; if (bK(p, x, z, m) < lim) a = m; else b = m; } hi = a; }
-        if (lo > e.floor) { let a = lo - 0.5, b = lo; for (let i = 0; i < 4; i++) { const m = (a + b) / 2; if (bK(p, x, z, m) < lim) b = m; else a = m; } lo = b; } else lo = e.floor - 1;
-        _rk.push(lo, hi);
-      }
-      const roof = lvRoof(e, k);
-      if (!_rk.length) { _iv.push(e.floor, roof); continue; }
-      const nr = _rk.length / 2;
-      if (nr > 1) { const o = []; for (let i = 0; i < nr; i++) o.push([_rk[i * 2], _rk[i * 2 + 1]]); o.sort((a, b) => a[0] - b[0]); for (let i = 0; i < nr; i++) { _rk[i * 2] = o[i][0]; _rk[i * 2 + 1] = o[i][1]; } }
-      let cur = e.floor;
-      for (let i = 0; i < nr; i++) { if (_rk[i * 2] > cur + 0.05) _iv.push(cur, _rk[i * 2]); cur = Math.max(cur, _rk[i * 2 + 1]); }
-      if (cur < roof) _iv.push(cur, roof);
     } else {
       const c = chE(x, z);
       if (c > 1 - 0.45 / CHASM.rz) continue;
@@ -361,8 +179,7 @@ function buildRock(scene, skip) {
     const bx = [ox - M, ox + S + M, oz - M, oz + S + M, oy - M, oy + S + M];
     const near = (x, z, m) => x > bx[0] - m && x < bx[1] + m && z > bx[2] - m && z < bx[3] + m;
     const list = EL.filter((e) => e.box[0] < bx[1] + 6 && e.box[1] > bx[0] - 6 && e.box[2] < bx[3] + 6 && e.box[3] > bx[2] - 6 && e.box[4] < bx[5] + 6 && e.box[5] > bx[4] - 6)
-      // у лавовой пещеры берём только столбы и сталактиты рядом с куском
-      .map((e) => e.type !== 4 ? e : { ...e, pil: e.pil.filter((p) => near(p.x, p.z, p.R + 11)), stal: e.stal.filter((st) => near(st.x, st.z, st.R + 1) && st.y - st.L < bx[5] + 1 && st.y > bx[4] - 1) });
+;
     if (!list.length) continue;
     // весь кусок заведомо в воздухе или в скале — пропускаем
     const mx = ox + S / 2, my = oy + S / 2, mz = oz + S / 2, half = S * 0.87 + M;
@@ -439,229 +256,13 @@ export function buildMines(scene, mineSeed = SEED) {
     const pt = (t) => { const c = tunC(T, t); return [T.x + T.dx * t + T.nx * c, T.z + T.dz * t + T.nz * c, tunFloor(T, t, c)]; };
     return { T, at: pt, end: pt(T.L) };
   });
-  N.A1 = ends[0].end; N.B1 = ends[1].end;
-  // выходы к пропасти — до самого края
-  for (const [o, from] of EDGE) {
-    const a = N[from], b = N[o];
-    let x = b[0], z = b[1];
-    const dx = CHASM.x - x, dz = CHASM.z - z, l = Math.hypot(dx, dz), sg = chE(x, z) > 1 ? 1 : -1;
-    for (let k = 0; k < 400 && (chE(x, z) > 1) === (sg > 0); k++) { x += sg * dx / l * 0.25; z += sg * dz / l * 0.25; }
-    N[o] = [x + dx / l * 1.5, z + dz / l * 1.5, b[2]];   // ход кончается в 1.5 м за краем — дальше пустота
-  }
-  // тропы вдоль стены: O2b — прямо на краю пропасти; у каждого выхода — площадка, дальше ступени
-  const ang = (p) => Math.atan2((p[1] - CHASM.z) / CHASM.rz, (p[0] - CHASM.x) / CHASM.rx);
-  { const [x, z] = chAt(ang(N.O2b), 0.995); N.O2b = [x, z, N.O2b[2]]; }
-  CALM.length = 0;
-  const perM = 1 / ((CHASM.rx + CHASM.rz) / 2 * PATH_S);   // радиан на метр вдоль стены
-  const paths = WALLPATHS.map((W) => {
-    const A = [ang(N[W.from]), N[W.from][2]], B = [ang(N[W.to]), N[W.to][2]];
-    const pts = [A, ...W.via, B];
-    const d0 = Math.sign(wrapA(pts[1][0] - A[0])), d1 = Math.sign(wrapA(B[0] - pts[pts.length - 2][0]));
-    // заход 2.5 м в ход, площадка 4 м у выхода
-    // точки [угол, высота, доля радиуса]; после разворота лестница идёт обратно внешней полосой
-    // (рядом с верхней, а не под ней) и прижимается к стене, когда верхняя уже высоко
-    const SW = PATH_S, SI = PATH_S - PATH_W * 1.02 / ((CHASM.rx + CHASM.rz) / 2);
-    const Bl = [B[0] - d1 * 4 * perM, B[1]];
-    const full = [[A[0] - d0 * 2.5 * perM, A[1], SW], [A[0] + d0 * 4 * perM, A[1], SW]];
-    for (const v of W.via) {
-      full.push([v[0], v[1], SW], [v[0], v[1], SI]);
-      const sp = wrapA(Bl[0] - v[0]);
-      for (const [f, sl] of [[0.35, SI], [0.8, SW]]) full.push([v[0] + sp * f, v[1] + (Bl[1] - v[1]) * f, sl]);
-    }
-    full.push([Bl[0], Bl[1], SW], [B[0] + d1 * 2.5 * perM, B[1], SW]);
-    for (let i = 0; i + 1 < full.length; i++) if (full[i][2] === SW && full[i + 1][2] === SW) CALM.push([full[i][0], full[i][1], full[i + 1][0], full[i + 1][1]]);
-    return { ...W, pts: full };
-  });
-  // пустоты
-  // заход из туннеля: последние метры туннеля продолжаем такой же ширины, чтобы шов был в глубине его стен
-  const stubs = [];
-  for (const q of ends) {
-    const T = q.T, a = q.at(T.L - 9), b = q.at(T.L + 2.5);
-    stubs.push(addSeg(a, [b[0], b[1], q.end[2]], { hw: tunHW(T, T.L) * 0.9, H: tunH(T, T.L) * 0.85, amp: 0.8 }, { kind: 'stub' }));
-  }
-  // лавовые поля: берега у входов, цепочка глыб между ними, ещё глыбы вокруг, сталактиты
-  const fieldStubs = [];
-  const lavas = FIELDS.map((L, li) => {
-    const e = { type: 4, li, x: L.x, z: L.z, a: L.a, b: L.b, ux: L.ux, uz: L.uz, y: L.y, floor: L.y - 4, roofE: L.roofE, roofT: L.roofT, amp: 0, pil: [], caps: [], stal: [], src: L, route: [] };
-    const sr = mulberry32(SEED + 4040 + li * 17);
-    const loc = (x, z) => [(x - L.x) * L.ux + (z - L.z) * L.uz, -(x - L.x) * L.uz + (z - L.z) * L.ux];
-    const wld = (s2, q) => [L.x + L.ux * s2 - L.uz * q, L.z + L.uz * s2 + L.ux * q];
-    const boulder = (x, z, rx, rz, ang, top, tag, o = {}) => {
-      const lean = o.lean || 0, la = o.la || 0;
-      const p = { x, z, rx, rz, cu: Math.cos(ang), su: Math.sin(ang), top, m: Math.min(rx, rz) * 0.85, tag, f1: sr() * TAU, f2: sr() * TAU,
-        lean: lean > 0, lx: Math.cos(la) * lean, lz: Math.sin(la) * lean, kind: o.kind || '' };
-      p.R = Math.max(rx, rz) * 1.25 + lean * (top - e.floor) + 1.0;
-      e.pil.push(p);
-      if (tag) N[tag] = [x, z, top];
-      return p;
-    };
-    // край столба по направлению (ux, uz) от центра на высоте верха: где кончается камень
-    const edge = (p, ux, uz) => { let d = 0; while (d < 12 && bK(p, p.x + ux * d, p.z + uz * d) < 1) d += 0.05; return d; };
-    const SH = 5.5;   // радиус берега
-    const shores = L.entries.map(([n, fl], j) => {
-      const P = N[n], [s2, q] = loc(P[0], P[1]), k = Math.hypot(s2 / L.a, q / L.b);
-      const [rx0, rz0] = wld(s2 / k, q / k);                         // точка на краю грота
-      const nx = (L.x - rx0), nz = (L.z - rz0), nl = Math.hypot(nx, nz);
-      const end = [rx0 + nx / nl * 1.5, rz0 + nz / nl * 1.5, fl];     // ход кончается чуть за краем
-      fieldStubs.push([n, end, 'F' + li + '_' + j]);
-      const tag = 'S' + li + '_' + j;
-      boulder(rx0 + nx / nl * 1.0, rz0 + nz / nl * 1.0, SH, SH, 0, fl, tag);
-      return { x: rx0 + nx / nl * 1.0, z: rz0 + nz / nl * 1.0, top: fl, tag, node: n };
-    });
-    // Путь — зигзаг из каменных столбов 5–9 м над лавой. Щели между ними 3–5 м: прыгаешь на бок столба
-    // и лезешь наверх. Высоты чередуются: на высокий (8–9 м) — лезть, с него на низкий (5–6 м) — прыжок вниз.
-    // Нижние 2 м у всех столбов раскалены: держаться там можно не больше секунды (main.js, hotRock).
-    // Формы разные: стол (широкий низкий), высокий тонкий, наклонный, столб с полкой на середине.
-    const KINDS = ['table', 'tall', 'lean', 'ledge'];
-    for (let j = 0; j + 1 < shores.length; j++) {
-      const A = shores[j], B = shores[j + 1];
-      const P = [[A.x, A.z], ...(L.via || []).map(([fs, fq]) => wld(fs * L.a, fq * L.b)), [B.x, B.z]];
-      const segL = []; let D = 0;
-      for (let i = 0; i + 1 < P.length; i++) { const l = Math.hypot(P[i + 1][0] - P[i][0], P[i + 1][1] - P[i][1]); segL.push(l); D += l; }
-      const at = (s2) => { s2 = Math.max(0, Math.min(D - 1e-3, s2)); let i = 0; while (i < segL.length - 1 && s2 > segL[i]) { s2 -= segL[i]; i++; } const ux = (P[i + 1][0] - P[i][0]) / segL[i], uz = (P[i + 1][1] - P[i][1]) / segL[i]; return [P[i][0] + ux * s2, P[i][1] + uz * s2, ux, uz]; };
-      e.route.push(A.tag);
-      const chain = [];
-      let prev = e.pil.find((q) => q.tag === A.tag), prevHigh = A.top > L.y + 7.5, side = sr() < 0.5 ? 1 : -1, sAl = SH, i = 0, ki = Math.floor(sr() * 4);
-      while (true) {
-        const hi = !prevHigh;   // чередуем: после низкого — высокий
-        let kind = KINDS[(ki + i) % 4];
-        if (kind === 'table' && hi) kind = 'tall';   // стол — всегда низкий
-        // на низкий приземляешься прыжком — он шире; на высокий лезешь — он может быть тонким
-        const r = kind === 'table' ? 3.0 + sr() * 0.8 : hi ? (kind === 'tall' ? 1.7 + sr() * 0.5 : 2.0 + sr() * 0.5) : 2.5 + sr() * 0.6;
-        let top = hi ? Math.min(L.y + 9.2, Math.max(prev.top + 2.3, L.y + 8 + sr() * 1.2)) : Math.max(L.y + 5, Math.min(prev.top - 2.0, L.y + 5 + sr() * 1.2));
-        const gap = 3.0 + sr() * 1.2;
-        // центр: вдоль пути на щель дальше края предыдущего, вбок — зигзагом
-        let s2 = sAl + gap + r;
-        if (s2 + r + 3.0 > D - SH) break;   // дальше — берег
-        let [cx, cz, ux, uz] = at(s2);
-        const off = side * (1.6 + sr() * 1.8);
-        let x = cx - uz * off, z = cz + ux * off;
-        const [ls, lq] = loc(x, z);
-        if (Math.hypot(ls / L.a, lq / L.b) > 0.78) { x = cx - uz * off * 0.25; z = cz + ux * off * 0.25; }
-        // точная щель: от края предыдущего до края нового по прямой между центрами
-        let dx = x - prev.x, dz = z - prev.z, dl = Math.hypot(dx, dz);
-        const e0 = edge(prev, dx / dl, dz / dl);
-        const want = e0 + gap + r;
-        x = prev.x + dx / dl * want; z = prev.z + dz / dl * want;
-        const ang = Math.atan2(-dz, dx) + (sr() - 0.5) * 0.6, rx = r * (1.0 + sr() * 0.25);
-        const tag = 'C' + li + '_' + j + '_' + i;
-        const o = { kind };
-        if (kind === 'lean') { o.lean = 0.1 + sr() * 0.07; o.la = Math.atan2(dz, dx) + (sr() < 0.5 ? 1 : -1) * (0.9 + sr() * 0.8); }
-        const p = boulder(x, z, rx, r, ang, top, tag, o);
-        // поправка щели по точной форме нового столба
-        { const ux2 = (x - prev.x) / want, uz2 = (z - prev.z) / want, g2 = want - e0 - edge(p, -ux2, -uz2); p.x += ux2 * (gap - g2); p.z += uz2 * (gap - g2); N[tag] = [p.x, p.z, top]; }
-        if (kind === 'ledge') {   // полка на середине, со стороны прихода: отдых над раскалённым низом
-          const ux2 = (prev.x - p.x), uz2 = (prev.z - p.z), l2 = Math.hypot(ux2, uz2);
-          p.shelf = boulder(p.x + ux2 / l2 * 0.9, p.z + uz2 / l2 * 0.9, r + 1.2, r + 0.9, ang + 0.4, L.y + 3.2 + sr() * 0.6, null, { kind: 'shelf' });
-        }
-        e.route.push(tag); chain.push(p);
-        // где мы теперь вдоль пути
-        { const [px, pz] = [p.x, p.z]; let best = 0, bd = 1e9; for (let q = 0; q <= D; q += 0.5) { const [qx, qz] = at(q); const dd = Math.hypot(qx - px, qz - pz); if (dd < bd) { bd = dd; best = q; } } sAl = best + r * 0.8; }
-        prev = p; prevHigh = hi; side = -side; i++;
-        if (i > 14) break;
-      }
-      // до берега B щель тоже должна быть 3–5 м: лишнее раскладываем по всем щелям (столбы сдвигаются к B)
-      const pb = e.pil.find((q) => q.tag === B.tag);
-      const gapTo = (a, b) => { const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz); return l - edge(a, dx / l, dz / l) - edge(b, -dx / l, -dz / l); };
-      // осталось слишком далеко — ещё столб посередине
-      for (let it = 0; it < 4; it++) {
-        const last = chain.length ? chain[chain.length - 1] : prev, G = gapTo(last, pb);
-        if (G < 8.6) break;
-        const dx = pb.x - last.x, dz = pb.z - last.z, l = Math.hypot(dx, dz), ux = dx / l, uz = dz / l;
-        const r = Math.min(2.6, (G - 6.6) / 2), e0 = edge(last, ux, uz), g = (G - 2 * r) / 2, hi = !prevHigh;
-        const top = hi ? Math.min(L.y + 9.2, Math.max(last.top + 2.3, L.y + 8)) : Math.max(L.y + 5, Math.min(last.top - 2.0, L.y + 5.8));
-        const tag = 'C' + li + '_' + j + '_' + i;
-        const p = boulder(last.x + ux * (e0 + g + r) - uz * side * 0.8, last.z + uz * (e0 + g + r) + ux * side * 0.8, r * 1.1, r, Math.atan2(-dz, dx), top, tag, { kind: 'tall' });
-        e.route.push(tag); chain.push(p); prev = p; prevHigh = hi; side = -side; i++;
-      }
-      for (let it = 0; it < 6 && chain.length; it++) {
-        const G = gapTo(chain[chain.length - 1], pb);
-        if (G < 4.6) break;
-        const S = G - 4.2, n = chain.length;
-        chain.forEach((q, k) => { const dx = pb.x - q.x, dz = pb.z - q.z, l = Math.hypot(dx, dz), m = S * (k + 1) / (n + 1); q.x += dx / l * m; q.z += dz / l * m; if (q.shelf) { q.shelf.x += dx / l * m; q.shelf.z += dz / l * m; } N[q.tag] = [q.x, q.z, q.top]; });
-      }
-      e.gaps = (e.gaps || []).concat(chain.map((q, k) => +gapTo(k ? chain[k - 1] : e.pil.find((t) => t.tag === A.tag), q).toFixed(1)), chain.length ? [+gapTo(chain[chain.length - 1], pb).toFixed(1)] : []);
-      e.route.push(B.tag);
-    }
-    // ещё глыбы и столбы вокруг (не на пути): невысокие камни и редкие высокие столбы
-    const nExtra = Math.round(L.a * L.b / 70);
-    for (let k = 0, tries = 0; k < nExtra && tries < 300; tries++) {
-      const a = sr() * TAU, rr = Math.sqrt(sr()) * 0.85, [x, z] = wld(Math.cos(a) * L.a * rr, Math.sin(a) * L.b * rr);
-      const rx = 1.8 + sr() * 3.5, rz = 1.6 + sr() * 2.5, R = Math.max(rx, rz);
-      if (e.pil.some((p) => Math.hypot(p.x - x, p.z - z) < R + p.R + 1.5)) continue;
-      const tall = sr() < 0.3;
-      boulder(x, z, rx, rz, sr() * TAU, L.y + (tall ? 7 + sr() * 5 : 0.6 + sr() * 2.8), null, tall && sr() < 0.5 ? { lean: 0.08 + sr() * 0.08, la: sr() * TAU } : {});
-      k++;
-    }
-    for (let k = 0; k < Math.round(L.a * L.b / 35); k++) {
-      const a = sr() * TAU, rr = Math.sqrt(sr()) * 0.9, [x, z] = wld(Math.cos(a) * L.a * rr, Math.sin(a) * L.b * rr);
-      e.stal.push({ x, z, y: lvRoof(e, rr) + 3, R: 1.2 + sr() * 2.4, L: 3 + sr() * 9 });
-    }
-    const ext = Math.max(L.a, L.b) + 10;
-    e.box = [L.x - ext, L.x + ext, L.z - ext, L.z + ext, e.floor - 4, L.roofT + 8];
-    EL.push(e);
-    return e;
-  });
-  MINE_ROUTES.length = 0; for (const e of lavas) MINE_ROUTES.push(e.route);
-  MINE_FIELDS.length = 0; MINE_FIELDS.push(...lavas);
-  MINE_PATHS.length = 0; MINE_PATHS.push(...paths);
-  const segs = [];
-  // ход от зала начинаем у края зала (пол зала ровный, без канавы от уклона хода), если уклон не выйдет круче
-  const HR = Object.fromEntries(HALLS.map(([n, R]) => [n, R]));
-  const trim = (a, b, na, nb, k) => {
-    const dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz), dh = Math.abs(b[2] - a[2]);
-    const need = k === 'scree' ? Math.ceil(dh / 0.8) * 1.1 : dh / 0.5;
-    let ra = HR[na] ? HR[na] * 0.85 : 0, rb = HR[nb] ? HR[nb] * 0.85 : 0;
-    const room = len - need - 2;
-    if (ra + rb > 0 && ra + rb > room) { const f = Math.max(0, room) / (ra + rb); ra *= f; rb *= f; }
-    return [[a[0] + dx / len * ra, a[1] + dz / len * ra, a[2]], [b[0] - dx / len * rb, b[1] - dz / len * rb, b[2]]];
-  };
-  let anchoredRoutes = 0, floorLoops = 0;
-  const egressNames = new Set(['O1','O2','O2b','O3','O4','P3','s1','s2']);
-  const routeRng = mulberry32(mineSeed ^ 0x572dd);
-  for (const [a,b,k] of E) {
-    const [A,B] = k === 'scree' ? [N[a],N[b]] : trim(N[a],N[b],a,b,k);
-    // Leave the escape shaft, spider racking and the original pit entrances on
-    // their own centre lines: their architecture is built from those lines.
-    const fixed = (a === 'a2' && b === 's1') || (a === 'b6' && b === 'b7') ||
-      egressNames.has(b) || egressNames.has(a);
-    const shapes = caveRoutes(A,B,k,routeRng,fixed);
-    if (!shapes) {
-      segs.push(addSeg(A,B,k,{from:a,to:b}));
-      continue;
-    }
-    anchoredRoutes++;
-    if (shapes.some(leg => leg.tag === 'ledge')) floorLoops++;
-    for (const leg of shapes) {
-      segs.push(addSeg(leg.a,leg.b,leg.mode,{
-        from:leg.first?a:'', to:leg.last?b:'', branch:leg.tag,
-        hw:leg.hw, H:leg.H
-      }));
-    }
-  }
-
-  for (const [n, end, tag] of fieldStubs) { N[tag] = end; const [A, B] = trim(N[n], end, n, tag, 'side'); segs.push(addSeg(A, B, 'side', { from: n, to: tag, field: true })); }
-  for (const [n, R, H] of HALLS) addHall(N[n], R, H);
-  // пересечение: паучий ход над нижним штреком — в полу дыра (можно спрыгнуть)
-  const X = segX(N.a2, N.s1, N.b6, N.b7);
-  if (X) {
-    const up = segs.find((e) => e.from === 'a2' && e.to === 's1'), dn = segs.find((e) => e.from === 'b6' && e.to === 'b7');
-    const tu = ((X[0] - up.ax) * up.dx + (X[1] - up.az) * up.dz) / up.len, td = ((X[0] - dn.ax) * dn.dx + (X[1] - dn.az) * dn.dz) / dn.len;
-    // дыра у стены паучьего хода (сбоку остаётся проход), над осью нижнего штрека
-    const hx = X[0] - up.dz * 1.6, hz = X[1] + up.dx * 1.6;
-    addPit([hx, hz, segFloor(up, tu)], [hx, hz, segFloor(dn, td)], 1.5, 2);
-    N.X = [hx, hz, segFloor(up, tu)];
-  }
-  for (const [a, b, r] of PITS) { const top = N[a], bot = N[b]; addPit([bot[0], bot[1], top[2]], bot, r, 3); }
-  // пропасть
-  EL.push({ type: 3, amp: 0, box: [CHASM.x - CHASM.rx - 8, CHASM.x + CHASM.rx + 8, CHASM.z - CHASM.rz - 8, CHASM.z + CHASM.rz + 8, CHASM.floor - 4, CHASM.roof + 22] });
-  // ходы на той стороне пропасти: видно, дойти нельзя
-  const FAR = [[-0.1, -226], [0.2, -262], [0.45, -238], [0.6, -290], [3.4, -262], [3.8, -275], [4.2, -290], [4.4, -300]];
-  const farMouths = [];
-  for (const [a, y] of FAR) {
-    const [x, z] = chAt(a, 0.97), [x2, z2] = chAt(a, 1.32);
-    farMouths.push({ a, y, e: addSeg([x, z, y], [x2, z2, y - 1], 'side') });
-  }
+  const plan = galleryPlan(CHASM, ends.map(e=>e.end), mulberry32(mineSeed ^ 0x832acd));
+  EL.length = 0;
+  MINE_LIGHTS.length = 0;
+  const segs = plan.legs.map(({a,b,kind,hw,H}) => addSeg(a,b,kind,{hw,H,branch:'gallery'}));
+  for (const r of plan.rooms) addHall(r.p,r.r,r.h);
+  EL.push({type:3,amp:0,box:[CHASM.x-CHASM.rx-8,CHASM.x+CHASM.rx+8,
+    CHASM.z-CHASM.rz-8,CHASM.z+CHASM.rz+8,CHASM.floor-4,CHASM.roof+22]});
   indexAll();
   setMineSpace(mineSpace);
   // в первых метрах туннелей стены рисует tunnels.js
@@ -673,76 +274,18 @@ export function buildMines(scene, mineSeed = SEED) {
     return false;
   };
   const rock = buildRock(scene, skip);
-  const props = buildProps(scene, rnd, { segs, farMouths, stubs, lavas, paths });
-  const openings = [...PITS.map(([, bottom]) => N[bottom]), ...EDGE.map(([node]) => N[node]), N.X].filter(Boolean);
-  const halls = HALLS.filter(([name,r]) => r >= 12 && name !== 'NEST').map(([name,r]) => {
-    const [x,z,y] = N[name];
-    const exits = segs.filter(e => e.from === name || e.to === name).map(e => {
-      const side = e.from === name ? 1 : -1;
-      return [x + side * e.dx * r * .75, z + side * e.dz * r * .75];
-    });
-    return {x,z,y,r,exits};
-  });
-  const strata = buildMineStrata(scene, rockMat, segs, halls, openings, mineSeed);
-  buildMines.stats = { anchoredRoutes, floorLoops, strata, mineSeed, ms: Math.round(performance.now() - t0), chunks: rock.meshes.length, tris: rock.tris, evals: rock.evals, props: props.tris, lights: MINE_LIGHTS.length };
+  const props = buildProps(scene,rnd,{plan,segs});
+  const strata = buildMineStrata(scene,rockMat,segs,[],plan.ribs.flatMap(r=>[r.a,r.b]),mineSeed);
+  buildRibs(scene,rockMat,plan.ribs);
+  buildMines.stats = {rooms:plan.rooms.length, passages:segs.length, bridges:plan.ribs.length,
+    strata,mineSeed,ms:Math.round(performance.now()-t0),chunks:rock.meshes.length,tris:rock.tris,props:props.tris};
   return buildMines.stats;
-}
-function segX(a, b, c, d) {
-  const r = [b[0] - a[0], b[1] - a[1]], s = [d[0] - c[0], d[1] - c[1]], den = r[0] * s[1] - r[1] * s[0];
-  if (Math.abs(den) < 1e-6) return null;
-  const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den, u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
-  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
-  return [a[0] + r[0] * t, a[1] + r[1] * t];
 }
 // смерть в красном тумане (ноги ниже этой высоты над дном пропасти) или в лаве
 export function inDeadlyFog(p) {
-  return (p.y < CHASM.death && chE(p.x, p.z) < 1.1) || inLava(p);
+  return (p.y < CHASM.death && chE(p.x, p.z) < 1.1);
 }
 // раскалённый низ столбов и стен у лавы: 2 м над лавой
-export const HOT_H = 2.0;
-export function hotRock(p) {
-  for (const L of LAVA_POOLS) {
-    if (p.y > L.y + HOT_H || p.y < L.y - 1) continue;
-    const rx = p.x - L.x, rz = p.z - L.z;
-    if (Math.hypot((rx * L.ux + rz * L.uz) / (L.a + 4), (-rx * L.uz + rz * L.ux) / (L.b + 4)) < 1) return true;
-  }
-  return false;
-}
-export function inLava(p) {
-  for (const L of LAVA_POOLS) {
-    if (p.y > L.y + 0.4) continue;
-    const rx = p.x - L.x, rz = p.z - L.z;
-    if (Math.hypot((rx * L.ux + rz * L.uz) / L.a, (-rx * L.uz + rz * L.ux) / L.b) < 1.05) return true;
-  }
-  return false;
-}
-// лава: светящиеся потоки под тёмной коркой, медленно ползут
-let _lavaMat = null;
-function lavaMaterial() {
-  if (_lavaMat) return _lavaMat;
-  _lavaMat = mat({
-    vertexShader: /* glsl */ `
-      varying vec3 vW;
-      void main(){ vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz; gl_Position = projectionMatrix * viewMatrix * wp; }`,
-    fragmentShader: /* glsl */ `
-      varying vec3 vW;
-      void main(){
-        vec2 p = vW.xz; float t = uTime;
-        float n1 = vnoise(p * 0.07 + vec2(t * 0.025, t * 0.018));
-        float n2 = vnoise(p * 0.19 - vec2(t * 0.04, -t * 0.03) + n1 * 2.2);
-        float n3 = vnoise(p * 0.6 + n2 * 3.0 + t * 0.08);
-        float crust = smoothstep(0.45, 0.66, n2 * 0.7 + n3 * 0.3);
-        vec3 hot = mix(vec3(1.0, 0.30, 0.03), vec3(1.0, 0.80, 0.28), smoothstep(0.22, 0.0, abs(n2 - 0.38)));
-        vec3 em = mix(hot * 1.2, vec3(0.14, 0.035, 0.015), crust);
-        em *= 0.85 + 0.2 * sin(t * 1.5 + n1 * 9.0);
-        float d = distance(vW, cameraPosition);
-        vec3 c = applyFog(vec3(0.05, 0.015, 0.01), vW) + em * exp(-d * 0.003);
-        float mx = max(max(c.r, c.g), c.b); if (mx > 1.0) c /= mx;
-        gl_FragColor = vec4(c, 1.0);
-      }`,
-  });
-  return _lavaMat;
-}
 // пол хода (для расстановки)
 export const mineFloor = (x, z, y) => mineSpace(x, z, y);
 
@@ -759,7 +302,6 @@ function buildProps(scene, rnd, ctx) {
   const tintOf = (col) => { const l = WG * Math.pow(lum(col) / LUM0, 0.6) * (0.88 + rnd() * 0.22); return [l, l, l]; };
   const pick = (a) => a[Math.floor(rnd() * a.length)];
   const wbox = (x, y, z, sx, sy, sz, rect, ry = 0, rz = 0, tint = null, opt) => woodBox(wbuf(x, z), x, y, z, sx, sy, sz, ry, rz, rect, tint || tintOf(0x6e4729), rnd, opt);
-  const plank = (x, y, z, sx, sy, sz, ry = 0, rz = 0) => wbox(x, y, z, sx, sy, sz, pick(WR.plank), ry, rz);
   const beam = (x, y, z, sx, sy, sz, ry = 0, rz = 0, col = 0x6e4729) => wbox(x, y, z, sx, sy, sz, pick(WR.beam), ry, rz, tintOf(col));
   const WOODC = new Set([...WOOD, 0x4c3220, 0x3a2a1c, 0x5f3d24, 0x7a5232]);
   const box = (x, y, z, sx, sy, sz, col, ry = 0, rz = 0, glow = 0) => WOODC.has(col) && !glow ? beam(x, y, z, sx, sy, sz, ry, rz, col)
@@ -826,9 +368,6 @@ function buildProps(scene, rnd, ctx) {
     if (ore) for (let k = 0; k < 6; k++) geo(new THREE.IcosahedronGeometry(0.24 + rnd() * 0.12, 0), x, y, z, ore === 2 ? 0x6fb8ff : 0x6a6560, M4(x + (rnd() - 0.5) * 0.9, y + 1.08, z + (rnd() - 0.5) * 0.5, 1, 0.8, 1, rnd() * TAU), ore === 2 ? 0.8 : 0);
   }
   // ящик с косой планкой (картинка из листа на каждой грани), бочка с обручами, мешок
-  const crate = (x, y, z, s = 0.9, ry = 0) => wbox(x, y + s / 2, z, s, s, s, WR.crate, ry, 0, tintOf(0x7a5434), { full: true });
-  const barrel = (x, y, z) => { woodBarrel(wbuf(x, z), x, y, z, 0.34, 0.4, 0.95, tintOf(0x6e4a2c)); for (const h of [0.2, 0.75]) geo(new THREE.CylinderGeometry(0.405, 0.405, 0.06, 10, 1, true), x, y, z, IRON, M4(x, y + h, z)); };
-  const sack = (x, y, z, s = 1) => geo(new THREE.IcosahedronGeometry(0.4 * s, 1), x, y, z, 0x4e3f2e, M4(x, y + 0.26 * s, z, 1 + rnd() * 0.2, 0.7, 0.85, rnd() * TAU, (rnd() - 0.5) * 0.3));
   // кристаллы: голубой холодный свет
   function crystals(x, y, z, n, s0 = 0.6, col = 0x4aa6ff) {
     for (let j = 0; j < n; j++) {
@@ -876,424 +415,39 @@ function buildProps(scene, rnd, ctx) {
       }
     }
   }
-  const rockLump = (x, y, z, s) => geo(new THREE.IcosahedronGeometry(s, 1), x, y, z, 0x4e4a48, M4(x, y + s * 0.4, z, 1 + rnd() * 0.4, 0.6 + rnd() * 0.3, 1 + rnd() * 0.4, rnd() * TAU));
 
-  // палатка: два ската из досок и полотна, кол по углам
-  function tent(x, y, z, ry) {
-    const c = Math.cos(ry), sn = Math.sin(ry);
-    for (const sd of [-1, 1]) {
-      const ox = -sn * 0.9 * sd, oz = -c * 0.9 * sd;   // поперёк палатки
-      geo(new THREE.BoxGeometry(1, 1, 1), x + ox, y + 1.0, z + oz, 0x8a7a5c, new THREE.Matrix4().compose(new THREE.Vector3(x + ox, y + 1.0, z + oz), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, sd * 0.85, 'YXZ')), new THREE.Vector3(3.4, 0.06, 2.5)));
-    }
-    box(x, y + 1.95, z, 3.6, 0.12, 0.12, wood(), ry);
-    for (const sd of [-1, 1]) box(x + c * 1.7 * sd, y + 1.0, z - sn * 1.7 * sd, 0.12, 2.0, 0.12, wood(), ry);
-  }
-  function campfire(x, y, z) {
-    for (let k = 0; k < 8; k++) { const a = k / 8 * TAU; rockLump(x + Math.cos(a) * 1.0, y - 0.1, z + Math.sin(a) * 1.0, 0.28); }
-    for (let k = 0; k < 4; k++) box(x, y + 0.2, z, 1.4, 0.16, 0.16, 0x4a2e1a, k * 0.8, 0.25);
-    geo(new THREE.ConeGeometry(0.45, 1.1, 6), x, y + 0.6, z, 0xff8a2a, M4(x, y + 0.6, z), 1);
-    light(x, y + 1.2, z, 14, 1.3, [1.0, 0.55, 0.2]);
-  }
-  const lampPost = (x, y, z, h = 3.2) => { box(x, y + h / 2, z, 0.22, h, 0.22, wood()); box(x + 0.5, y + h - 0.1, z, 1.1, 0.14, 0.14, wood()); lantern(x + 0.95, y + h - 0.15, z, 0.35, 1.5); };
-  const sign = (x, y, z, ry) => { box(x, y + 1.1, z, 0.14, 2.2, 0.14, wood()); box(x, y + 2.0, z, 1.4, 0.36, 0.07, 0x7a5232, ry); };
-
-  // --- по ходам ---
-  const halls = HALLS.map(([n, R]) => ({ x: N[n][0], z: N[n][1], R }));
-  const inHall = (x, z, m = 1) => halls.some((h) => Math.hypot(x - h.x, z - h.z) < h.R + m);
-  // над пустотой (край пропасти или лавы) раму не ставим
-  const solidUnder = (x, z, y) => { const f = mineSpace(x, z, y + 0.4); return f !== null && Math.abs(f - y) < 0.6; };
   for (const e of ctx.segs) {
-    const tier1 = e.fa > -226, big = e.hw > 6;
-    if (e.branch && ((e.kind === 'main' && !e.from) || (e.branch === 'ledge' && e.to))) {
-      const s = e.len * 0.52, w = e.kind === 'main' ? -e.hw*.55 : e.hw*.48;
-      const x = e.ax + e.dx*s - e.dz*w, z = e.az + e.dz*s + e.dx*w;
-      const floor = mineSpace(x,z,segFloor(e,s/e.len)+.4);
-      if (floor !== null && Math.abs(floor-segFloor(e,s/e.len)) < 1.2) lampPost(x,floor,z,2.9);
-    }
-    // крепь: в штреках через 7 м, в боковых через 7 м, в лазах — изредка одна стойка
-    if (e.kind === 'main' || e.kind === 'side' || e.kind === 'rough') {
-      const step = e.kind === 'main' ? (big ? 8 : 5) : e.kind === 'side' ? 7 : 9;
-      let n = 0;
-      for (let s = 3; s < e.len - 2; s += step) {
-        const x = e.ax + e.dx * s, z = e.az + e.dz * s;
-        if (inHall(x, z, 1.5) || chE(x, z) < 1.12) continue;
-        const t = s / e.len, y = segFloor(e, t), y2 = segFloor(e, Math.min(1, t + 0.6 / e.len)), y1 = segFloor(e, Math.max(0, t - 0.6 / e.len));
-        if (Math.abs(y2 - y1) > 0.2) continue;   // на уступе раму не ставим
-        // у обрыва рама уже и сдвинута к стене: обе стойки — на камне
-        const nx = -e.dz, nz = e.dx;
-        let fw = 0, fo = 0;
-        for (let hw = e.hw; hw >= 3.5 && !fw; hw -= 0.5) for (const sd of [0, -1, 1]) {
-          const o = (e.hw - hw) * sd, w = hw - 1.1;
-          if ((sd === 0) !== (hw === e.hw)) continue;
-          if (solidUnder(x + nx * (o + w), z + nz * (o + w), y) && solidUnder(x + nx * (o - w), z + nz * (o - w), y)) { fw = hw; fo = o; break; }
-        }
-        if (!fw) continue;
-        frame(x + nx * fo, y, z + nz * fo, e.dx, e.dz, fw, big ? e.H * 0.62 : Math.min(e.H * 0.72, 4.6), (n++ % (e.kind === 'main' ? 3 : 2)) === 1);
-        // кое-где у стены — ящик, бочка или доски
-        if (rnd() < (big ? 0.4 : 0.22)) { const sd = rnd() < 0.5 ? -1 : 1, w2 = e.hw - 1.6; if (solidUnder(x - e.dz * w2 * sd, z + e.dx * w2 * sd, y)) (rnd() < 0.5 ? crate : barrel)(x - e.dz * w2 * sd + e.dx * 1.6, y, z + e.dx * w2 * sd + e.dz * 1.6); }
-      }
-    }
-    if (e.kind === 'main') {
-      // рельсы до края пропасти (и до края лавы); в широких штреках — ближе к стене
-      let l = e.len;
-      const off = big ? -2.6 : 0;
-      for (let s = 0; s < e.len; s += 0.5) { const x = e.ax + e.dx * s - e.dz * off, z = e.az + e.dz * s + e.dx * off; if (chE(x, z) < 1.04 || !solidUnder(x, z, segFloor(e, s / e.len))) { l = s - 1; break; } }
-      rails([e.ax, e.az], [e.ax + e.dx * l, e.az + e.dz * l], e.fa, segFloor(e, l / e.len), off);
-      if (rnd() < 0.6 && e.len > 25) { const s = e.len * (0.3 + rnd() * 0.4); cart(e.ax + e.dx * s - e.dz * off, segFloor(e, s / e.len) + 0.12, e.az + e.dz * s + e.dx * off, e.dx, e.dz, 1 + (rnd() < 0.3 ? 1 : 0)); }
-    }
-    if (e.kind === 'narrow') {
-      // в лазах — только редкие фонари на стене
-      for (let s = 6; s < e.len - 3; s += 14) { const x = e.ax + e.dx * s, z = e.az + e.dz * s; lantern(x - e.dz * (e.hw - 0.4), segFloor(e, s / e.len) + 2.6, z + e.dx * (e.hw - 0.4), 0.15, 1.1); }
-    }
-    // кристаллы — на глубине и в глыбовых ходах
-    if (!tier1 || e.kind === 'rough') for (let s = 5 + rnd() * 6; s < e.len - 3; s += 9 + rnd() * 10) {
-      const sd = rnd() < 0.5 ? -1 : 1, w = e.hw - 0.7, x = e.ax + e.dx * s - e.dz * w * sd, z = e.az + e.dz * s + e.dx * w * sd;
-      const fy = segFloor(e, s / e.len, w * sd);
-      if (chE(x, z) < 1.1 || !solidUnder(x, z, fy)) continue;
-      crystals(x, fy, z, 3 + Math.floor(rnd() * 3), e.fa < -270 ? 0.9 : 0.6);
-    }
-  }
-  // --- лагерь шахтёров ---
-  {
-    const [x, z, y] = N.L;
-    for (let k = 0; k < 8; k++) { const a = k / 8 * TAU + 0.3, r = 17; box(x + Math.cos(a) * r, y + 4.5, z + Math.sin(a) * r, 0.5, 9, 0.5, wood()); lantern(x + Math.cos(a) * (r - 0.5), y + 6.2, z + Math.sin(a) * (r - 0.5), 0.3, 1.8); }
-    // палатки и костёр — лагерь шахтёров
-    for (const [a, r] of [[1.2, 12], [2.0, 13], [5.6, 12.5]]) tent(x + Math.cos(a) * r, y, z + Math.sin(a) * r, a + Math.PI / 2);
-    campfire(x - 4, y, z + 3);
-    cart(x - 6, y + 0.12, z + 5, 0.6, 0.8, 1); cart(x - 3.5, y + 0.12, z + 7, 0.6, 0.8, 2); cart(x + 2, y + 0.12, z - 8, 1, 0, 0);
-    for (let k = 0; k < 12; k++) { const a = 4.3 + k * 0.13, r = 16 + rnd() * 2.5; (k % 3 ? crate : barrel)(x + Math.cos(a) * r, y, z + Math.sin(a) * r); }   // у стены, подальше от ямы
-    crate(x + 7, y + 0.9, z + 5, 0.8); crate(x + 7.8, y, z + 4.4); crate(x + 6.6, y, z + 5.4);
-    // стол
-    box(x + 3, y + 0.85, z + 5, 2.2, 0.12, 1.1, wood()); for (const [ox, oz] of [[-1, -0.45], [1, -0.45], [-1, 0.45], [1, 0.45]]) box(x + 3 + ox, y + 0.42, z + 5 + oz, 0.1, 0.84, 0.1, wood());
-    lantern(x + 3, y + 1.33, z + 5, 0, 1.2);
-    // копёр над ямой: две стойки, перекладина, цепь вниз
-    const pit = PITS[0], [px, pz] = [N[pit[1]][0], N[pit[1]][1]];
-    for (const sd of [-1, 1]) box(px + sd * 3.4, y + 2.6, pz, 0.34, 5.2, 0.34, wood());
-    box(px, y + 5.3, pz, 7.4, 0.36, 0.4, wood()); box(px, y + 2.6, pz, 0.05, 5.2, 0.05, IRON);
-    for (let k = 0; k < 10; k++) { const a = k / 10 * TAU; if (k === 2) continue; box(px + Math.cos(a) * 3.4, y + 0.5, pz + Math.sin(a) * 3.4, 0.14, 1.0, 0.14, wood()); box(px + Math.cos(a + 0.31) * 3.3, y + 0.95, pz + Math.sin(a + 0.31) * 3.3, 2.1, 0.1, 0.1, wood(), -(a + 0.31) - Math.PI / 2); }
-    lantern(px, y + 5.1, pz + 0.3, 0.4, 1.6);
-  }
-  // --- паучье гнездо и ход к нему ---
-  {
-    const [x, z, y] = N.NEST;
-    for (let k = 0; k < 16; k++) {
-      const a = rnd() * TAU, r = 8 + rnd() * 10, h = 3 + rnd() * 10;
-      web(x + Math.cos(a) * r, y + h, z + Math.sin(a) * r, Math.cos(a), (rnd() - 0.5) * 0.8, Math.sin(a), 2.2 + rnd() * 2.2);
-    }
-    for (let k = 0; k < 6; k++) web(x + (rnd() - 0.5) * 16, y + 11 + rnd() * 3, z + (rnd() - 0.5) * 12, 0, 1, 0, 3 + rnd() * 2);
-    for (let k = 0; k < 12; k++) { const a = rnd() * TAU, r = 9 + rnd() * 9; cocoon(x + Math.cos(a) * r, y + 1 + rnd() * 6, z + Math.sin(a) * r, 0.8 + rnd() * 0.8); }
-    spider(x + 3, y, z - 4, 2.2, 1.2); spider(x - 6, y, z + 3, 1.8, -0.6);
-    for (let k = 0; k < 4; k++) spider(x + (rnd() - 0.5) * 14, y + 4 + rnd() * 4, z + (rnd() - 0.5) * 14, 0.8, rnd() * TAU, 3 + rnd() * 3);
-    crystals(x - 9, y, z - 6, 4, 0.7); crystals(x + 8, y, z + 7, 3, 0.6);
-    // у входа в гнездо — пара старых фонарей: светят тускло, дальше темно
-    for (const [ox, oz] of [[13, 8], [15, 2]]) { box(x + ox, y + 1.6, z + oz, 0.2, 3.2, 0.2, wood(), 0, 0.15); lantern(x + ox + 0.4, y + 3.0, z + oz, 0.3); }
-    for (let k = 0; k < 3; k++) cocoon(x + (rnd() - 0.5) * 4, y + 0.6, z + (rnd() - 0.5) * 4, 1.4);
-    // по дороге к гнезду — паутина гуще и гуще
-    for (const e of ctx.segs) if (e.from === 's1' || e.from === 's2') for (let s = 4; s < e.len; s += 4 + rnd() * 3) {
-      const t = s / e.len, x2 = e.ax + e.dx * s, z2 = e.az + e.dz * s, f = segFloor(e, t), sd = rnd() < 0.5 ? -1 : 1;
-      web(x2 - e.dz * (e.hw - 0.3) * sd, f + e.H * (0.45 + rnd() * 0.35), z2 + e.dx * (e.hw - 0.3) * sd, -e.dz * sd, -0.3, e.dx * sd, 1.0 + rnd() * 0.8 * (e.from === 's2' ? 1.6 : 1));
-      if (e.from === 's2' && rnd() < 0.5) cocoon(x2, f + e.H - 1.2, z2, 0.7);
-    }
-  }
-  // --- залы глубже ---
-  { const [x, z, y] = N.H2; for (let k = 0; k < 5; k++) { const a = rnd() * TAU; crystals(x + Math.cos(a) * 12.5, y, z + Math.sin(a) * 12.5, 3, 0.8); } crate(x + 4, y, z - 6); barrel(x + 5, y, z - 4.8); lantern(x - 7, y + 4.2, z + 4, 0.3); }
-  { const [x, z, y] = N.H3; for (let k = 0; k < 14; k++) { const a = k / 14 * TAU + rnd() * 0.3, r = 14 + rnd() * 7; crystals(x + Math.cos(a) * r, y + (rnd() < 0.3 ? 1.5 + rnd() * 3 : 0), z + Math.sin(a) * r, 4 + Math.floor(rnd() * 4), 1.1 + rnd() * 0.8, rnd() < 0.25 ? 0x7d8cff : 0x4aa6ff); } crystals(x, y, z, 5, 1.6); }
-  { const [x, z, y] = N.JB; lantern(x + 4, y + 4.5, z, 0.4); cart(x - 3, y + 0.12, z + 3, 0.2, 1, 0); }
-  // завалы
-  for (const n of RUBBLE) { const [x, z, y] = N[n]; for (let k = 0; k < 9; k++) rockLump(x + (rnd() - 0.5) * 5, y + rnd() * 1.5, z + (rnd() - 0.5) * 5, 0.8 + rnd() * 1.3); box(x, y + 1.6, z, 0.3, 3.2, 0.3, wood(), 0, 0.5); }
-  // таблички-указатели у развилок (пустые доски на стойке)
-  for (const n of ['JB', 'a2', 'H2', 'K0']) { const [x, z, y] = N[n]; box(x + 2, y + 1.1, z + 2, 0.12, 2.2, 0.12, wood()); box(x + 2, y + 2.0, z + 2, 1.2, 0.3, 0.06, 0x7a5232, rnd() * TAU); }
-
-  // --- у пропасти ---
-  // обрыв со сломанным мостиком (O1): 9 м досок над пустотой, дальше — обломки
-  const dirIn = (n) => { const [x, z] = N[n], dx = CHASM.x - x, dz = CHASM.z - z, l = Math.hypot(dx, dz); return [dx / l, dz / l]; };
-  // настил: широкие доски поперёк хода (0,4–0,55 м, щели, разная длина), снизу два бруса и поперечины
-  // на железных кронштейнах
-  function deck(x0, z0, ux, uz, len, y, w, s0 = 0) {
-    const ry = rotY(ux, uz), nx = -uz, nz = ux;
-    for (let s = s0; s < len - 0.15;) {
-      const pw = Math.min(0.4 + rnd() * 0.15, len - s), c = s + pw / 2, x = x0 + ux * c, z = z0 + uz * c, o = (rnd() - 0.5) * 0.16;
-      plank(x + nx * o, y - 0.05 + (rnd() - 0.5) * 0.025, z + nz * o, pw - 0.045, 0.1, w * (0.88 + rnd() * 0.12), ry, (rnd() - 0.5) * 0.012);
-      s += pw;
-    }
-  }
-  function under(x0, z0, ux, uz, len, y, w, step = 1.6) {
-    const ry = rotY(ux, uz), nx = -uz, nz = ux;
-    for (let s = 0.25; s < len; s += step) {
-      const x = x0 + ux * s, z = z0 + uz * s;
-      beam(x, y - 0.22, z, 0.18, 0.16, w + 0.15, ry);
-      for (const sd of [-1, 1]) box(x + nx * (w / 2 - 0.15) * sd, y - 0.22, z + nz * (w / 2 - 0.15) * sd, 0.24, 0.3, 0.05, IRON, ry);   // кронштейн
-    }
-  }
-  function planks(x0, z0, ux, uz, len, y, w, solid = true, broken = 0) {
-    const ry = rotY(ux, uz), nx = -uz, nz = ux;
-    for (let s = 0.05; s < len - 0.1;) {
-      const pw = 0.4 + rnd() * 0.15, c = s + pw / 2;
-      s += pw;
-      if (broken && c > len - broken && rnd() < 0.45) continue;
-      const o = (rnd() - 0.5) * 0.16;
-      plank(x0 + ux * c + nx * o, y - 0.05 + (rnd() - 0.5) * 0.03, z0 + uz * c + nz * o, pw - 0.045, 0.1, w * (0.88 + rnd() * 0.12), ry);
-    }
-    for (const sd of [-1, 1]) beam(x0 + ux * len / 2 + nx * (w / 2 - 0.1) * sd, y - 0.24, z0 + uz * len / 2 + nz * (w / 2 - 0.1) * sd, len, 0.22, 0.22, ry, 0, 0x4c3220);
-    under(x0, z0, ux, uz, len - (broken || 0), y, w);
-    if (solid) for (let s = 0; s < len - 0.1; s += 2) { const l = Math.min(2, len - s), x = x0 + ux * (s + l / 2), z = z0 + uz * (s + l / 2); addBox(x, z, l / 2 + 0.05, w / 2, ry, y, y - 0.3); }
-  }
-  // верёвка: провисает между двумя точками, витки рисует шейдер
-  const ROPE = [0.3, 0.17, 0.08];
-  function rope(ax, ay, az, bx, by, bz, sag = 0.2, th = 0.075) {
-    const n = 4;
-    let px = ax, py = ay, pz = az;
-    for (let i = 1; i <= n; i++) {
-      const t = i / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = ay + (by - ay) * t - sag * 4 * t * (1 - t);
-      const dx = x - px, dz = z - pz, dy = y - py, dh = Math.hypot(dx, dz), L = Math.hypot(dh, dy);
-      wbox((x + px) / 2, (y + py) / 2, (z + pz) / 2, L + th * 0.6, th, th, WR.plank[0], rotY(dx / (dh || 1), dz / (dh || 1)), Math.atan2(dy, dh), ROPE, { kind: 2 });
-      px = x; py = y; pz = z;
-    }
-  }
-  // перила по ломаной (точки — на настиле): квадратные столбы с оковками через ~1,6 м,
-  // провисшая толстая верёвка поверху, деревянная перекладина внизу
-  function railing(pts, step = 1.6) {
-    if (pts.length < 2) return;
-    const posts = [pts[0]];
-    let acc = 0;
-    for (let i = 1; i < pts.length; i++) {
-      acc += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][2] - pts[i - 1][2]);
-      if (acc >= step || (i === pts.length - 1 && acc > 0.6)) { posts.push(pts[i]); acc = 0; }
-    }
-    for (const [x, y, z] of posts) wbox(x, y + 0.6, z, 0.17, 1.3, 0.17, WR.band, rnd() * 0.2);
-    for (let i = 0; i + 1 < posts.length; i++) {
-      const [ax, ay, az] = posts[i], [bx, by, bz] = posts[i + 1], dx = bx - ax, dz = bz - az, dh = Math.hypot(dx, dz) || 1;
-      rope(ax, ay + 1.12, az, bx, by + 1.12, bz, 0.16 + dh * 0.05);
-      beam((ax + bx) / 2, (ay + by) / 2 + 0.42, (az + bz) / 2, dh + 0.05, 0.1, 0.07, rotY(dx / dh, dz / dh), Math.atan2(by - ay, dh), 0x5f3d24);
-    }
-  }
-  // виселица с фонарём: столб с оковками, перекладина с подкосом, фонарь на цепи (горит)
-  const GAL = [];
-  function gallows(x, y, z, ax, az, arm = 1.4) {
-    if (GAL.some((g) => Math.hypot(g[0] - x, g[2] - z) < 5 && Math.abs(g[1] - y) < 3)) return false;   // рядом уже стоит
-    GAL.push([x, y, z]);
-    const ry = rotY(ax, az);
-    wbox(x, y + 1.8, z, 0.26, 3.6, 0.26, WR.band, ry);
-    beam(x + ax * arm / 2, y + 3.48, z + az * arm / 2, arm + 0.35, 0.22, 0.2, ry);
-    beam(x + ax * 0.42, y + 3.02, z + az * 0.42, 1.15, 0.14, 0.14, ry, Math.PI / 4);
-    box(x + ax * 0.05, y + 3.48, z + az * 0.05, 0.3, 0.26, 0.3, IRON, ry);
-    lantern(x + ax * (arm - 0.15), y + 3.37, z + az * (arm - 0.15), 0.5, 1.5);
-    return true;
-  }
-  // рваное красное знамя на железном древке у стены
-  function banner(x, y, z, ux, uz, w = 0.95, h = 2.1) {
-    MINE_BANNERS.push([x, y, z, ux, uz]);
-    box(x, y + 0.06, z, w + 0.35, 0.07, 0.07, IRON, rotY(ux, uz));
-    for (const sd of [-1, 1]) box(x + ux * (w / 2 + 0.12) * sd, y + 0.06, z + uz * (w / 2 + 0.12) * sd, 0.1, 0.1, 0.1, IRON);
-    woodBanner(wbuf(x, z), x, y, z, ux, uz, w, h);
-  }
-  // площадка: ящики (бывает, друг на друге), бочки, мешки
-  function stash(x, y, z, ux, uz, n = 3) {
-    const nx = -uz, nz = ux, ry = rotY(ux, uz);
-    crate(x, y, z, 0.85, ry + (rnd() - 0.5) * 0.3);
-    if (n > 1) crate(x + ux * 0.05, y + 0.85, z + uz * 0.05, 0.62, ry + 0.4);
-    if (n > 2) barrel(x + nx * 0.95, y, z + nz * 0.95);
-    if (n > 3) barrel(x + nx * 0.9 + ux * 0.75, y, z + nz * 0.9 + uz * 0.75);
-    sack(x - nx * 0.8, y, z - nz * 0.8); if (n > 2) sack(x - nx * 0.9 + ux * 0.55, y, z - nz * 0.9 + uz * 0.55, 0.85);
-  }
-  function rail(x0, z0, ux, uz, len, y, off) {
-    const nx = -uz, nz = ux, pts = [];
-    for (let s = 0; s <= len + 0.01; s += 0.8) pts.push([x0 + ux * s + nx * off, y, z0 + uz * s + nz * off]);
-    railing(pts);
-  }
-  {
-    const [x, z, y] = N.O1, [ux, uz] = dirIn('O1'), nx = -uz, nz = ux;
-    planks(x - ux * 2, z - uz * 2, ux, uz, 11, y, 2.4, true, 3);
-    rail(x - ux * 2, z - uz * 2, ux, uz, 8, y, 1.1);
-    rail(x - ux * 2, z - uz * 2, ux, uz, 5.6, y, -1.1);
-    for (const sd of [-1, 1]) box(x + ux * 1 - uz * 1.2 * sd, y - 2.5, z + uz * 1 + ux * 1.2 * sd, 0.3, 5, 0.3, wood(), 0, sd * 0.25);
-    // обломки висят ниже, на обрывках верёвки
-    for (let k = 0; k < 3; k++) { const s = 12 + k * 1.1, bx = x + ux * s, bz = z + uz * s, by = y - 1.5 - k * 0.8; plank(bx, by, bz, 0.46, 0.09, 2.2, rotY(ux, uz), 0.9 + k * 0.2); rope(bx + nx * 0.9, by + 0.6, bz + nz * 0.9, x + ux * 9.5 + nx * 1.1, y + 1.1, z + uz * 9.5 + nz * 1.1, 0.05, 0.05); }
-    gallows(x - ux * 1.5 + nx * 1.05, y, z - uz * 1.5 + nz * 1.05, -nx, -nz, 1.0);
-    stash(x - ux * 3.4 - nx * 1.5, y, z - uz * 3.4 - nz * 1.5, ux, uz, 2);
-  }
-  // балкон над пропастью (O3): перила с трёх сторон, виселица с фонарём, ящики
-  {
-    const [x, z, y] = N.O3, [ux, uz] = dirIn('O3'), nx = -uz, nz = ux;
-    planks(x - ux * 1.5, z - uz * 1.5, ux, uz, 5.5, y, 4.6, true);
-    const P = (s, o) => [x + ux * s + nx * o, y, z + uz * s + nz * o], pts = [];
-    for (let s = 0.6; s < 3.9; s += 0.8) pts.push(P(s, -2.15));
-    for (let o = -2.15; o <= 2.16; o += 0.72) pts.push(P(3.9, o));
-    for (let s = 3.9 - 0.8; s > 0.5; s -= 0.8) pts.push(P(s, 2.15));
-    railing(pts);
-    for (const sd of [-1, 1]) box(x + ux * 3 - uz * 2 * sd, y - 3, z + uz * 3 + ux * 2 * sd, 0.3, 6, 0.3, wood(), rotY(ux, uz), 0.5);
-    gallows(x + ux * 0.0 + nx * 2.0, y, z + uz * 0.0 + nz * 2.0, -nx, -nz, 1.3);
-    stash(x - ux * 0.9 - nx * 1.4, y, z - uz * 0.9 - nz * 1.4, ux, uz, 4);
-  }
-  // тропы вдоль стены пропасти: широкие доски ступенями, поперечины на кронштейнах, перила с верёвкой,
-  // виселицы с фонарями каждые ~11 м, рваные знамёна на стене
-  for (const P of ctx.paths) {
-    let k = 0, dist = 0, nextLamp = 3, nextFlag = 9, nextUnder = 0;
-    let ro = [], ri = [];
-    const flush = () => { railing(ro); railing(ri); ro = []; ri = []; };
-    for (let i = 0; i + 1 < P.pts.length; i++) {
-      const [a0, y0, s0] = P.pts[i], [a1, y1, s1] = P.pts[i + 1], span = wrapA(a1 - a0);
-      const conn = Math.abs(span) < 1e-4, wallLane = s0 === PATH_S && s1 === PATH_S;   // conn — площадка разворота
-      const nextConn = i + 2 < P.pts.length && Math.abs(wrapA(P.pts[i + 2][0] - a1)) < 1e-4;
-      // длина дуги
-      let L = 0; for (let j = 0; j < 24; j++) { const [xa, za] = chAt(a0 + span * j / 24, s0 + (s1 - s0) * j / 24), [xb, zb] = chAt(a0 + span * (j + 1) / 24, s0 + (s1 - s0) * (j + 1) / 24); L += Math.hypot(xb - xa, zb - za); }
-      const n = y0 === y1 ? Math.max(1, Math.round(L / 2)) : Math.max(1, Math.ceil(Math.abs(y1 - y0) / RISE));
-      for (let j = 0; j < n; j++, k++) {
-        const ta = a0 + span * j / n, tb = a0 + span * (j + 1) / n, y = y0 === y1 ? y0 : y0 + (y1 - y0) * (j + 1) / n;
-        const [x0, z0] = chAt(ta, s0 + (s1 - s0) * j / n), [x1, z1] = chAt(tb, s0 + (s1 - s0) * (j + 1) / n), dx = x1 - x0, dz = z1 - z0, l = Math.hypot(dx, dz), ux = dx / l, uz = dz / l, ry = rotY(ux, uz);
-        const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-        // к центру пропасти (сторона пустоты)
-        let ix = CHASM.x - mx, iz = CHASM.z - mz; const il = Math.hypot(ix, iz); ix /= il; iz /= il;
-        if (conn) {
-          const W2 = l + PATH_W * 0.2;
-          deck(mx - ux * W2 / 2, mz - uz * W2 / 2, ux, uz, W2, y, PATH_W * 1.3);
-          addBox(mx, mz, l / 2 + PATH_W * 0.15, PATH_W * 0.65, ry, y, y - 0.35);
-          for (const sd of [-1, 1]) box(mx - uz * PATH_W * 0.6 * sd, y - 4, mz + ux * PATH_W * 0.6 * sd, 0.3, 8, 0.3, wood());
-          flush();
-          continue;
-        }
-        deck(x0, z0, ux, uz, l, y, PATH_W);
-        addBox(mx, mz, l / 2 + 0.06, PATH_W / 2, ry, y, y - 0.35);
-        box(mx - ix * 0.2, y - 0.3, mz - iz * 0.2, l + 0.05, 0.18, 0.2, 0x4c3220, ry);   // брус под ступенью у стены
-        box(mx + ix * (PATH_W / 2 - 0.15), y - 0.3, mz + iz * (PATH_W / 2 - 0.15), l + 0.05, 0.2, 0.22, 0x4c3220, ry);
-        if (dist >= nextUnder) { nextUnder = dist + 1.6; under(mx, mz, ux, uz, 0.3, y - 0.1, PATH_W); }
-        if (!wallLane) { if (k % 3 === 0) for (const sd of [-1, 1]) box(mx + ix * (PATH_W / 2 - 0.2) * sd, y - 3.2, mz + iz * (PATH_W / 2 - 0.2) * sd, 0.24, 6.2, 0.24, wood()); }
-        else if (k % 3 === 0) {   // кронштейн: подкос от стены под край ступени
-          const wx = mx - ix * (PATH_W / 2 - 0.2), wz = mz - iz * (PATH_W / 2 - 0.2);
-          box(wx + ix * 1.2, y - 1.2, wz + iz * 1.2, 0.16, 2.6, 0.16, wood(), rotY(-iz, ix), 0.75);
-          box(wx + ix * 0.05, y - 0.35, wz + iz * 0.05, 0.08, 0.5, 0.28, IRON, rotY(ix, iz));
-        }
-        // перила: со стороны пустоты всегда (кроме подхода к развороту), у внутренней дорожки — и с другой стороны
-        const px = mx + ix * (PATH_W / 2 - 0.12), pz = mz + iz * (PATH_W / 2 - 0.12);
-        const nearTurn = nextConn && j >= n - 3;   // у разворота перила не ставим — там проход на нижний марш
-        if (!nearTurn) ro.push([px, y, pz]); else if (ro.length) { railing(ro); ro = []; }
-        if (!wallLane) {
-          const qx = mx - ix * (PATH_W / 2 - 0.12), qz = mz - iz * (PATH_W / 2 - 0.12);
-          if (!(i > 0 && Math.abs(wrapA(P.pts[i - 1][0] - a0)) < 1e-4 && j < 3)) ri.push([qx, y, qz]); else if (ri.length) { railing(ri); ri = []; }
-        }
-        dist += l;
-        if (dist >= nextLamp && !nearTurn) {
-          const ok = wallLane ? gallows(mx - ix * (PATH_W / 2 - 0.22), y, mz - iz * (PATH_W / 2 - 0.22), ix, iz, 1.3)
-            : gallows(px - ix * 0.1, y, pz - iz * 0.1, -ix, -iz, 1.3);
-          if (ok) nextLamp = dist + 10 + rnd() * 2;
-        }
-        if (wallLane && dist >= nextFlag) { nextFlag = dist + 15 + rnd() * 6; banner(mx - ix * (PATH_W / 2 + 0.08), y + 3.4, mz - iz * (PATH_W / 2 + 0.08), ux, uz); }
-        if (k % 9 === 0) box(px + ix * 0.1, y - 2.5, pz + iz * 0.1, 0.22, 4.6, 0.22, wood());   // свая вниз
-      }
-    }
-    flush();
-  }
-  // уступ у самого тумана (O4): маленькая площадка
-  {
-    const [x, z, y] = N.O4, [ux, uz] = dirIn('O4'), nx = -uz, nz = ux;
-    planks(x - ux * 1, z - uz * 1, ux, uz, 3.5, y, 3, true);
-    const pts = []; for (let o = -1.4; o <= 1.41; o += 0.7) pts.push([x + ux * 2.4 + nx * o, y, z + uz * 2.4 + nz * o]);
-    railing(pts);
-    gallows(x - ux * 0.6 + nx * 1.35, y, z - uz * 0.6 + nz * 1.35, -nx, -nz, 1.0);
-    stash(x - ux * 0.5 - nx * 1.0, y, z - uz * 0.5 - nz * 1.0, ux, uz, 2);
-  }
-  // на той стороне: устья ходов с фонарями и площадками, знамёна, мосты, цепи
-  for (const m of ctx.farMouths) {
-    const [x, z] = chAt(m.a, 0.975), ux = Math.cos(m.a), uz = Math.sin(m.a);
-    planks(x + ux * 1.2, z + uz * 1.2, -ux, -uz, 4.5, m.y, 3.2, false);
-    frame(x + ux * 2.5, m.y, z + uz * 2.5, -ux, -uz, 2.7, 3.6, false);
-    lantern(x + uz * 1.6, m.y + 3, z - ux * 1.6, 0.3, 2.2, false); lantern(x - uz * 1.6, m.y + 3, z + ux * 1.6, 0.3, 2.2, false);
-    for (const sd of [-1, 1]) banner(x + ux * 2.3 + uz * 1.25 * sd, m.y + 3.35, z + uz * 2.3 - ux * 1.25 * sd, -uz, ux, 0.7, 1.7);
-    stash(x - uz * 1.1, m.y, z + ux * 1.1, -ux, -uz, 2);
-    for (let k = 0; k < 3; k++) box(x - ux * 3, m.y - 4 - k * 4, z - uz * 3, 0.3, 4, 0.3, wood());
-  }
-  // каменный мост и дощатый мост на той стороне (без коллизий: туда не дойти)
-  const span = (a0, a1, y, stone) => {
-    const [x0, z0] = chAt(a0, 0.985), [x1, z1] = chAt(a1, 0.985), dx = x1 - x0, dz = z1 - z0, l = Math.hypot(dx, dz), ux = dx / l, uz = dz / l, ry = rotY(ux, uz);
-    if (stone) {
-      for (let s = 0; s < l; s += 2.2) { const x = x0 + ux * s, z = z0 + uz * s, sag = Math.sin(s / l * Math.PI); box(x, y - 0.5, z, 2.3, 1.0 + (1 - sag) * 0.8, 3.6, 0x4b4440, ry); box(x - uz * 1.7, y + 0.35, z + ux * 1.7, 2.1, 0.7, 0.35, 0x57504a, ry); box(x + uz * 1.7, y + 0.35, z - ux * 1.7, 2.1, 0.7, 0.35, 0x57504a, ry); }
-      for (let k = 1; k < 4; k++) { const s = l * k / 4, x = x0 + ux * s, z = z0 + uz * s; box(x, y - 14, z, 3, 26, 3, 0x433c39, ry); lantern(x, y + 2.2, z, 0.5, 2.4, false); }
+    const y=(e.fa+e.fb)/2, x=(e.ax+e.bx)/2, z=(e.az+e.bz)/2;
+    if(e.kind==='main'){
+      rails([e.ax,e.az],[e.bx,e.bz],e.fa,e.fb,-1.8);
+      frame(x,y,z,e.dx,e.dz,e.hw*.86,Math.min(5,e.H*.55),true);
     } else {
-      const sagAt = (s) => Math.sin(s / l * Math.PI) * 2.2;
-      for (let s = 0.3; s < l; s += 0.5) { const sl = Math.atan2(sagAt(s + 0.2) - sagAt(s - 0.2), 0.4); plank(x0 + ux * s, y - sagAt(s), z0 + uz * s, 0.44, 0.09, 2.3 * (0.9 + rnd() * 0.1), ry, -sl); }
-      for (const sd of [-1.1, 1.1]) { const pts = []; for (let s = 0; s <= l + 0.01; s += 0.8) pts.push([x0 + ux * s - uz * sd, y - sagAt(s), z0 + uz * s + ux * sd]); railing(pts, 2.4); }
-      lantern(x0 + ux * l / 2, y - 2.2 + 0.9, z0 + uz * l / 2, 0.2, 2.0, false);
+      const cool=y>-249;
+      light(x,y+2.8,z,18,.67,cool?[.50,.76,1]:[1,.55,.31]);
     }
-  };
-  span(-0.2, 0.65, -250, true); span(3.35, 4.45, -282, false); span(0.1, 0.6, -298, false);
-  // цепи и подвесные клети в пропасти
-  for (let k = 0; k < 7; k++) {
-    const a = rnd() * TAU, [x, z] = chAt(a, 0.35 + rnd() * 0.5), y = CHASM.roof + 6, L = 25 + rnd() * 55;
-    box(x, y - L / 2, z, 0.08, L, 0.08, IRON);
-    if (rnd() < 0.6) { box(x, y - L - 0.9, z, 1.4, 1.8, 1.4, 0x2a2426); lantern(x, y - L - 2, z, 0.3, 1.6, false); }
   }
-  // ================= лавовые поля =================
-  for (const e of ctx.lavas) {
-    // лава: овал чуть больше грота (края прячутся в скале)
-    {
-      const g = new THREE.CircleGeometry(1, 96);
-      g.rotateX(-Math.PI / 2);
-      const pos = g.attributes.position;
-      for (let i = 0; i < pos.count; i++) {
-        const u = pos.getX(i) * (e.a + 4), v = pos.getZ(i) * (e.b + 4);
-        pos.setXYZ(i, e.x + e.ux * u - e.uz * v, e.y, e.z + e.uz * u + e.ux * v);
+  for (const {p:[x,z,y],r,h,theme} of ctx.plan.rooms){
+    const cold=theme==='frost';
+    light(x,y+4,z,r*1.65,1.1,cold?[.53,.80,1]:[1,.64,.37]);
+    if(theme==='brood'){
+      for(let k=0;k<10;k++){
+        const a=k*TAU/10+rnd()*.26, dx=Math.cos(a),dz=Math.sin(a);
+        web(x+dx*r*.76,y+h*(.32+rnd()*.32),z+dz*r*.76,dx,-.32,dz,2.6+rnd()*2);
+        cocoon(x+dx*r*.65,y+.8+rnd()*3,z+dz*r*.65,.8+rnd()*.75);
       }
-      const m = new THREE.Mesh(g, lavaMaterial());
-      m.matrixAutoUpdate = false; m.userData.mine = true; m.frustumCulled = true;
-      g.computeBoundingSphere();
-      scene.add(m);
+      spider(x+4,y,z-2,1.85,rnd()*TAU); spider(x-3,y+h*.5,z+4,1.05,rnd()*TAU,h*.38);
+    } else {
+      const seamAngle=rnd()*TAU;
+      for(let k=0;k<7;k++){
+        const a=seamAngle+k*.16, px=x+Math.cos(a)*r*.89,pz=z+Math.sin(a)*r*.89;
+        if(cold) crystals(px,y,pz,2,.8,0x94cce6);
+        else geo(new THREE.IcosahedronGeometry(1,0),px,y+1,pz,0xb07850,
+          M4(px,y+1+k*.19,pz,1.7,.42,.83,-a),.09);
+      }
+      if(theme==='iron') cart(x+r*.45,y+.1,z,0,1,1);
     }
-    // свет от лавы
-    const nl = Math.max(3, Math.round(e.a / 9));
-    for (let k = 0; k < nl; k++) { const a = k / nl * TAU + 0.4, x = e.x + (e.ux * Math.cos(a) * e.a - e.uz * Math.sin(a) * e.b) * 0.55, z = e.z + (e.uz * Math.cos(a) * e.a + e.ux * Math.sin(a) * e.b) * 0.55; light(x, e.y + 8, z, 30, 0.8, [1.0, 0.42, 0.1]); }
-    // глыбы: на берегах — фонарный столб, на каждой 3-й глыбе пути — фонарь на колышке,
-    // на прочих — оранжевые кристаллы и камни
-    let ci = 0;
-    for (const p of e.pil) {
-      if (p.tag && p.tag[0] === 'S') { lampPost(p.x + p.m * 0.4, p.top, p.z - p.m * 0.3, 3.2); crate(p.x - p.m * 0.4, p.top, p.z + p.m * 0.3, 0.9, rnd()); }
-      else if (p.tag) { if (ci++ % 3 === 1) { box(p.x, p.top + 0.9, p.z, 0.16, 1.8, 0.16, wood(), 0, 0.15); lantern(p.x + 0.15, p.top + 1.75, p.z, 0.25, 1.3); } }
-      else if (p.top > e.y + 3 && rnd() < 0.5) crystals(p.x, p.top, p.z, 3 + Math.floor(rnd() * 3), 0.8, 0xff9a3a);
-      else for (let k = 0; k < 2; k++) rockLump(p.x + (rnd() - 0.5) * p.m, p.top, p.z + (rnd() - 0.5) * p.m, 0.4 + rnd() * 0.6);
-    }
-    // цепи со свода, на некоторых — клети
-    for (let k = 0; k < 4; k++) {
-      const a = rnd() * TAU, rr = 0.3 + rnd() * 0.55, x = e.x + (e.ux * Math.cos(a) * e.a - e.uz * Math.sin(a) * e.b) * rr, z = e.z + (e.uz * Math.cos(a) * e.a + e.ux * Math.sin(a) * e.b) * rr;
-      const y = lvRoof(e, rr) + 2, Ln = Math.min(y - e.y - 6, 6 + rnd() * 8);
-      box(x, y - Ln / 2, z, 0.08, Ln, 0.08, IRON);
-      if (rnd() < 0.6) { box(x, y - Ln - 0.9, z, 1.4, 1.8, 1.4, 0x2a2426); lantern(x, y - Ln - 2, z, 0.3, 1.6, false); }
-    }
+    lantern(x+r*.38,y+3.8,z+r*.38,.5,1.45);
   }
-  // ================= обвалы =================
-  for (const e of ctx.segs) if (e.scree) {
-    for (let s2 = 2; s2 < e.len - 1; s2 += 1.6 + rnd() * 1.5) {
-      const t = s2 / e.len, sd = rnd() < 0.5 ? -1 : 1, w = e.hw - 0.8 - rnd() * 0.8;
-      const x = e.ax + e.dx * s2 - e.dz * w * sd, z = e.az + e.dz * s2 + e.dx * w * sd;
-      rockLump(x, segFloor(e, t), z, 0.5 + rnd() * 1.0);
-    }
-    // у подножия каждой стены — обломки
-    for (let k = 0; k < e.walls; k++) {
-      const sw = e.la + (k + 0.5) / e.walls * (e.len - e.la - e.lb), lowSide = e.fb < e.fa ? 1 : -1;
-      { const s3 = sw - lowSide * 1.6, o = e.hw * 0.55 * (k % 2 ? 1 : -1); lampPost(e.ax + e.dx * s3 - e.dz * o, segFloor(e, s3 / e.len), e.az + e.dz * s3 + e.dx * o, 3.0); }   // фонарь наверху стены
-      for (let q = 0; q < 3; q++) { const s3 = sw + lowSide * (1.0 + rnd() * 1.5), o = (rnd() - 0.5) * e.hw * 1.4; rockLump(e.ax + e.dx * s3 - e.dz * o, segFloor(e, s3 / e.len), e.az + e.dz * s3 + e.dx * o, 0.4 + rnd() * 0.6); }
-    }
-    // наверху — сломанная крепь
-    const x = e.ax + e.dx * 2, z = e.az + e.dz * 2, y = e.fa;
-    box(x - e.dz * (e.hw - 0.6), y + 1.8, z + e.dx * (e.hw - 0.6), 0.36, 3.6, 0.36, wood(), 0, 0.3);
-    box(x, y + 0.5, z, e.hw * 1.6, 0.36, 0.4, wood(), rotY(-e.dz, e.dx), 0.25);
-  }
-  // ================= комнаты =================
-  { const [x, z, y] = N.K0; lampPost(x + 7, y, z + 5, 4); lampPost(x - 8, y, z - 3, 4); cart(x + 3, y + 0.12, z - 6, 0, 1, 1); for (let k = 0; k < 4; k++) crate(x - 8 + k * 1.1, y, z + 6, 0.9, 0.3); }
-  { const [x, z, y] = N.T1;   // забой: жила руды в стене, кирки, вагонетки
-    for (let k = 0; k < 6; k++) { const a = -0.6 + k * 0.25; crystals(x + Math.cos(a) * 10.5, y + 1 + rnd() * 4, z + Math.sin(a) * 10.5, 3, 0.8, 0xffb04a); }
-    cart(x - 3, y + 0.12, z - 2, 1, 0, 1); cart(x - 4, y + 0.12, z + 2, 1, 0.2, 1);
-    for (let k = 0; k < 4; k++) box(x - 8, y + 0.9, z - 3 + k * 0.6, 0.08, 1.8, 0.08, wood(), 0, 0.2);
-    lampPost(x - 6, y, z + 5); barrel(x + 2, y, z + 6); }
-  { const [x, z, y] = N.T2;   // старый забой: обвал, сломанная крепь
-    for (let k = 0; k < 14; k++) rockLump(x + (rnd() - 0.5) * 12, y + rnd() * 1.5, z + (rnd() - 0.5) * 12, 0.6 + rnd() * 1.6);
-    box(x + 3, y + 2, z + 2, 0.4, 4.5, 0.4, wood(), 0.4, 0.6); box(x - 2, y + 1, z - 1, 6, 0.4, 0.4, wood(), 0.9, 0.2);
-    cart(x + 5, y + 0.4, z - 4, 0.7, 0.7, 1); lantern(x - 4, y + 3.5, z + 6, 0, 1.4, false); }
-  { const [x, z, y] = N.ST;   // склад: штабеля ящиков, бочки, полки
-    for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) for (let h = 0; h < 1 + ((r + c) % 3); h++) crate(x - 8 + c * 1.0, y + h * 0.9, z - 5 + r * 2.2, 0.9);
-    for (let k = 0; k < 8; k++) barrel(x + 4 + (k % 4) * 0.8, y, z + 6 + Math.floor(k / 4) * 0.8);
-    for (let lv = 0; lv < 3; lv++) box(x + 7, y + 0.6 + lv * 1.0, z - 4, 0.8, 0.08, 5, 0x5f3d24);
-    for (const sd of [-1, 1]) box(x + 7, y + 1.4, z - 4 + sd * 2.4, 0.1, 2.8, 0.8, wood());
-    lampPost(x, y, z, 4); cart(x - 2, y + 0.12, z + 5, 1, 0, 0); }
-
   // --- склеиваем по кускам 40 м ---
   let tris = 0;
   const mat = propMaterial();

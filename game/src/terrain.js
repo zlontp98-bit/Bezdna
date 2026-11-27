@@ -104,10 +104,10 @@ export function terrainAt(x, z, y) {
     if (t < T.t0 || t > (T.open ? T.L : T.L - TUN_PAD)) continue;
     if (Math.abs(w - tunC(T, t)) > tunHW(T, t) - TUN_PAD) continue;
     const f = tunFloor(T, t, w);
-    if (h > f + 0.3 && y < tunRoof(T, t, w) - 0.2) return f;
+    if (h > f + 0.3 && y >= f - 1.5 && y < tunRoof(T, t, w) - 0.2) return f;
   }
   // шахты под озером (mines.js): пустоты в толще скалы — их пол под ногами
-  if (mineSpace && y < -184) { const f = mineSpace(x, z, y); if (f !== null && f < h) return f; }
+  if (mineSpace && y < -154) { const f = mineSpace(x, z, y); if (f !== null && f < h) return f; }
   return h;
 }
 let mineSpace = null;
@@ -1049,7 +1049,7 @@ const terrainMat = () => mat({
       float mtnK = max(smoothstep(14.0, 34.0, vW.y), smoothstep(196.0, 218.0, rr) * (1.0 - clamp(lowK, 0.0, 1.0) * (1.0 - smoothstep(18.0, 34.0, vW.y)))); // «горность»: форма, трава, снег
       float deepK = smoothstep(8.0, 50.0, -vW.y);
       // шахты под озером (и концы туннелей): ниже −190 м и вне шахты — только голый камень, без гор, травы и снега
-      float mineW = smoothstep(-182.0, -188.0, vW.y) * smoothstep(58.0, 66.0, rr);
+      float mineW = smoothstep(-157.0, -168.0, vW.y) * smoothstep(58.0, 66.0, rr);
       rr = mix(rr, 120.0, mineW); mtnK *= 1.0 - mineW;
       // рублёные грани: настоящая нормаль треугольника + гладкая
       vec3 fn = normalize(cross(dFdx(vW), dFdy(vW)));
@@ -1225,7 +1225,9 @@ const terrainMat = () => mat({
       alb = mix(alb, pebble, wet);
       alb *= 1.0 - smoothstep(-0.1, 0.6, wd)*0.35;
       alb = mix(alb, vec3(0.90,0.92,0.97), snow);
-      alb *= mix(vec3(1.0), vec3(0.9, 0.82, 0.74), mineW);   // в шахтах камень тёмный, тёплый (бурый)
+      float upperMine = smoothstep(-277.0,-205.0,vW.y);
+      alb *= mix(vec3(1.0),mix(vec3(1.14,.87,.76),vec3(.91,1.06,1.24),upperMine),mineW);
+      alb += mineW*upperMine*smoothstep(.34,.90,n.y)*vec3(.08,.11,.14);   // в шахтах камень тёмный, тёплый (бурый)
 
       // на дне шахты темно, но не чёрно: мягкое голубое свечение от воды, кристаллов и грибов
       float deepGlow = smoothstep(-150.0, -230.0, vW.y) * (1.0 - smoothstep(52.0, 84.0, rr));

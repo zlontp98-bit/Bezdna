@@ -140,18 +140,6 @@ export function loadTerrainTextures() {
   })));
 }
 
-// Лавовые поля шахт (mines.js FIELDS): центр, полуоси вдоль/поперёк, направление длинной оси, уровень лавы
-export const LAVA_POOLS = [
-  { x: 43.5, z: -138, a: 42, b: 14, ux: 0.915, uz: 0.404, y: -221 },
-  { x: 145, z: -137, a: 18, b: 13, ux: 1, uz: 0, y: -240 },
-  { x: 146, z: 106, a: 18, b: 15, ux: 1, uz: 0, y: -298 },
-  { x: -163, z: -52, a: 30, b: 20, ux: 0, uz: 1, y: -211 },
-];
-const f1 = (v) => (Math.round(v * 1000) / 1000).toFixed(3);
-const LAVA_GLSL = LAVA_POOLS.map((L, i) => `  P = vec4(${f1(L.x)}, ${f1(L.z)}, ${f1(L.a)}, ${f1(L.b)}); Q = vec3(${f1(L.ux)}, ${f1(L.uz)}, ${f1(L.y)});
-  r = w.xz - P.xy; e = length(vec2(dot(r, Q.xy), dot(r, vec2(-Q.y, Q.x))) / P.zw); k = 1.0 - smoothstep(0.9, 1.25, e);
-  if (k > best) { best = k; ly = Q.z; }`).join('\n');
-
 export const COMMON = /* glsl */ `
 uniform vec3 uSun, uSunCol, uAmbHi, uAmbLo, uFogCol, uAbyssA, uAbyssB;
 uniform float uFogDen, uTime, uExt, uSat;
@@ -202,11 +190,6 @@ vec3 waterTex(vec2 xz, float speed){
 // mines.js CHASM) — красный свет снизу и лежащий красный туман у дна (−322 м): плотность по высоте —
 // экспонента, её интеграл вдоль луча считается точно, без шагов.
 // насколько точка в лавовой пещере (0..1) и уровень лавы в ней
-float lavaIn(vec3 w, out float ly){
-  vec4 P; vec3 Q; vec2 r; float e, k, best = 0.0; ly = -1000.0;
-${LAVA_GLSL}
-  return best;
-}
 vec3 mineFog(vec3 c, vec3 w, float d){
   vec2 C = vec2(150.0, -25.0), R = vec2(52.0, 46.0);
   float ce = length((w.xz - C) / R);
@@ -217,32 +200,7 @@ vec3 mineFog(vec3 c, vec3 w, float d){
   // в пропасти воздух — светящаяся красная мгла: дальнее тонет в красном, ближнее — тёмный силуэт
   float den = mix(0.016, 0.0085, inCh);
   vec3 fc = mix(vec3(0.15, 0.18, 0.23), mix(vec3(0.30, 0.06, 0.04), vec3(0.85, 0.18, 0.06), smoothstep(-200.0, -312.0, w.y)), inCh);
-  // лавовая пещера: стены подсвечены снизу оранжевым, воздух — горячая дымка, над лавой марево
-  float ly, inLv = lavaIn(w, ly);
-  if (inLv > 0.0) {
-    float hot = smoothstep(ly + 55.0, ly + 1.0, w.y);
-    c += (c * 0.9 + 0.03) * vec3(1.0, 0.45, 0.12) * inLv * (0.3 + 0.8 * hot * hot);
-    // нижние 2 м камня у лавы раскалены: светятся красным сквозь трещины, чуть «дышат»
-    float hr = smoothstep(ly + 2.3, ly + 0.3, w.y) * step(ly - 0.5, w.y) * inLv;
-    if (hr > 0.0) {
-      float cr = vnoise(w.xz * 1.7 + vec2(w.y * 2.1, 0.0)) * 0.6 + vnoise(w.zx * 4.3 - w.y * 3.0) * 0.4;
-      c += vec3(1.0, 0.22, 0.04) * hr * (0.45 + 0.9 * smoothstep(0.42, 0.72, cr)) * (0.85 + 0.15 * sin(uTime * 2.2 + w.x * 0.3));
-    }
-    den = mix(den, 0.0095, inLv);
-    fc = mix(fc, mix(vec3(0.12, 0.05, 0.03), vec3(0.62, 0.24, 0.07), smoothstep(ly + 45.0, ly + 2.0, w.y)), inLv);
-  }
   c = mix(c, fc, 1.0 - exp(-d * den));
-  if (inLv > 0.0) {
-    float H = 1.6, ya = cameraPosition.y - ly, yb = w.y - ly;
-    if (min(ya, yb) < 18.0) {
-      float dy = yb - ya;
-      float ea = exp(-max(ya, -2.0)/H), eb = exp(-max(yb, -2.0)/H);
-      float I = abs(dy) > 0.05 ? (ea - eb) * H / dy : 0.5*(ea + eb);
-      float m = 1.0 - exp(-0.03 * I * min(d, 160.0));
-      float sw = vnoise(w.xz * 0.08 + vec2(uTime * 0.12, -uTime * 0.07));
-      c = mix(c, mix(vec3(0.9, 0.32, 0.06), vec3(1.0, 0.6, 0.15), sw), clamp(m * inLv, 0.0, 0.45));
-    }
-  }
   if (inCh > 0.0) {
     float y0 = -322.0, H = 8.0;
     float ya = cameraPosition.y - y0, yb = w.y - y0;
@@ -278,7 +236,7 @@ vec3 applyFog(vec3 c, vec3 w){
   c *= mix(1.0, 0.86, smoothstep(-12.0, -60.0, w.y));
   // Шахты под озером (mines.js): камера ниже −190 м и не в колодце шахты — там совсем темно,
   // светят только фонари, кристаллы, фонарик героя и красный туман пропасти
-  float mineK = smoothstep(-185.0, -193.0, cameraPosition.y) * smoothstep(52.0, 64.0, length(cameraPosition.xz));
+  float mineK = (1.0-smoothstep(-173.0,-160.0,cameraPosition.y)) * smoothstep(52.0, 64.0, length(cameraPosition.xz));
   // Warm lamps sit on a cooler local shadow floor, even in low-power mode.
   c += mineK * (c*0.16 + vec3(0.06,0.075,0.10));
   float deep = smoothstep(-18.0, -70.0, w.y);
