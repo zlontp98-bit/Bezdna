@@ -331,6 +331,12 @@
 }
 @media (prefers-reduced-motion:reduce) {.titleArt {animation:none;}}
 #menu.hide .titleArt,#menu.hide #ff span {animation-play-state:paused;}
+
+#titleModel {display:none;position:absolute;left:47%;width:52%;top:10%;height:76%;touch-action:none;cursor:grab;}
+#titleModel:active {cursor:grabbing;}
+#menu.interactiveArt .titleArt {background-image:url('./assets/title-stage.jpg');}
+.interactiveArt #titleModel {display:block;}
+@media (orientation:portrait) {#titleModel {left:15%;width:82%;top:13%;height:47%;}}
 </style>
 </head>
 <body>
@@ -387,6 +393,7 @@
 <div id="menu">
   <div class="titleArt" aria-hidden="true"></div><div class="tint"></div>
   <div id="ff"></div>
+  <canvas id="titleModel" tabindex="0" aria-label="Повернуть героя пальцем или стрелками влево и вправо"></canvas>
   <div class="brand">
     <div class="eyebrow">ПРИКЛЮЧЕНИЕ НА КРАЮ</div>
     <h1>БЕЗДНА</h1>

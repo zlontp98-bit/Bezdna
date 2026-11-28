@@ -1,3 +1,4 @@
+import { createTitleStage } from './title-stage.js';
 import * as THREE from '../vendor/three.min.js';
 import { U, setStyle, loadTerrainTextures, LITE, GLOW_N } from './shaders.js';
 setStyle('day');
@@ -211,7 +212,14 @@ async function build() {
   // облик героя: цвет и пробная броня, выбор запоминается
   const look = { color: +store.get('bezdna.color', SKIN_COLORS[0]) };
   if (!SKIN_COLORS.includes(look.color)) look.color = SKIN_COLORS[0];
+  try {
+    titleStage = createTitleStage($('titleModel'));
+    $('menu').classList.add('interactiveArt');
+  } catch (error) {
+    console.warn('3D-просмотр героя недоступен', error);
+  }
   const applyLook = () => {
+    titleStage?.setLook(look);
     player.setLook(look);
     store.set('bezdna.color', look.color);
     document.querySelectorAll('#colors button').forEach((b) => b.classList.toggle('on', +b.dataset.c === look.color));
@@ -613,6 +621,7 @@ function updateZones() {
   }
 }
 
+let titleStage;
 let ready = false; // мир построен
 let last = 0, frames = 0, fpsT = 0, debugCam = null;
 function frame(now) {
@@ -622,7 +631,7 @@ function frame(now) {
   const dt = dtMs / 1000;
   if (!renderer) return;
   U.uTime.value = now / 1000;
-  if (!running) { updateSound(dt, player, camera, false); return; }
+  if (!running) { titleStage?.draw(now); updateSound(dt, player, camera, false); return; }
   adaptQuality(dtMs);
 
   const inp = input.poll();
