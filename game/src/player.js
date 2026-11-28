@@ -7,6 +7,7 @@ const rockNormal = (x, z, y, out, rad = 0.55) => rockNormal0(x, z, y, out, rad, 
 import { part, merge, T, propMaterial } from './flora.js';
 import { mat, U } from './shaders.js';
 import { fallPush } from './waterfall.js';
+import { toolMesh, TOOL_IDS } from './toolvox.js';
 const _lp = new THREE.Vector3();
 
 // ---------- герой: «глубинник» ----------
@@ -147,32 +148,20 @@ export function buildModel(look) {
     return p;
   };
   const armL = limb(-0.29, 0.82, arm(-1)), armR = limb(0.29, 0.82, arm(1));
-  // топорик в правой руке: виден, когда выбран в слоте
-  const axe = mesh([
-    part(new THREE.CylinderGeometry(0.02, 0.024, 0.5, 5), 0x8a5a3a, { m: rotX(Math.PI / 2, 0, -0.41, 0.2) }),
-    part(new THREE.BoxGeometry(0.045, 0.2, 0.15), 0xb9c2cb, { m: T(0, -0.47, 0.4) }),
-    part(new THREE.BoxGeometry(0.03, 0.24, 0.05), 0xe6ecf2, { m: T(0, -0.5, 0.33) }),
-  ]);
-  axe.visible = false;
-  armR.add(axe);
-  // кирка: та же рукоять, поперёк — изогнутый двузубый клюв
-  const pickaxe = mesh([
-    part(new THREE.CylinderGeometry(0.02, 0.025, 0.56, 5), 0x8a5a3a, { m: rotX(Math.PI / 2, 0, -0.41, 0.23) }),
-    part(new THREE.BoxGeometry(0.05, 0.07, 0.07), 0x5a3824, { m: T(0, -0.41, 0.48) }),
-    part(new THREE.ConeGeometry(0.035, 0.26, 5), 0xb9c2cb, { m: rotX(0.25, 0, -0.27, 0.5) }),
-    part(new THREE.ConeGeometry(0.035, 0.26, 5), 0xb9c2cb, { m: rotX(Math.PI - 0.25, 0, -0.55, 0.5) }),
-  ]);
-  pickaxe.visible = false;
-  armR.add(pickaxe);
-  // копьё: длинное древко вперёд, листовидный наконечник и красная обмотка
-  const spear = mesh([
-    part(new THREE.CylinderGeometry(0.018, 0.022, 1.35, 5), 0x8a5a3a, { m: rotX(Math.PI / 2, 0, -0.41, 0.3) }),
-    part(new THREE.CylinderGeometry(0.03, 0.03, 0.08, 6), 0x5a3824, { m: rotX(Math.PI / 2, 0, -0.41, 0.96) }),
-    part(new THREE.OctahedronGeometry(0.06, 0), 0xc8d1da, { m: T(0, -0.41, 1.1, 0.8, 0.4, 2.1) }),
-    part(new THREE.BoxGeometry(0.012, 0.012, 0.09), 0xe5483a, { m: T(0.03, -0.44, 0.93) }),
-  ]);
-  spear.visible = false;
-  armR.add(spear);
+  // инструменты в правой руке — те же рисунки, что в инвентаре, сложенные из кубиков (toolvox.js).
+  // Рукоять смотрит вперёд (+z руки), рисунок довёрнут вокруг рукояти, чтобы сзади читался головкой, а не ребром
+  const tools = {};
+  const grip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)
+    .premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -0.75));
+  for (const id of TOOL_IDS) {
+    const t = toolMesh(id, M);
+    t.position.set(0, -0.41, 0.02);
+    t.quaternion.copy(grip);
+    t.visible = false;
+    armR.add(t);
+    tools[id] = t;
+  }
+  const { axe, pickaxe, spear } = tools;
   const legL = limb(-0.13, 0.345, leg()), legR = limb(0.13, 0.345, leg());
   return { root, rig, body: torsoM, head, eyes, pupils, lure, armL, armR, legL, legR, axe, tools: { axe, pickaxe, spear } };
 }

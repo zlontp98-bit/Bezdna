@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.min.js';
 import { rockAt } from './solids.js';
 import { heightAt, terrainAt } from './terrain.js';
+import { toolMesh, TOOL_IDS } from './toolvox.js';
 
 // Руки героя от первого лица: кисти-варежки цвета героя — ладонь, четыре пальца, большой палец, предплечье.
 // Рисуются отдельным проходом после всего мира (своя сцена, буфер глубины очищен), поэтому всегда поверх:
@@ -55,45 +56,14 @@ function buildHand(mat, side) {
   return { hand, fingers, thumb, arm, cuff };
 }
 
-// Инструменты в правой руке от первого лица. Ось рукояти — +y, место хвата — начало координат, лезвие смотрит вперёд (−z).
-// Свой материал: у рук он окрашен в цвет героя, а дерево и сталь должны остаться собой.
-function paint(geo, hex, shade = 1) {
-  geo = lit(geo, shade);
-  const c = new THREE.Color(hex), col = geo.attributes.color.array;
-  for (let i = 0; i < col.length; i += 3) { col[i] *= c.r; col[i + 1] *= c.g; col[i + 2] *= c.b; }
-  return geo;
-}
-const WOOD = 0x9a6a44, WOOD_D = 0x5a3824, STEEL = 0xb9c2cb, STEEL_D = 0x7d8791;
+// Инструменты в правой руке от первого лица — рисунки из инвентаря, сложенные из кубиков (toolvox.js).
+// Свой материал: у рук он окрашен в цвет героя, а дерево и сталь должны остаться собой; свет запечён в цвет граней.
 function buildTools() {
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
-  const mk = (list) => {
-    const g = new THREE.Group();
-    for (const [geo, hex, shade] of list) g.add(new THREE.Mesh(paint(geo, hex, shade), mat));
-    g.visible = false;
-    g.traverse((o) => { o.frustumCulled = false; });
-    return g;
-  };
-  const cyl = (r0, r1, len, y) => new THREE.CylinderGeometry(r0, r1, len, 7).translate(0, y, 0);
-  const beak = (side) => new THREE.ConeGeometry(0.03, 0.2, 5).translate(0, 0.1, 0).rotateZ(side * (Math.PI / 2 + 0.3)).translate(side * -0.02, 0.43, 0);
-  return {
-    axe: mk([
-      [cyl(0.017, 0.021, 0.5, 0.19), WOOD, 1],
-      [new THREE.BoxGeometry(0.05, 0.1, 0.07).translate(0, 0.4, 0.02), STEEL_D, 0.9],
-      [new THREE.BoxGeometry(0.028, 0.17, 0.15).translate(0, 0.38, -0.09), STEEL, 1],
-    ]),
-    pickaxe: mk([
-      [cyl(0.017, 0.021, 0.5, 0.19), WOOD, 1],
-      [new THREE.BoxGeometry(0.05, 0.07, 0.07).translate(0, 0.43, 0), WOOD_D, 0.9],
-      [beak(1), STEEL, 1],
-      [beak(-1), STEEL, 1],
-    ]),
-    spear: mk([
-      [cyl(0.015, 0.019, 0.9, 0.3), WOOD, 1],
-      [new THREE.CylinderGeometry(0.024, 0.024, 0.06, 6).translate(0, 0.7, 0), WOOD_D, 0.9],
-      [new THREE.OctahedronGeometry(0.05, 0).scale(0.7, 3.4, 0.4).translate(0, 0.84, 0), STEEL, 1],
-      [new THREE.BoxGeometry(0.012, 0.012, 0.06).translate(0.025, 0.64, 0), 0xe5483a, 1],
-    ]),
-  };
+  const shade = (x, y, z) => 0.6 + 0.4 * Math.max(0, y * 0.75 + z * 0.45 - x * 0.15) + (x * x > 0.5 ? -0.08 : 0);
+  const out = {};
+  for (const id of TOOL_IDS) { const m = toolMesh(id, mat, shade); m.visible = false; out[id] = m; }
+  return out;
 }
 
 export function buildHands() {
@@ -112,6 +82,7 @@ export function buildHands() {
     const d = new THREE.Vector3(...aim[id]).normalize().applyQuaternion(restQ.clone().invert());
     g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
     g.position.set(0, 0.05, -0.02);
+    g.scale.setScalar(0.85); // от первого лица инструмент ближе к глазам — чуть меньше, чтобы не закрывал экран
     H[1].hand.add(g);
   }
   let t = 0, hangT = 0, color = -1, on = false;
