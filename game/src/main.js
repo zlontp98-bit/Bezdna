@@ -701,6 +701,8 @@ function frame(now) {
 // (геометрия и текстуры уходят в видеокарту), и только потом показываем мир — без лагов первых секунд
 let starting = false;
 async function start() {
+  setPanelOpen(false);
+  setDrawer(false);
   if (starting || running) return;
   starting = true;
   const L = $('loading');
@@ -742,6 +744,7 @@ function showSave() {
   const logs = inv.count('log'), st = town.state;
   const chips = [`🪵 ${logs}`, `🪨 ${inv.count('stone')}`, `⚙️ ${inv.count('gear')}`, town.hall === 'built' ? '🏛️ Гильдия' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка'];
   $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
+  $('lobbyResources').innerHTML = $('chips').innerHTML;
   const cost = RULES.build.house.cost.log, H = RULES.build.hall.cost, P = town.project || {};
   let ico, t, p, k;
   if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
@@ -755,6 +758,8 @@ function showSave() {
 }
 // появление меню: элементы выезжают по очереди, потом включаются «живые» анимации
 function menuEnter() {
+  setPanelOpen(false);
+  setDrawer(false);
   const m = $('menu');
   m.classList.remove('enter', 'live'); void m.offsetWidth; m.classList.add('enter');
   setTimeout(() => { m.classList.remove('enter'); m.classList.add('live'); }, 1300);
@@ -783,7 +788,7 @@ $('wipe').addEventListener('click', () => {
 $('tomenu').addEventListener('click', () => {
   if (creative) creative.toggle(false);
   running = false;
-  $('panel').classList.remove('show');
+  setPanelOpen(false);
   $('hud').classList.remove('show');
   $('menu').classList.remove('hide');
   $('playText').textContent = 'Продолжить';
@@ -791,30 +796,38 @@ $('tomenu').addEventListener('click', () => {
   menuEnter();
   if (document.exitPointerLock) document.exitPointerLock();
 });
-$('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
-// пока открыто меню, кнопки управления прячем — они ложились поверх нижних пунктов меню
-function closeSettings() {
-  $('panel').classList.remove('show');
-  $('gear').focus();
-}
-$('panelClose').addEventListener('click', closeSettings);
-document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && $('panel').classList.contains('show')) closeSettings();
-});
-new MutationObserver(() => {
-  const open = $('panel').classList.contains('show');
-  document.body.classList.toggle('panelOpen', open);
-  $('gear').setAttribute('aria-expanded', String(open));
+function setPanelOpen(open) {
+  $('panel').hidden = !open;
+  $('panelShade').hidden = !open;
+  $('gear').setAttribute('aria-expanded',String(open));
+  document.body.classList.toggle('panelOpen',open);
   if (open) {
     $('panelCamera').textContent = firstPerson ? 'От первого лица' : 'От третьего лица';
     $('panelClose').focus();
   }
-}).observe($('panel'), { attributes: true, attributeFilter: ['class'] });
+}
+function closePanel() { setPanelOpen(false); $('gear').focus(); }
+$('gear').addEventListener('click', () => setPanelOpen($('panel').hidden));
+$('panelShade').addEventListener('click', closePanel);
+$('panelClose').addEventListener('click', closePanel);
+function setDrawer(open) {
+  $('lobbyDrawer').hidden = !open;
+  $('lobbyGear').setAttribute('aria-expanded',String(open));
+}
+$('lobbyGear').addEventListener('click', () => setDrawer($('lobbyDrawer').hidden));
+document.addEventListener('click', e => {
+  if (!$('lobbyDrawer').hidden && !e.target.closest('#lobbyGear') && (!e.target.closest('#lobbyDrawer') || e.target.closest('button'))) setDrawer(false);
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('panel').hidden) closePanel();
+  else if (!$('lobbyDrawer').hidden) { setDrawer(false); $('lobbyGear').focus(); }
+});
 $('view').addEventListener('click', () => {
   firstPerson = !firstPerson;
   $('panelCamera').textContent = firstPerson ? 'От первого лица' : 'От третьего лица';
 });
-$('creaBtn').addEventListener('click', () => { if (creative) { $('panel').classList.remove('show'); creative.toggle(true); } });
+$('creaBtn').addEventListener('click', () => { if (creative) { setPanelOpen(false); creative.toggle(true); } });
 $('showfps').addEventListener('click', () => {
   const hidden = $('fps').classList.toggle('hide');
   $('showfps').setAttribute('aria-pressed', String(!hidden));
@@ -883,7 +896,7 @@ if (App) {
 requestAnimationFrame(() => setTimeout(async () => {
   try {
     // картинке заставки даём секунду на загрузку, чтобы не строить мир при пустом экране
-    await Promise.race([Promise.all([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/loading.jpg'; }), loadTerrainTextures()]), new Promise((r) => setTimeout(r, 4000))]);
+    await Promise.race([Promise.all([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/expedition-rim.png'; }), loadTerrainTextures()]), new Promise((r) => setTimeout(r, 4000))]);
     // карта поля, встроенная в игру (если есть): её получают все телефоны, у кого нет своей
     try { const r = await fetch('./maps/field.json', { cache: 'no-store' }); if (r.ok) window.__builtinField = await r.text(); } catch (_) { /* нет — значит генерация */ }
     await build();

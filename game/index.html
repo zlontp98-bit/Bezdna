@@ -146,7 +146,7 @@
   #confirm .mbtn { justify-content: center; font-size: 15px; height: 44px; text-align: center; }
   #wipe { background: linear-gradient(180deg, #ff7a6b, #e5483a) !important; color: #fff; border: 0 !important; }
   /* экран загрузки: картинка на весь экран, внизу подпись и полоса прогресса */
-  #loading { position: fixed; inset: 0; z-index: 20; background: #1b1338 url(./assets/loading.jpg) center 22% / cover no-repeat;
+  #loading { position: fixed; inset: 0; z-index: 20; background: #1b1338 url(./assets/expedition-rim.png) center 22% / cover no-repeat;
     display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 9px; color: #fff;
     padding: 0 24px max(26px, env(safe-area-inset-bottom)); text-align: center; transition: opacity .5s; }
   #loading::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 38%;
@@ -180,6 +180,7 @@
     font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; pointer-events: none; text-align: right; white-space: pre; line-height: 1.25; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
   #fps.hide { display: none; }
   #panel {
+    position:absolute; z-index:12; box-sizing:border-box;
     --edge: max(10px, env(safe-area-inset-right));
     top: max(10px, env(safe-area-inset-top)); right: var(--edge);
     bottom: max(10px, env(safe-area-inset-bottom)); width:min(420px, calc(100% - var(--edge) - max(10px,env(safe-area-inset-left))));
@@ -187,7 +188,9 @@
     background:linear-gradient(145deg,#222c49,#132d40 68%); border:1px solid #71879f; border-radius:16px;
     box-shadow:0 8px 36px #06132166; font:500 15px/1.35 system-ui,sans-serif;
   }
-  #panel.show {display:flex;flex-direction:column;}
+  #panel:not([hidden]) {display:flex;flex-direction:column;}
+  #panel[hidden], #panelShade[hidden] {display:none!important;}
+  #panelShade {position:absolute;inset:0;width:100%;height:100%;background:#09142170;z-index:11;border:0;}
   #panel .panelHead,#panel footer {flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 14px;background:linear-gradient(105deg,#313952,#204151);}
   #panel .panelHead {border-bottom:1px solid #385065;}
   #panel h2 {margin:0;color:#fff0cf;font:700 25px/1.15 Georgia,serif;}
@@ -210,7 +213,7 @@
   #panel footer {border-top:1px solid #385065;}
   #panel footer button {flex:1;min-height:44px;border-radius:7px;background:#294457;}
   #panel #tomenu {color:#ffdc98;}
-  body.panelOpen #gear,body.panelOpen #fps {visibility:hidden;}
+  body.panelOpen #gear {visibility:visible;z-index:13;} body.panelOpen #panel {top:max(64px,calc(env(safe-area-inset-top) + 54px));} body.panelOpen #fps {visibility:hidden;}
   .seg { display: flex; gap: 4px; margin-bottom: 12px; }
   .seg button, .row { flex: 1; padding: 9px 4px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 700; }
   .seg button.on { background: var(--accent); color: #3a2500; }
@@ -359,9 +362,39 @@
 
 #titleModel {display:none;position:absolute;left:47%;width:52%;top:10%;height:76%;touch-action:none;cursor:grab;}
 #titleModel:active {cursor:grabbing;}
-#menu.interactiveArt .titleArt {background-image:url('./assets/title-stage.jpg');}
+#menu.interactiveArt .titleArt {background-image:url('./assets/expedition-rim.png');}
 .interactiveArt #titleModel {display:block;}
 @media (orientation:portrait) {#titleModel {left:15%;width:82%;top:13%;height:47%;}}
+
+#hud:not(.show) {visibility:hidden;}
+#menu .brand {top:max(5%,env(safe-area-inset-top));left:max(4%,env(safe-area-inset-left));}
+#menu h1 {font-size:clamp(32px,8vh,76px);letter-spacing:.045em;}
+#menu .brand .eyebrow {font-size:.58em;letter-spacing:.23em;}
+#lobbyGear,#lobbyDrawer,.lobbyActions,#lobbyResources {position:absolute;z-index:2;}
+#lobbyGear {top:max(12px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));width:48px;height:44px;border:1px solid #c2ab78;border-bottom:3px solid #222334;border-radius:9px;background:#243d4b;color:#ffe9bd;font-size:23px;}
+#lobbyResources {right:max(76px,calc(env(safe-area-inset-right) + 72px));top:max(16px,calc(env(safe-area-inset-top) + 4px));display:flex;gap:4px;}
+#lobbyResources span {padding:5px 8px;border-radius:5px;background:#142835ed;border:1px solid #76877e;color:#fff2cf;font-weight:700;font-size:13px;}
+#lobbyDrawer {right:max(14px,env(safe-area-inset-right));top:max(64px,calc(env(safe-area-inset-top) + 54px));width:min(236px,76vw);padding:8px;background:#182c3bf7;border:1px solid #968c70;border-radius:12px;box-shadow:0 8px 22px #08122280;z-index:4;}
+#lobbyDrawer[hidden]{display:none;}
+#lobbyDrawer .mbtn {height:auto;min-height:42px;margin:4px 0;padding:6px 12px;border-radius:6px;background:#304657;color:#f6f1df;font:700 15px system-ui;border:1px solid #6c8088;}
+#lobbyDrawer .i {display:none;}
+.lobbyActions {left:max(4%,env(safe-area-inset-left));right:max(4%,env(safe-area-inset-right));bottom:max(6%,env(safe-area-inset-bottom));display:flex;align-items:end;justify-content:space-between;pointer-events:none;}
+.lobbyActions .mbtn {pointer-events:auto;width:auto;font:750 clamp(14px,3vh,23px) system-ui;border-radius:7px;}
+.lobbyActions #journalOpen {color:#f4e4bf;background:linear-gradient(115deg,#203b42,#2a334b);border:1px solid #a09677;border-left:5px solid #89cfc1;padding:0 1em;}
+#menu .lobbyActions #play {background:linear-gradient(155deg,#ffe6a7,#f4bb62);border:1px solid #ffe4a0;border-bottom:4px solid #a36e3c;box-shadow:0 3px 8px #12213280;animation:none;padding:0 1.2em;min-width:27%;height:clamp(52px,12vh,80px);}
+#menu #ver {bottom:1%;left:4%;}
+#hud .glass,#confirm .box,#panel {border:1px solid #8b978b;box-shadow:inset 0 1px #e8e3bb28,0 3px 0 #111f2d80;}
+#hud :is(#depthBox,#craftBtn,#gear,#hot,#bagBtn) {background:linear-gradient(145deg,#334653ee,#162b38ee);border-radius:9px;}
+#hud :is(#bag,#craft,#talk),#confirm .box,#menu dialog {background:linear-gradient(145deg,#304647,#202c40 72%);border-color:#ac9c79;}
+#hud :is(#bag,#craft) h3,#talkName,#panel h2,#menu dialog h2 {color:#ffdfa0;}
+#hud .cell {border-radius:6px;background:#33515d88;}
+#hud .cell.active {outline:2px solid #ffd386;outline-offset:-2px;background:#6b573c;}
+#hud .pad.glass {border-color:#92ada6;background-color:#17363db8;}
+#hud .pad.on,#hud #grab.ready {border-color:#ffe3a1;box-shadow:0 0 0 2px #ffd78860;}
+#loadBar {height:8px;border:1px solid #e1cba1;background:#172b3b;}
+#loadFill {background:linear-gradient(90deg,#70bfb6,#ffdc93);}
+@media (orientation:portrait){#lobbyResources {left:4%;right:auto;top:17%;}.lobbyActions {align-items:stretch;flex-direction:column-reverse;gap:9px;bottom:6%;}#menu .lobbyActions #play {justify-content:center;}#titleModel {top:24%;height:46%;}}
+
 </style>
 </head>
 <body>
@@ -378,7 +411,8 @@
   <div id="craft" class="glass"><h3>Крафт</h3><div id="craftList"></div></div>
   <button id="gear" class="glass" aria-label="Настройки" aria-controls="panel" aria-expanded="false">☰</button>
   <div id="fps"></div>
-  <section id="panel" aria-labelledby="panelTitle">
+  <button id="panelShade" aria-label="Закрыть настройки" hidden></button>
+  <section hidden id="panel" aria-labelledby="panelTitle">
     <header class="panelHead"><h2 id="panelTitle">Настройки</h2><button id="panelClose" aria-label="Закрыть настройки">×</button></header>
     <div class="panelScroll">
       <h3>Изображение</h3>
@@ -430,13 +464,14 @@
     <h1>БЕЗДНА</h1>
 
   </div>
-  <div class="mleft">
-    <button id="play" class="mbtn" disabled><span class="i">▶</span><span class="t"><span id="playText">Загрузка…</span><small id="playSub"></small></span></button>
-    <button id="newgame" class="mbtn"><span class="i">🎮</span><span class="t">Новая игра</span></button>
+  <div id="lobbyResources"></div>
+  <button id="lobbyGear" aria-label="Меню экспедиции" aria-controls="lobbyDrawer" aria-expanded="false">☰</button>
+  <nav id="lobbyDrawer" aria-label="Меню экспедиции" hidden>
     <button class="mbtn" id="settingsOpen">Настройки</button>
-    <button class="mbtn" id="journalOpen">Журнал и управление</button>
+    <button id="newgame" class="mbtn"><span class="i">🎮</span><span class="t">Новая игра</span></button>
     <button id="upd" class="mbtn" hidden><span class="i" id="updIcon">⟳</span><span class="t" id="updText">Обновить</span></button>
-  </div>
+  </nav>
+  <div class="lobbyActions"><button class="mbtn" id="journalOpen">Журнал экспедиции</button><button id="play" class="mbtn" disabled><span class="i">▶</span><span class="t"><span id="playText">Загрузка…</span><small id="playSub"></small></span></button></div>
   <dialog id="journalDialog"><header><h2>Журнал</h2><button aria-label="Закрыть" class="dismiss">×</button></header>  <div id="chips"></div>
 <div class="mright">
     <div class="mcard" id="goal">
