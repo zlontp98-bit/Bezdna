@@ -535,28 +535,6 @@ function setNear(v) {
 }
 
 // Главное меню: герой стоит перед камерой, она медленно ходит вокруг него
-const IDLE = { mx: 0, my: 0, jump: false, grab: false, sprint: false };
-function menuFrame(dt, t) {
-  if (hands) hands.hide();
-  player.update(dt, IDLE, yaw);
-  player.m.root.visible = true;
-  const p = player.pos, wide = camera.aspect > 1;
-  const a = player.facing + 0.45 + Math.sin(t * 0.25) * 0.3;
-  const dist = wide ? 3.4 : 4.6;
-  camPos.set(p.x + Math.sin(a) * dist, p.y + 1.25, p.z + Math.cos(a) * dist);
-  camPos.y = Math.max(camPos.y, terrainAt(camPos.x, camPos.z, camPos.y) + 0.5);
-  camera.position.lerp(camPos, Math.min(1, dt * 4));
-  // на широком экране герой справа от кнопок, на вертикальном — над ними
-  const rx = Math.cos(a), rz = -Math.sin(a);
-  if (wide) target.set(p.x - rx * 1.25, p.y + 0.85, p.z - rz * 1.25);
-  else target.set(p.x, p.y - 0.35, p.z);
-  camera.lookAt(target);
-  U.uCenter.value.copy(p); U.uPlayer.value.copy(p);
-  clouds.rotation.y += dt * 0.003;
-  updateZones();
-  renderer.render(scene, camera);
-}
-
 // ---- зоны видимости ----
 // Без них видеокарта рисовала всё сразу: с поверхности — шахты под озером (глядя вниз на луг это
 // +100…300 вызовов и +100…300 тыс. треугольников), а из шахт — луг, лес и траву на 200 м выше.
@@ -644,7 +622,7 @@ function frame(now) {
   const dt = dtMs / 1000;
   if (!renderer) return;
   U.uTime.value = now / 1000;
-  if (!running) { menuFrame(dt, now / 1000); updateSound(dt, player, camera, false); return; }
+  if (!running) { updateSound(dt, player, camera, false); return; }
   adaptQuality(dtMs);
 
   const inp = input.poll();
@@ -815,9 +793,15 @@ $('creaBtn').addEventListener('click', () => { if (creative) { $('panel').classL
 $('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
 // звук: включён по умолчанию, выбор запоминается
 initSound(store);
-const sndLabel = () => { $('sound').textContent = soundOn() ? '🔊 Звук: включён' : '🔇 Звук: выключен'; };
+const sndLabel = () => { $('menuSound').textContent = $('sound').textContent = soundOn() ? '🔊 Звук: включён' : '🔇 Звук: выключен'; };
 $('sound').addEventListener('click', () => { setSoundOn(!soundOn()); sndLabel(); });
 sndLabel();
+for (const [trigger, id] of [['settingsOpen','settingsDialog'], ['journalOpen','journalDialog']]) {
+  const dialog = $(id);
+  $(trigger).addEventListener('click', () => dialog.showModal());
+  dialog.querySelector('.dismiss').addEventListener('click', () => dialog.close());
+}
+$('menuSound').addEventListener('click', () => $('sound').click());
 document.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => setQuality(b.dataset.q)));
 // дальность растительности (деревья, кусты, грибы, камни): близко — легче для телефона
 const VEG = { near: 70, mid: 130, far: 260 };
@@ -891,3 +875,4 @@ requestAnimationFrame(() => setTimeout(async () => {
   }
   requestAnimationFrame(frame);
 }, 30));
+

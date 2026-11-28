@@ -296,6 +296,41 @@
   .pad:active { transform: scale(.93); }
   @media (pointer: coarse) { .pad { display: grid; } .desk { display: none; } }
   @media (pointer: fine) { .mob { display: none; } }
+
+#menu { background:#0a192d; }
+#menu.hide { visibility:hidden; }
+.titleArt { position:absolute; inset:-2%; background:url('./assets/title.jpg') 64% center/cover no-repeat; animation:titleDrift 19s ease-in-out infinite alternate; }
+@keyframes titleDrift { to { transform:translateX(-.65%) scale(1.025); } }
+#menu .tint { background:linear-gradient(90deg,#081627db,transparent 63%); animation:none; }
+#menu .brand { left:7%;top:9%;width:auto;text-align:left;right:auto; }
+#menu .eyebrow { color:#9dded9;letter-spacing:.28em; }
+#menu h1 { color:#fff7dc;background:none;filter:none;font:900 clamp(42px,12vh,110px)/1.12 Georgia,serif;letter-spacing:.025em;animation:none; }
+#menu .mleft { top:33%;bottom:auto;left:7%;width:min(33vw,340px);transform:none;gap:.23em; }
+#menu .mleft .mbtn { font:600 clamp(14px,2.7vh,21px)/1.2 system-ui;color:#edf6fa;background:#0b2134db;border:1px solid #779da855;border-radius:5px;height:clamp(32px,7.8vh,56px);padding:0 1em;box-shadow:none; }
+#menu .mleft #play { background:#ffd787;color:#172635;border-color:#ffe6ac;height:clamp(39px,9vh,66px);animation:none; }
+#menu #play::after,#menu .mleft .i {display:none;}
+#menu .mbtn:hover,#menu button:focus-visible { outline:2px solid #b4eee3;outline-offset:1px; }
+#menu dialog {width:min(420px,88vw);max-height:82dvh;overflow:auto;box-sizing:border-box;padding:18px;color:#edf6fa;background:#112737;border:1px solid #537982;border-radius:10px;}
+#menu dialog::backdrop { background:#03101ccc; }
+#menu dialog header {display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+#menu dialog h2 {margin:0;font-size:22px;}
+#menu dialog button {color:#edf6fa;background:#254452;border:1px solid #55727c;border-radius:5px;padding:8px;}
+#menu .dismiss {min-width:40px;font-size:22px;}
+#menu dialog .mright,#menu dialog .mbottom,#menu dialog #chips {position:static;display:flex;width:auto;transform:none;background:none;border:0;box-shadow:none;animation:none;padding:0;flex-wrap:wrap;gap:12px;margin:10px 0;}
+#menu dialog .mbottom {align-items:flex-start;flex-direction:column;}
+#menu dialog .sep {display:none;}
+#menu dialog #chips {gap:4px;justify-content:flex-start;}
+#menu dialog #chips span,#menu dialog .mcard {background:#1b3647;border-color:#45616b;animation:none;}
+#menu dialog .mcard {width:100%;box-sizing:border-box;}
+#menu #ver {left:7%;right:auto;}
+@media (orientation:portrait) {
+ .titleArt {background-position:72% center;}
+ #menu .tint {background:linear-gradient(0deg,#071526 5%,transparent 74%);}
+ #menu .brand {top:6%;} #menu h1 {font-size:clamp(45px,14vw,78px);}
+ #menu .mleft {top:auto;bottom:8%;width:min(78vw,340px);}
+}
+@media (prefers-reduced-motion:reduce) {.titleArt {animation:none;}}
+#menu.hide .titleArt,#menu.hide #ff span {animation-play-state:paused;}
 </style>
 </head>
 <body>
@@ -350,24 +385,22 @@
 <div id="fade"></div>
 
 <div id="menu">
-  <div class="tint"></div>
+  <div class="titleArt" aria-hidden="true"></div><div class="tint"></div>
   <div id="ff"></div>
   <div class="brand">
     <div class="eyebrow">ПРИКЛЮЧЕНИЕ НА КРАЮ</div>
     <h1>БЕЗДНА</h1>
-    <svg class="orbit" viewBox="0 0 440 108" preserveAspectRatio="none" aria-hidden="true">
-      <defs><linearGradient id="og" x1="0" x2="1"><stop offset="0" stop-color="#b38cff" stop-opacity="0"/><stop offset=".6" stop-color="#c9b4ff"/><stop offset="1" stop-color="#fff"/></linearGradient></defs>
-      <ellipse class="ring" cx="220" cy="54" rx="214" ry="40" transform="rotate(-6 220 54)"/>
-      <ellipse cx="220" cy="54" rx="214" ry="40" transform="rotate(-6 220 54)"/>
-    </svg>
+
   </div>
-  <div id="chips"></div>
   <div class="mleft">
     <button id="play" class="mbtn" disabled><span class="i">▶</span><span class="t"><span id="playText">Загрузка…</span><small id="playSub"></small></span></button>
     <button id="newgame" class="mbtn"><span class="i">🎮</span><span class="t">Новая игра</span></button>
+    <button class="mbtn" id="settingsOpen">Настройки</button>
+    <button class="mbtn" id="journalOpen">Журнал и управление</button>
     <button id="upd" class="mbtn" hidden><span class="i" id="updIcon">⟳</span><span class="t" id="updText">Обновить</span></button>
   </div>
-  <div class="mright">
+  <dialog id="journalDialog"><header><h2>Журнал</h2><button aria-label="Закрыть" class="dismiss">×</button></header>  <div id="chips"></div>
+<div class="mright">
     <div class="mcard" id="goal">
       <span class="tag">✨ Цель</span><span class="ico" id="goalIco">🏠</span>
       <h4 id="goalT"></h4><p id="goalP"></p>
@@ -380,12 +413,12 @@
       <p class="desk">WASD — идти · Shift — бег · Пробел — прыжок · E — лезть · F — действие · C — крафт</p>
     </div>
   </div>
-  <div class="mbottom">
+  </dialog><dialog id="settingsDialog"><header><h2>Настройки</h2><button aria-label="Закрыть" class="dismiss">×</button></header><div class="mbottom">
     <div><h3>ЦВЕТ ГЕРОЯ</h3><div id="colors"></div></div>
     <div class="sep"></div>
     <div><h3>ГРАФИКА</h3><div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div></div>
   </div>
-  <div id="ver" hidden></div>
+  <button id="menuSound"></button></dialog><div id="ver" hidden></div>
 </div>
 <div id="confirm">
   <div class="box">
@@ -399,3 +432,4 @@
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
+
