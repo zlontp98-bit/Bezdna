@@ -55,6 +55,47 @@ function buildHand(mat, side) {
   return { hand, fingers, thumb, arm, cuff };
 }
 
+// Инструменты в правой руке от первого лица. Ось рукояти — +y, место хвата — начало координат, лезвие смотрит вперёд (−z).
+// Свой материал: у рук он окрашен в цвет героя, а дерево и сталь должны остаться собой.
+function paint(geo, hex, shade = 1) {
+  geo = lit(geo, shade);
+  const c = new THREE.Color(hex), col = geo.attributes.color.array;
+  for (let i = 0; i < col.length; i += 3) { col[i] *= c.r; col[i + 1] *= c.g; col[i + 2] *= c.b; }
+  return geo;
+}
+const WOOD = 0x9a6a44, WOOD_D = 0x5a3824, STEEL = 0xb9c2cb, STEEL_D = 0x7d8791;
+function buildTools() {
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+  const mk = (list) => {
+    const g = new THREE.Group();
+    for (const [geo, hex, shade] of list) g.add(new THREE.Mesh(paint(geo, hex, shade), mat));
+    g.visible = false;
+    g.traverse((o) => { o.frustumCulled = false; });
+    return g;
+  };
+  const cyl = (r0, r1, len, y) => new THREE.CylinderGeometry(r0, r1, len, 7).translate(0, y, 0);
+  const beak = (side) => new THREE.ConeGeometry(0.03, 0.2, 5).translate(0, 0.1, 0).rotateZ(side * (Math.PI / 2 + 0.3)).translate(side * -0.02, 0.43, 0);
+  return {
+    axe: mk([
+      [cyl(0.017, 0.021, 0.5, 0.19), WOOD, 1],
+      [new THREE.BoxGeometry(0.05, 0.1, 0.07).translate(0, 0.4, 0.02), STEEL_D, 0.9],
+      [new THREE.BoxGeometry(0.028, 0.17, 0.15).translate(0, 0.38, -0.09), STEEL, 1],
+    ]),
+    pickaxe: mk([
+      [cyl(0.017, 0.021, 0.5, 0.19), WOOD, 1],
+      [new THREE.BoxGeometry(0.05, 0.07, 0.07).translate(0, 0.43, 0), WOOD_D, 0.9],
+      [beak(1), STEEL, 1],
+      [beak(-1), STEEL, 1],
+    ]),
+    spear: mk([
+      [cyl(0.015, 0.019, 0.9, 0.3), WOOD, 1],
+      [new THREE.CylinderGeometry(0.024, 0.024, 0.06, 6).translate(0, 0.7, 0), WOOD_D, 0.9],
+      [new THREE.OctahedronGeometry(0.05, 0).scale(0.7, 3.4, 0.4).translate(0, 0.84, 0), STEEL, 1],
+      [new THREE.BoxGeometry(0.012, 0.012, 0.06).translate(0.025, 0.64, 0), 0xe5483a, 1],
+    ]),
+  };
+}
+
 export function buildHands() {
   const hs = new THREE.Scene();
   const mat = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
@@ -62,6 +103,17 @@ export function buildHands() {
   hs.add(root);
   const H = [buildHand(mat, -1), buildHand(mat, 1)], REACH = 0.66;
   for (const h of H) { h.hand.traverse((o) => { o.frustumCulled = false; }); root.add(h.hand); h.curl = 0.5; h.pos = new THREE.Vector3(); h.rot = new THREE.Vector3(); h.init = false; h.wpos = new THREE.Vector3(); h.wq = new THREE.Quaternion(); h.wmode = false; }
+  // инструмент сидит в правом кулаке; его наклон подобран так, чтобы в обычной стойке он торчал вверх и чуть вперёд
+  const tools = buildTools();
+  const restQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-1.25, 0.12, 0.3));
+  const aim = { axe: [-0.14, 0.88, -0.45], pickaxe: [-0.14, 0.88, -0.45], spear: [-0.06, 0.5, -0.86] };
+  for (const id in tools) {
+    const g = tools[id];
+    const d = new THREE.Vector3(...aim[id]).normalize().applyQuaternion(restQ.clone().invert());
+    g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d);
+    g.position.set(0, 0.05, -0.02);
+    H[1].hand.add(g);
+  }
   let t = 0, hangT = 0, color = -1, on = false;
   const want = [new THREE.Vector3(), new THREE.Vector3()], wrot = [new THREE.Vector3(), new THREE.Vector3()], wcurl = [0, 0];
   const pose = (i, x, y, z, rx, ry, rz, curl) => { want[i].set(x, y, z); wrot[i].set(rx, ry, rz); wcurl[i] = curl; inWorld[i] = false; };
@@ -165,6 +217,10 @@ export function buildHands() {
             -0.44 + sw, -1.25 - 0.2 * sp, 0.12 * s, (0.3 - 0.15 * sp) * s, 0.55 + 0.35 * sp);
         }
       }
+      // инструмент в руке виден, пока обе руки не заняты лазанием, перелезанием или плаванием
+      const free = !player.climbing && !player.mantle && !player.swimming;
+      for (const id in tools) tools[id].visible = free && player.held === id;
+      if (free && tools[player.held] && !inWorld[1]) wcurl[1] = Math.max(wcurl[1], 0.95); // кулак сжат на рукояти
       if (player.swingT > 0) { // взмах инструментом: правая рука вверх и резко вниз
         const k = 1 - player.swingT / 0.42;
         const y = k < 0.35 ? -0.2 + 0.28 * (k / 0.35) : 0.08 - 0.38 * Math.min(1, (k - 0.35) / 0.3);
