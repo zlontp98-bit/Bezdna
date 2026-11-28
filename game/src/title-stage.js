@@ -15,7 +15,28 @@ export function createTitleStage(canvas) {
   scene.add(key);
   const glint = new THREE.PointLight(0x92eeff, 5, 6);
   scene.add(glint);
-  const skin = new THREE.MeshStandardMaterial({vertexColors:true, roughness:.82});
+  // buildModel supplies display-space palette colors (game color management is disabled).
+  // Shade those colors directly so the crystal light cannot bleach the character.
+  const skin = new THREE.ShaderMaterial({
+    vertexColors: true,
+    vertexShader: `
+      varying vec3 palette;
+      varying vec3 surfaceNormal;
+      void main() {
+        palette = color;
+        surfaceNormal = normalMatrix * normal;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      varying vec3 palette;
+      varying vec3 surfaceNormal;
+      void main() {
+        vec3 n = normalize(surfaceNormal);
+        float keyLight = max(dot(n, normalize(vec3(-0.55, 0.70, 0.50))), 0.0);
+        vec3 shade = mix(vec3(0.52, 0.59, 0.72), vec3(1.0, 0.98, 0.96), keyLight);
+        gl_FragColor = vec4(palette * shade, 1.0);
+      }`
+  });
   let hero, angle = -.18;
 
   function setLook(look) {
