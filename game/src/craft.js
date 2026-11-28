@@ -1,4 +1,4 @@
-import { ITEMS, iconHtml } from './inventory.js';
+import { iconHtml, iconInline } from './inventory.js';
 import { RULES } from './world.js';
 
 // Крафт. Кнопка на экране с самого начала; пока ни один чертёж не изучен — «Крафты пока не изучены».
@@ -39,7 +39,7 @@ export class Crafting {
   list() {
     return this.known.map((what) => {
       const r = RULES.recipes[what];
-      const need = Object.keys(r.cost).map((id) => `${ITEMS[id].icon} ${this.inv.count(id)}/${r.cost[id]}`).join('  ');
+      const need = Object.keys(r.cost).map((id) => `${iconInline(id)} ${this.inv.count(id)}/${r.cost[id]}`).join('  ');
       return { what, name: r.name, icon: iconHtml(what), need, can: this.canMake(what), have: this.inv.count(what) > 0 };
     });
   }

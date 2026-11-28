@@ -1,22 +1,28 @@
-// Инвентарь: 3 активных слота (на экране) + рюкзак на 12 ячеек.
+// Инвентарь: 4 активных слота (на экране) + рюкзак на 12 ячеек.
 // Предметы складываются стопками. Перенос — коснуться ячейки, потом другой.
+// Выбросить: выбрать предмет в открытом рюкзаке — внизу появятся кнопки «−1» и «Выбросить».
 
+// значки лежат в assets/items/<id>.png; emoji — запасной вариант для текстовых строк
 export const ITEMS = {
   axe:    { name: 'Топор',   icon: '🪓', max: 1, tool: true, tip: 'Рубит деревья: возьми в руку и подойди к стволу' },
   berry:  { name: 'Ягоды',   icon: '🫐', max: 20, tip: 'Растут на некоторых кустах. Строитель покупает их' },
   gear:   { name: 'Шестерёнка', icon: '⚙️', max: 5, tip: 'Деталь старого механизма. Находится в ящиках на островках. Нужна для улучшения дома' },
   log:    { name: 'Бревно',  icon: '🪵', max: 20, tip: 'Древесина. С одного дерева — три бревна' },
-  pickaxe:{ name: 'Кирка',   icon: '⛏️', max: 1, tool: true, svg: `<svg viewBox="0 0 48 48"><path d="M13 41 L31 17" stroke="#4a2e1c" stroke-width="7.5" stroke-linecap="round"/><path d="M13 41 L31 17" stroke="#a8703f" stroke-width="4.5" stroke-linecap="round"/><path d="M15 37 L27 21" stroke="#c99566" stroke-width="1.4" stroke-linecap="round"/><path d="M7 21 Q25 3 43 22" stroke="#3f4650" stroke-width="9.5" fill="none" stroke-linecap="round"/><path d="M7 21 Q25 3 43 22" stroke="#b8c3cd" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M12 15 Q25 6 37 14" stroke="#eef3f7" stroke-width="1.8" fill="none" stroke-linecap="round"/><rect x="25.5" y="11.5" width="8" height="7" rx="1.5" transform="rotate(-38 29.5 15)" fill="#5a3824" stroke="#3a2416" stroke-width="1.2"/></svg>`, tip: 'Добывает камень из больших валунов: возьми в руку и подойди' },
-  spear:  { name: 'Копьё',   icon: '🗡️', max: 1, tool: true, svg: `<svg viewBox="0 0 48 48"><g transform="rotate(45 24 24)"><rect x="21.6" y="17" width="4.8" height="31" rx="2.4" fill="#4a2e1c"/><rect x="22.6" y="17" width="2.8" height="30" rx="1.4" fill="#a8703f"/><path d="M24 0 C30.5 7 30.5 14 24 19.5 C17.5 14 17.5 7 24 0 Z" fill="#b8c3cd" stroke="#3f4650" stroke-width="1.6" stroke-linejoin="round"/><path d="M24 3 L24 17" stroke="#eef3f7" stroke-width="1.3" stroke-linecap="round"/><rect x="20.6" y="17.5" width="6.8" height="5" rx="1.2" fill="#5a3824" stroke="#3a2416" stroke-width="1"/><path d="M27 21 q5 2 4 7 M27 21 q2 4 -1 8" stroke="#e5483a" stroke-width="1.6" fill="none" stroke-linecap="round"/></g></svg>`, tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
+  pickaxe:{ name: 'Кирка',   icon: '⛏️', max: 1, tool: true, tip: 'Добывает камень из больших валунов: возьми в руку и подойди' },
+  spear:  { name: 'Копьё',   icon: '🗡️', max: 1, tool: true, tip: 'Сделано своими руками. Пригодится, когда в бездне появятся жители' },
   stone:  { name: 'Камень',  icon: '🪨', max: 20, tip: 'Материал для построек' },
   shroom: { name: 'Гриб',    icon: '🍄', max: 20, tip: 'Светится в темноте. Растёт на глыбах глубже −75 м, большие — у озера' },
   crystal:{ name: 'Синий кристалл', icon: '💎', max: 20, tip: 'Светится в темноте' },
-  dust:   { name: 'Кристальная пыль', icon: '💠', max: 40, svg: `<svg viewBox="0 0 48 48"><path d="M6 40 Q24 22 42 40 Z" fill="#2f6fd6" stroke="#173c80" stroke-width="2" stroke-linejoin="round"/><path d="M12 38 Q24 27 36 38" fill="#5fa8ff"/><path d="M18 35 Q24 30 30 35" fill="#bfe3ff"/><path d="M24 6 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2z" fill="#9fd4ff"/><path d="M37 13 l1.3 3.7 3.7 1.3 -3.7 1.3 -1.3 3.7 -1.3 -3.7 -3.7 -1.3 3.7 -1.3z" fill="#cfeaff"/><path d="M11 17 l1 3 3 1 -3 1 -1 3 -1 -3 -3 -1 3 -1z" fill="#7fc0ff"/></svg>`, tip: 'Выпадает из синих кристаллов, когда разбиваешь их киркой. Большой кристалл даёт больше пыли' },
-  jelly:  { name: 'Желе медузы', icon: '🪼', max: 20, svg: `<svg viewBox="0 0 48 48"><path d="M7 34 Q6 16 24 14 Q42 16 41 34 Q41 41 24 41 Q7 41 7 34 Z" fill="#ff7f9a" fill-opacity="0.75" stroke="#c2405f" stroke-width="2"/><path d="M12 31 Q12 20 24 19 Q35 20 36 31" fill="#ffb38a" fill-opacity="0.7"/><ellipse cx="17" cy="24" rx="4" ry="2.6" fill="#fff" fill-opacity="0.7" transform="rotate(-25 17 24)"/><circle cx="31" cy="33" r="2" fill="#fff" fill-opacity="0.45"/><circle cx="20" cy="35" r="1.3" fill="#fff" fill-opacity="0.45"/></svg>`, tip: 'Светящееся желе. Выпадает из медуз в озере на дне бездны' },
+  dust:   { name: 'Кристальная пыль', icon: '💠', max: 40, tip: 'Выпадает из синих кристаллов, когда разбиваешь их киркой. Большой кристалл даёт больше пыли' },
+  jelly:  { name: 'Желе медузы', icon: '🪼', max: 20, tip: 'Светящееся желе. Выпадает из медуз в озере на дне бездны' },
 };
-export const HOT = 3, BAG = 12;
-// значок предмета: нарисованный (svg), если есть, иначе эмодзи
-export function iconHtml(id) { const it = ITEMS[id]; return it.svg || it.icon; }
+export const HOT = 4, BAG = 12;
+const OLD_HOT = 3; // раньше активных слотов было три: старые сохранения переносим
+const imgSrc = (id) => `./assets/items/${id}.png`;
+// значок предмета для ячейки
+export function iconHtml(id) { return `<img src="${imgSrc(id)}" alt="" draggable="false">`; }
+// маленький значок внутри строки текста (стоимость рецепта и т.п.)
+export function iconInline(id) { return `<img class="mi" src="${imgSrc(id)}" alt="" draggable="false">`; }
 
 export class Inventory {
   constructor(store) {
@@ -32,9 +38,12 @@ export class Inventory {
   load() {
     try {
       const d = JSON.parse(this.store.get('bezdna.inv', 'null'));
-      if (d && Array.isArray(d.slots) && d.slots.length === this.slots.length) {
+      let sv = d && Array.isArray(d.slots) ? d.slots : null;
+      // сохранение с тремя активными слотами: четвёртый слот вставляем после них, рюкзак едет следом
+      if (sv && sv.length === OLD_HOT + BAG) sv = [...sv.slice(0, OLD_HOT), null, ...sv.slice(OLD_HOT)];
+      if (sv && sv.length === this.slots.length) {
         // предметов, которых больше нет в игре (факел, верёвка, ягоды), в старых сохранениях не будет
-        this.slots = d.slots.map((s) => (s && ITEMS[s.id] && s.n > 0 ? { id: s.id, n: s.n } : null));
+        this.slots = sv.map((s) => (s && ITEMS[s.id] && s.n > 0 ? { id: s.id, n: s.n } : null));
         this.active = Math.min(HOT - 1, Math.max(0, d.active | 0));
         // топор появился позже: тем, кто уже играл, выдаём его один раз
         if (!this.store.get('bezdna.axe', '')) { this.store.set('bezdna.axe', '1'); if (!this.count('axe')) this.add('axe'); }
@@ -67,6 +76,15 @@ export class Inventory {
     this.changed();
   }
   get held() { return this.slots[this.active]; }
+
+  // Выбросить из ячейки i: n штук (по умолчанию всю стопку). Предмет просто исчезает
+  discard(i, n = Infinity) {
+    const s = this.slots[i];
+    if (!s) return;
+    s.n -= Math.min(n, s.n);
+    if (s.n <= 0) { this.slots[i] = null; if (this.pick === i) this.pick = -1; }
+    this.changed();
+  }
 
   // Касание ячейки: первое — взять, второе — положить/поменять/сложить
   tap(i) {
@@ -122,6 +140,30 @@ export function bindInventoryUI(inv, ui) {
   for (let i = 0; i < HOT; i++) mk(i, hotEl);
   for (let i = HOT; i < HOT + BAG; i++) mk(i, bagEl);
 
+  // панель выбранного предмета: что это и как его выбросить
+  const actEl = document.createElement('div');
+  actEl.id = 'bagAct';
+  actEl.innerHTML = '<div class="sel"><b></b><span></span></div><div class="btns">'
+    + '<button type="button" class="dropOne">−1</button>'
+    + '<button type="button" class="dropAll"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg><span>Выбросить</span></button>'
+    + '</div>';
+  bagPanel.insertBefore(actEl, bagPanel.querySelector('.tip'));
+  const selName = actEl.querySelector('.sel b'), selTip = actEl.querySelector('.sel span');
+  const dropOne = actEl.querySelector('.dropOne'), dropAll = actEl.querySelector('.dropAll'), dropTxt = dropAll.querySelector('span');
+  for (const b of [dropOne, dropAll]) b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });
+
+  // выбросить всю стопку — со вторым касанием, чтобы не потерять нужное случайно
+  let armed = false, armTimer = 0;
+  const disarm = () => { armed = false; clearTimeout(armTimer); dropAll.classList.remove('armed'); };
+  dropOne.addEventListener('click', () => { disarm(); if (inv.pick >= 0) inv.discard(inv.pick, 1); });
+  dropAll.addEventListener('click', () => {
+    if (inv.pick < 0) return;
+    if (!armed) { armed = true; dropAll.classList.add('armed'); armTimer = setTimeout(() => { disarm(); render(); }, 2500); render(); return; }
+    disarm();
+    inv.discard(inv.pick);
+  });
+
+  let lastPick = -1;
   const render = () => {
     // меняем в ячейке только то, что поменялось: иначе каждое бревно заново разбирало
     // все картинки и заставляло телефон перерисовывать весь интерфейс
@@ -137,6 +179,17 @@ export function bindInventoryUI(inv, ui) {
     nameEl.textContent = h ? ITEMS[h.id].name : '';
     bagPanel.classList.toggle('show', inv.open);
     bagBtn.classList.toggle('on', inv.open);
+
+    const p = inv.pick >= 0 ? inv.slots[inv.pick] : null;
+    if (inv.pick !== lastPick) { lastPick = inv.pick; disarm(); }
+    actEl.classList.toggle('show', !!p);
+    if (p) {
+      const it = ITEMS[p.id];
+      selName.textContent = p.n > 1 ? `${it.name} ×${p.n}` : it.name;
+      selTip.textContent = it.tip || '';
+      dropOne.hidden = p.n < 2;
+      dropTxt.textContent = armed ? 'Точно?' : p.n > 1 ? 'Выбросить всё' : 'Выбросить';
+    }
   };
   inv.onChange = render;
   bagBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); });

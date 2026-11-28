@@ -12,7 +12,7 @@ import { buildWater, planWater, prepareWallWaterfall } from './waterfall.js';
 import { Player, SKIN_COLORS } from './player.js';
 import { buildHands } from './fphands.js';
 import { Input } from './input.js';
-import { Inventory, bindInventoryUI } from './inventory.js';
+import { Inventory, bindInventoryUI, HOT } from './inventory.js';
 import { groundAt, solidAt } from './solids.js';
 import { Woodcutter } from './chop.js';
 import { World, RULES } from './world.js';
@@ -843,7 +843,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyV') $('view').click();
   if (e.code === 'KeyC' && craft) toggleCraft();
   if (e.code === 'KeyI' || e.code === 'Tab') { e.preventDefault(); $('bagBtn').click(); }
-  if (e.code >= 'Digit1' && e.code <= 'Digit3' && inv) inv.tap(+e.code.slice(5) - 1);
+  if (e.code >= 'Digit1' && e.code <= 'Digit' + HOT && inv) inv.tap(+e.code.slice(5) - 1);
 });
 addEventListener('wheel', (e) => { camDist = Math.max(3, Math.min(14, camDist + e.deltaY * 0.01)); }, { passive: true });
 
@@ -870,9 +870,15 @@ if (App) {
     else if (state === 'uptodate' && !text) txt.textContent = 'Обновить';
     else txt.textContent = text;
     if (state === 'uptodate' && text) setTimeout(() => { txt.textContent = 'Обновить'; }, 2500);
+    // вышла новая версия — ставим сама, но только пока игрок в меню: посреди игры перезапуск был бы некстати
+    if (state === 'available' && !running && !starting && !autoTried) { autoTried = true; App.update(); }
   };
   btn.addEventListener('click', () => App.update());
+  // одна автоматическая попытка за запуск страницы: если скачать не вышло, по кругу не пробуем
+  let autoTried = false;
   App.check();
+  // вернулся в приложение, пока стоит в меню, — проверяем ещё раз
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !running && !starting) { autoTried = false; App.check(); } });
 }
 
 // сначала показываем экран загрузки, потом строим мир
