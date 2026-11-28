@@ -179,13 +179,38 @@
   #fps { position: absolute; top: max(66px, calc(env(safe-area-inset-top) + 52px)); right: max(14px, env(safe-area-inset-right));
     font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; pointer-events: none; text-align: right; white-space: pre; line-height: 1.25; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
   #fps.hide { display: none; }
-  #panel { position: absolute; top: max(66px, calc(env(safe-area-inset-top) + 52px)); right: max(14px, env(safe-area-inset-right));
-    padding: 14px; border-radius: 16px; display: none; width: 250px;
-    /* на телефоне боком панель выше экрана — листается пальцем */
-    max-height: calc(100% - max(66px, calc(env(safe-area-inset-top) + 52px)) - max(14px, env(safe-area-inset-bottom)));
-    box-sizing: border-box; overflow-y: auto; touch-action: pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; z-index: 6; }
-  #panel.show { display: block; }
-  #panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; font-weight: 700; }
+  #panel {
+    --edge: max(10px, env(safe-area-inset-right));
+    top: max(10px, env(safe-area-inset-top)); right: var(--edge);
+    bottom: max(10px, env(safe-area-inset-bottom)); width:min(420px, calc(100% - var(--edge) - max(10px,env(safe-area-inset-left))));
+    max-height:620px; padding:0; overflow:hidden; color:#eff6f4;
+    background:#102437; border:1px solid #496477; border-radius:16px;
+    box-shadow:0 8px 36px #06132166; font:500 15px/1.35 system-ui,sans-serif;
+  }
+  #panel.show {display:flex;flex-direction:column;}
+  #panel .panelHead,#panel footer {flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 14px;background:#172e42;}
+  #panel .panelHead {border-bottom:1px solid #385065;}
+  #panel h2 {margin:0;color:#fff0cf;font:700 25px/1.15 Georgia,serif;}
+  #panel button {color:#ecf5f6;font:600 14px/1.2 system-ui,sans-serif;cursor:pointer;}
+  #panel button:focus-visible {outline:2px solid #ffcf78;outline-offset:-2px;}
+  #panelClose {width:44px;height:44px;border-radius:50%;background:#253e50;font-size:24px!important;}
+  #panel .panelScroll {min-height:0;overflow-y:auto;touch-action:pan-y;overscroll-behavior:contain;padding:4px 16px 14px;}
+  #panel h3 {margin:12px 0 8px;color:#95d8d3;opacity:1;font-size:11px;letter-spacing:.12em;}
+  #panel fieldset {margin:0 0 10px;padding:0;border:0;min-width:0;}
+  #panel legend {padding:0 0 4px;font-weight:600;}
+  #panel .seg {margin:0;padding:3px;gap:3px;background:#091b2a;border-radius:9px;}
+  #panel .seg button {min-height:40px;padding:4px;border-radius:6px;background:transparent;}
+  #panel .seg .on {background:#ffd58a;color:#202530;}
+  #panel .settingLine {display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:44px;background:transparent;border-top:1px solid #304757;border-radius:0;text-align:left;padding:5px 0;}
+  #panel .settingLine strong {color:#acdcd9;font-weight:600;}
+  .switchTrack {width:36px;height:20px;border-radius:12px;background:#576979;padding:3px;box-sizing:border-box;}
+  .switchTrack::before {content:'';display:block;width:14px;height:14px;border-radius:50%;background:#f1f6f5;}
+  [aria-pressed=true]>.switchTrack {background:#479690;}
+  [aria-pressed=true]>.switchTrack::before {transform:translateX(16px);}
+  #panel footer {border-top:1px solid #385065;}
+  #panel footer button {flex:1;min-height:44px;border-radius:7px;background:#294457;}
+  #panel #tomenu {color:#ffdc98;}
+  body.panelOpen #gear,body.panelOpen #fps {visibility:hidden;}
   .seg { display: flex; gap: 4px; margin-bottom: 12px; }
   .seg button, .row { flex: 1; padding: 9px 4px; border-radius: 10px; background: rgba(255,255,255,.12); font-size: 14px; font-weight: 700; }
   .seg button.on { background: var(--accent); color: #3a2500; }
@@ -351,19 +376,25 @@
   <button id="craftBtn" class="glass" aria-label="Крафт">🛠️</button>
   <button id="lift" aria-label="Наверх">⬆ Наверх</button>
   <div id="craft" class="glass"><h3>Крафт</h3><div id="craftList"></div></div>
-  <button id="gear" class="glass" aria-label="Меню">☰</button>
+  <button id="gear" class="glass" aria-label="Настройки" aria-controls="panel" aria-expanded="false">☰</button>
   <div id="fps"></div>
-  <div id="panel" class="glass">
-    <button id="tomenu" class="row main">☰ Главное меню</button>
-    <h3 style="margin-top:12px">Качество</h3>
-    <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
-    <h3 style="margin-top:12px">Растительность</h3>
-    <div class="seg"><button data-veg="near">Близко</button><button data-veg="mid">Средне</button><button data-veg="far">Далеко</button></div>
-    <button id="view" class="row">Вид: от третьего лица</button>
-    <button id="sound" class="row">🔊 Звук: включён</button>
-    <button id="showfps" class="row">Счётчик FPS</button>
-    <button id="creaBtn" class="row">🧱 Творчество (строить поле)</button>
-  </div>
+  <section id="panel" aria-labelledby="panelTitle">
+    <header class="panelHead"><h2 id="panelTitle">Настройки</h2><button id="panelClose" aria-label="Закрыть настройки">×</button></header>
+    <div class="panelScroll">
+      <h3>Изображение</h3>
+      <fieldset><legend>Качество графики</legend>
+        <div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div>
+      </fieldset>
+      <fieldset><legend>Дальность растительности</legend>
+        <div class="seg"><button data-veg="near">Близко</button><button data-veg="mid">Средне</button><button data-veg="far">Далеко</button></div>
+      </fieldset>
+      <button id="showfps" class="settingLine" aria-pressed="true"><span>Счётчик FPS</span><span class="switchTrack" aria-hidden="true"></span></button>
+      <h3>Камера и звук</h3>
+      <button id="view" class="settingLine"><span>Камера</span><strong id="panelCamera">От третьего лица</strong></button>
+      <button id="sound" class="settingLine"><span>Звук</span><span class="switchTrack" aria-hidden="true"></span></button>
+    </div>
+    <footer><button id="creaBtn">Творчество</button><button id="tomenu">Главное меню</button></footer>
+  </section>
   <div id="hotbar">
     <div id="held"></div>
     <div class="hotrow"><div id="hot" class="glass"></div><button id="bagBtn" class="glass" aria-label="Инвентарь">⋯</button></div>

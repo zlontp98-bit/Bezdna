@@ -793,16 +793,38 @@ $('tomenu').addEventListener('click', () => {
 });
 $('gear').addEventListener('click', () => $('panel').classList.toggle('show'));
 // пока открыто меню, кнопки управления прячем — они ложились поверх нижних пунктов меню
-new MutationObserver(() => document.body.classList.toggle('panelOpen', $('panel').classList.contains('show'))).observe($('panel'), { attributes: true, attributeFilter: ['class'] });
+function closeSettings() {
+  $('panel').classList.remove('show');
+  $('gear').focus();
+}
+$('panelClose').addEventListener('click', closeSettings);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && $('panel').classList.contains('show')) closeSettings();
+});
+new MutationObserver(() => {
+  const open = $('panel').classList.contains('show');
+  document.body.classList.toggle('panelOpen', open);
+  $('gear').setAttribute('aria-expanded', String(open));
+  if (open) {
+    $('panelCamera').textContent = firstPerson ? 'От первого лица' : 'От третьего лица';
+    $('panelClose').focus();
+  }
+}).observe($('panel'), { attributes: true, attributeFilter: ['class'] });
 $('view').addEventListener('click', () => {
   firstPerson = !firstPerson;
-  $('view').textContent = firstPerson ? 'Вид: от первого лица' : 'Вид: от третьего лица';
+  $('panelCamera').textContent = firstPerson ? 'От первого лица' : 'От третьего лица';
 });
 $('creaBtn').addEventListener('click', () => { if (creative) { $('panel').classList.remove('show'); creative.toggle(true); } });
-$('showfps').addEventListener('click', () => $('fps').classList.toggle('hide'));
+$('showfps').addEventListener('click', () => {
+  const hidden = $('fps').classList.toggle('hide');
+  $('showfps').setAttribute('aria-pressed', String(!hidden));
+});
 // звук: включён по умолчанию, выбор запоминается
 initSound(store);
-const sndLabel = () => { $('menuSound').textContent = $('sound').textContent = soundOn() ? '🔊 Звук: включён' : '🔇 Звук: выключен'; };
+const sndLabel = () => {
+  $('menuSound').textContent = soundOn() ? '🔊 Звук: включён' : '🔇 Звук: выключен';
+  $('sound').setAttribute('aria-pressed', String(soundOn()));
+};
 $('sound').addEventListener('click', () => { setSoundOn(!soundOn()); sndLabel(); });
 sndLabel();
 for (const [trigger, id] of [['settingsOpen','settingsDialog'], ['journalOpen','journalDialog']]) {
