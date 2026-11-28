@@ -870,15 +870,9 @@ if (App) {
     else if (state === 'uptodate' && !text) txt.textContent = 'Обновить';
     else txt.textContent = text;
     if (state === 'uptodate' && text) setTimeout(() => { txt.textContent = 'Обновить'; }, 2500);
-    // вышла новая версия — ставим сама, но только пока игрок в меню: посреди игры перезапуск был бы некстати
-    if (state === 'available' && !running && !starting && !autoTried) { autoTried = true; App.update(); }
   };
   btn.addEventListener('click', () => App.update());
-  // одна автоматическая попытка за запуск страницы: если скачать не вышло, по кругу не пробуем
-  let autoTried = false;
   App.check();
-  // вернулся в приложение, пока стоит в меню, — проверяем ещё раз
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && !running && !starting) { autoTried = false; App.check(); } });
 }
 
 // сначала показываем экран загрузки, потом строим мир
