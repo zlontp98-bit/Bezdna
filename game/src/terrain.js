@@ -33,13 +33,13 @@ export const LAKE = { x: 0, z: 0, r: 33, level: -(W.LOW + W.DEEP) - 2.0 };
 // гуляют по-своему, провалы в потолке (chim: [t, высота, полуширина по t]), уступы пола (steps: [t, высота])
 // и ямки с лужами (pools: [t, u, радиус]; u — поперёк от середины хода).
 export const TUNNELS = [
-  { th: 5.36, L: 72, hw: 6.5, H: 10, drop: 22, seed: 1.7, bend: [4.5, 0.085, 0.8], wv: 0.16, hv: 0.22,
+  { th: 5.36, L: 72, hw: 6.5, H: 10, drop: 25, seed: 1.7, bend: [4.5, 0.085, 0.8], wv: 0.16, hv: 0.22,
     chim: [[29, 15, 4.5], [57, 11, 3.5]], steps: [[21, 0.35], [46, 0.3]], pools: [[14, -2.6, 1.9], [37, 2.8, 2.4], [51, -1.2, 1.7], [64, 2.2, 2.1]] },
-  { th: 2.96, L: 66, hw: 6.5, H: 9, drop: 18, seed: 4.3, bend: [-3.5, 0.11, 2.1], wv: 0.2, hv: 0.3,
+  { th: 2.96, L: 66, hw: 6.5, H: 9, drop: 25, seed: 4.3, bend: [-3.5, 0.11, 2.1], wv: 0.2, hv: 0.3,
     chim: [[40, 19, 5.5]], steps: [[16, 0.3], [33, 0.4], [54, 0.3]], pools: [[11, 2.1, 2.2], [27, -3.0, 1.6], [45, 1.0, 2.5], [59, -2.0, 1.8]] },
 ].map((T) => {
   const c = Math.cos(T.th), s = Math.sin(T.th);
-  return { ...T, dx: c, dz: s, nx: -s, nz: c, t0: 0, ready: false, open: true };   // open: конец хода открыт в шахты (mines.js)   // ready: начало (x, z) и пол F0 — после сетки высот
+  return { ...T, dx: c, dz: s, nx: -s, nz: c, t0: 0, ready: false, open: false };
 });
 // местные координаты: t — вдоль хода (0 — у подножия стены, растёт вглубь скалы), w — поперёк (от прямой оси)
 export const tunLocal = (T, x, z) => [(x - T.x) * T.dx + (z - T.z) * T.dz, (x - T.x) * T.nx + (z - T.z) * T.nz];
@@ -77,6 +77,12 @@ const tunBase = (T, t, w) => {
 const tunFront = (T, w) => Math.min(heightAt(T.x - T.dx * 1.5 + T.nx * w, T.z - T.dz * 1.5 + T.nz * w), heightAt(T.x - T.dx * 3 + T.nx * w, T.z - T.dz * 3 + T.nz * w));
 export const tunFloor = (T, t, w) => {
   const b = tunBase(T, t, w);
+  // Level landing before the rock cap, 25 m below this tunnel's own entrance.
+  if (t > T.L - 9) {
+    const offset = w - tunC(T, t);
+    const landing = tunFront(T, 0) - T.drop + 0.15 * Math.min(1, Math.abs(offset) / T.hw);
+    return b + (landing - b) * smoothstep(T.L - 9, T.L - 4, t);
+  }
   if (t >= 4) return b;
   return b + (tunFront(T, w) - tunBase(T, 0, w)) * (1 - smoothstep(0, 4, Math.max(0, t)));
 };
