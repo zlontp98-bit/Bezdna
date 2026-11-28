@@ -740,22 +740,6 @@ $('play').addEventListener('click', start);
 // есть ли что терять: сводка прогресса на главном экране
 function hasProgress() { return inv.count('log') > 0 || inv.count('stone') > 0 || town.state !== 'none'; }
 // Сводка на главном экране: ресурсы сверху и карточка с ближайшей целью
-function showSave() {
-  const logs = inv.count('log'), st = town.state;
-  const chips = [`🪵 ${logs}`, `🪨 ${inv.count('stone')}`, `⚙️ ${inv.count('gear')}`, town.hall === 'built' ? '🏛️ Гильдия' : st === 'built' ? '🏠 Дом' : st === 'building' ? '🏗️ Стройка' : '⛺ Палатка'];
-  $('chips').innerHTML = chips.map((t) => `<span>${t}</span>`).join('');
-  $('lobbyResources').innerHTML = $('chips').innerHTML;
-  const cost = RULES.build.house.cost.log, H = RULES.build.hall.cost, P = town.project || {};
-  let ico, t, p, k;
-  if (st === 'none') { ico = '🏠'; t = 'Построй дом'; p = `Принеси строителю ${cost} брёвен — он поставит дом с доской заданий.`; k = Math.min(1, logs / cost); }
-  else if (st === 'building') { ico = '🏗️'; t = 'Дом строится'; p = `Осталось ${town.left()} с — заходи посмотреть.`; k = 1 - town.left() / (RULES.build.house.ms / 1000); }
-  else if (town.hall === 'none') { ico = '🏛️'; t = 'Задание: зал гильдии'; p = `На доске в доме: ${H.log} 🪵, ${H.stone} 🪨 и ${H.gear} ⚙️ (из ящика на островке). Внесено: ${P.log || 0}/${H.log} · ${P.stone || 0}/${H.stone} · ${P.gear || 0}/${H.gear}.`; k = Object.keys(H).reduce((a, id) => a + Math.min(1, (P[id] || 0) / H[id]), 0) / 3; }
-  else if (town.hall === 'building') { ico = '🏗️'; t = 'Зал гильдии строится'; p = `Осталось ${town.hallLeft()} с.`; k = 1 - town.hallLeft() / (RULES.build.hall.ms / 1000); }
-  else { ico = '💎'; t = 'Глубже в бездну'; p = 'Зал гильдии готов. Ищи старые ящики на островках над бездной.'; k = 1; }
-  $('goalIco').textContent = ico; $('goalT').textContent = t; $('goalP').textContent = p;
-  $('goalBar').style.width = Math.round(k * 100) + '%';
-  $('playSub').textContent = hasProgress() ? 'С последнего сохранения' : 'Новое приключение';
-}
 // появление меню: элементы выезжают по очереди, потом включаются «живые» анимации
 function menuEnter() {
   setPanelOpen(false);
@@ -792,7 +776,6 @@ $('tomenu').addEventListener('click', () => {
   $('hud').classList.remove('show');
   $('menu').classList.remove('hide');
   $('playText').textContent = 'Продолжить';
-  showSave();
   menuEnter();
   if (document.exitPointerLock) document.exitPointerLock();
 });
@@ -840,9 +823,9 @@ const sndLabel = () => {
 };
 $('sound').addEventListener('click', () => { setSoundOn(!soundOn()); sndLabel(); });
 sndLabel();
-for (const [trigger, id] of [['settingsOpen','settingsDialog'], ['journalOpen','journalDialog']]) {
-  const dialog = $(id);
-  $(trigger).addEventListener('click', () => dialog.showModal());
+{
+  const dialog = $('settingsDialog');
+  $('settingsOpen').addEventListener('click', () => dialog.showModal());
   dialog.querySelector('.dismiss').addEventListener('click', () => dialog.close());
 }
 $('menuSound').addEventListener('click', () => $('sound').click());
@@ -896,7 +879,7 @@ if (App) {
 requestAnimationFrame(() => setTimeout(async () => {
   try {
     // картинке заставки даём секунду на загрузку, чтобы не строить мир при пустом экране
-    await Promise.race([Promise.all([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/expedition-rim.png'; }), loadTerrainTextures()]), new Promise((r) => setTimeout(r, 4000))]);
+    await Promise.race([Promise.all([new Promise((r) => { const im = new Image(); im.onload = im.onerror = r; im.src = './assets/camp-night.jpg'; }), loadTerrainTextures()]), new Promise((r) => setTimeout(r, 4000))]);
     // карта поля, встроенная в игру (если есть): её получают все телефоны, у кого нет своей
     try { const r = await fetch('./maps/field.json', { cache: 'no-store' }); if (r.ok) window.__builtinField = await r.text(); } catch (_) { /* нет — значит генерация */ }
     await build();
@@ -908,7 +891,6 @@ requestAnimationFrame(() => setTimeout(async () => {
     player.facing = 1.9; // на заставке герой стоит лицом к лагерю и зрителю
     $('play').disabled = false;
     $('playText').textContent = hasProgress() ? 'Продолжить' : 'Играть';
-    showSave();
     menuEnter();
     $('loading').classList.add('hide');
     if (location.hash === '#play') start();

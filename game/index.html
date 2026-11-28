@@ -146,7 +146,7 @@
   #confirm .mbtn { justify-content: center; font-size: 15px; height: 44px; text-align: center; }
   #wipe { background: linear-gradient(180deg, #ff7a6b, #e5483a) !important; color: #fff; border: 0 !important; }
   /* экран загрузки: картинка на весь экран, внизу подпись и полоса прогресса */
-  #loading { position: fixed; inset: 0; z-index: 20; background: #1b1338 url(./assets/expedition-rim.png) center 22% / cover no-repeat;
+  #loading { position: fixed; inset: 0; z-index: 20; background: #1b1338 url(./assets/camp-night.jpg) center 22% / cover no-repeat;
     display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 9px; color: #fff;
     padding: 0 24px max(26px, env(safe-area-inset-bottom)); text-align: center; transition: opacity .5s; }
   #loading::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 38%;
@@ -362,7 +362,7 @@
 
 #titleModel {display:none;position:absolute;left:47%;width:52%;top:10%;height:76%;touch-action:none;cursor:grab;}
 #titleModel:active {cursor:grabbing;}
-#menu.interactiveArt .titleArt {background-image:url('./assets/expedition-rim.png');}
+#menu.interactiveArt .titleArt {background-image:url('./assets/rim-dawn.jpg');}
 .interactiveArt #titleModel {display:block;}
 @media (orientation:portrait) {#titleModel {left:15%;width:82%;top:13%;height:47%;}}
 
@@ -395,6 +395,19 @@
 #loadFill {background:linear-gradient(90deg,#70bfb6,#ffdc93);}
 @media (orientation:portrait){#lobbyResources {left:4%;right:auto;top:17%;}.lobbyActions {align-items:stretch;flex-direction:column-reverse;gap:9px;bottom:6%;}#menu .lobbyActions #play {justify-content:center;}#titleModel {top:24%;height:46%;}}
 
+
+#menu .brand {top:max(5%,env(safe-area-inset-top));}
+#menu .brand h1 {font-size:clamp(38px,9.5vh,85px);}
+#menu.interactiveArt .titleArt {background-position:center;}
+#menu .tint {background:linear-gradient(0deg,#18122624,transparent 25%);}
+#titleModel {left:24%;width:52%;top:8%;height:81%;}
+.lobbyActions {justify-content:flex-end;gap:12px;}
+#menu .lobbyActions .mbtn {min-width:0;height:clamp(45px,10vh,72px);border:2px solid #ddae68;border-radius:14px;font-family:Georgia,serif;padding:0 1em;box-shadow:inset 0 1px #fff4bf80,0 3px 0 #5a4138;}
+#menu .lobbyActions #newgame {background:linear-gradient(#285968,#153840);color:#ffdfac;font-size:clamp(15px,3vh,21px);}
+#menu .lobbyActions #play {font-size:clamp(18px,3.7vh,28px);}
+#loading .campTitle {position:absolute;top:9%;left:0;right:0;text-align:center;color:#fff0c7;font:600 clamp(34px,8vh,78px)/1 Georgia,serif;letter-spacing:.08em;text-shadow:0 2px 12px #231b41;}
+#loadFill {background:linear-gradient(90deg,#9772ed,#e3d4ff);}
+@media(orientation:portrait){#titleModel {left:4%;width:92%;top:14%;height:58%;}.lobbyActions {flex-direction:row;justify-content:center;gap:6px;}#menu .lobbyActions .mbtn {padding:0 .65em;}}
 </style>
 </head>
 <body>
@@ -460,33 +473,16 @@
   <div id="ff"></div>
   <canvas id="titleModel" tabindex="0" aria-label="Повернуть героя пальцем или стрелками влево и вправо"></canvas>
   <div class="brand">
-    <div class="eyebrow">ПРИКЛЮЧЕНИЕ НА КРАЮ</div>
     <h1>БЕЗДНА</h1>
 
   </div>
-  <div id="lobbyResources"></div>
   <button id="lobbyGear" aria-label="Меню экспедиции" aria-controls="lobbyDrawer" aria-expanded="false">☰</button>
   <nav id="lobbyDrawer" aria-label="Меню экспедиции" hidden>
     <button class="mbtn" id="settingsOpen">Настройки</button>
-    <button id="newgame" class="mbtn"><span class="i">🎮</span><span class="t">Новая игра</span></button>
     <button id="upd" class="mbtn" hidden><span class="i" id="updIcon">⟳</span><span class="t" id="updText">Обновить</span></button>
   </nav>
-  <div class="lobbyActions"><button class="mbtn" id="journalOpen">Журнал экспедиции</button><button id="play" class="mbtn" disabled><span class="i">▶</span><span class="t"><span id="playText">Загрузка…</span><small id="playSub"></small></span></button></div>
-  <dialog id="journalDialog"><header><h2>Журнал</h2><button aria-label="Закрыть" class="dismiss">×</button></header>  <div id="chips"></div>
-<div class="mright">
-    <div class="mcard" id="goal">
-      <span class="tag">✨ Цель</span><span class="ico" id="goalIco">🏠</span>
-      <h4 id="goalT"></h4><p id="goalP"></p>
-      <div class="prog"><div id="goalBar"></div></div>
-    </div>
-    <div class="mcard">
-      <span class="tag">🎮 Управление</span><span class="ico">🗺️</span>
-      <h4>Как играть</h4>
-      <p class="mob">Слева — идти · справа — обзор · рука — лезть по стене · жёлтая кнопка — действие</p>
-      <p class="desk">WASD — идти · Shift — бег · Пробел — прыжок · E — лезть · F — действие · C — крафт</p>
-    </div>
-  </div>
-  </dialog><dialog id="settingsDialog"><header><h2>Настройки</h2><button aria-label="Закрыть" class="dismiss">×</button></header><div class="mbottom">
+  <div class="lobbyActions"><button class="mbtn" id="newgame"><span aria-hidden="true">✦</span>Новая игра</button><button id="play" class="mbtn" disabled><span class="i">▶</span><span class="t"><span id="playText">Загрузка…</span></span></button></div>
+  <dialog id="settingsDialog"><header><h2>Настройки</h2><button aria-label="Закрыть" class="dismiss">×</button></header><div class="mbottom">
     <div><h3>ЦВЕТ ГЕРОЯ</h3><div id="colors"></div></div>
     <div class="sep"></div>
     <div><h3>ГРАФИКА</h3><div class="seg"><button data-q="low">Лёгкая</button><button data-q="auto">Авто</button><button data-q="high">Чёткая</button></div></div>
@@ -500,7 +496,7 @@
     <div class="mrow"><button id="wipeNo" class="mbtn ghost">Отмена</button><button id="wipe" class="mbtn">Начать заново</button></div>
   </div>
 </div>
-<div id="loading"><div id="loadText">Загрузка мира…</div><div id="loadBar"><div id="loadFill"></div></div><div id="loadPct">0%</div></div>
+<div id="loading"><div class="campTitle">БЕЗДНА</div><div id="loadText">Загрузка мира…</div><div id="loadBar"><div id="loadFill"></div></div><div id="loadPct">0%</div></div>
 
 <script type="module" src="./src/main.js"></script>
 </body>
